@@ -115,11 +115,10 @@ ss -ltnp | grep xray
 | 出口 | 内部端口 | 公网端口 | 出站 | 出口 IP |
 |---|---|---|---|---|
 | **direct**（NAT 自身网络） | `51821` | `30022` | `freedom` | `204.197.163.238` |
-| **WARP**（Cloudflare） | `51820`(TCP) | `31496` | `socks → 127.0.0.1:40000` | `104.28.x.x`（Cloudflare） |
+| **WARP**（Cloudflare） | `51822` | `30023` | `socks → 127.0.0.1:40000` | `104.28.x.x`（Cloudflare） |
 
-> `51820` 这个内部端口与 WireGuard 的 UDP 端口同号但**协议不同**（一个是 TCP 一个是 UDP），
-> 互不影响；之所以用它，是因为公网 `31496` 已经映射到这里，无需新增映射即可使用。
-> 想换成更清爽的编号（如内部 `51822` ← 公网 `30023`）随时可以说。
+> 早期曾把 WARP 入站放在内部 `51820`(TCP)（与 WireGuard 的 UDP 51820 只是数字撞号、
+> 协议不同、互不影响），现按用户要求改为**独立编号** `51822`，避免以后混淆。
 
 分流实现（加在 `/etc/xray/config.json`）：
 
@@ -129,7 +128,7 @@ ss -ltnp | grep xray
   "settings": { "servers": [ { "address": "127.0.0.1", "port": 40000 } ] } }
 
 // routing.rules **放在最前面**（Xray 第一条匹配生效）
-{ "type": "field", "inboundTag": ["VLESS-REALITY-XHTTP-WARP-51820"], "outboundTag": "warp" },
+{ "type": "field", "inboundTag": ["VLESS-REALITY-XHTTP-WARP-51822"], "outboundTag": "warp" },
 { "type": "field", "inboundTag": ["VLESS-REALITY-XHTTP-30022"],      "outboundTag": "direct" }
 ```
 
@@ -139,7 +138,7 @@ ss -ltnp | grep xray
 
 ```
 accepted tcp:api.ipify.org:443  [VLESS-REALITY-XHTTP-30022 -> direct]
-accepted tcp:api.ipify.org:443  [VLESS-REALITY-XHTTP-WARP-51820 -> warp]
+accepted tcp:api.ipify.org:443  [VLESS-REALITY-XHTTP-WARP-51822 -> warp]
 ```
 
 ### 3.2 公共参数（两条链路完全一致，只有地址端口不同）
@@ -168,10 +167,10 @@ spiderX  : /
 vless://ed401d40-9c96-4217-8e6b-ab6ac21169c1@204.197.163.238:30022?encryption=none&security=reality&sni=www.amazon.com&fp=chrome&pbk=j9hlAZUR9UIfQJdv8Ti6lW07zonxbYOjJufVxILOTTw&sid=d423dbf66168796e&spx=%2F&type=xhttp&path=%2F63ffaa1022cf&host=www.amazon.com&mode=auto#NAT-direct
 ```
 
-**② WARP 出口 `204.197.163.238:31496`**
+**② WARP 出口 `204.197.163.238:30023`**
 
 ```
-vless://ed401d40-9c96-4217-8e6b-ab6ac21169c1@204.197.163.238:31496?encryption=none&security=reality&sni=www.amazon.com&fp=chrome&pbk=j9hlAZUR9UIfQJdv8Ti6lW07zonxbYOjJufVxILOTTw&sid=d423dbf66168796e&spx=%2F&type=xhttp&path=%2F63ffaa1022cf&host=www.amazon.com&mode=auto#NAT-WARP
+vless://ed401d40-9c96-4217-8e6b-ab6ac21169c1@204.197.163.238:30023?encryption=none&security=reality&sni=www.amazon.com&fp=chrome&pbk=j9hlAZUR9UIfQJdv8Ti6lW07zonxbYOjJufVxILOTTw&sid=d423dbf66168796e&spx=%2F&type=xhttp&path=%2F63ffaa1022cf&host=www.amazon.com&mode=auto#NAT-WARP
 ```
 
 （两条链接另存于 `.cache/xray-test/share-link-direct.txt` / `share-link-warp.txt`，该目录被 gitignore。）
@@ -199,13 +198,13 @@ vless://ed401d40-9c96-4217-8e6b-ab6ac21169c1@204.197.163.238:31496?encryption=no
 | 链路 | 出口 IPv4 | 地区 / ISP | 真实网站 |
 |---|---|---|---|
 | direct（30022） | `204.197.163.238` | United States / System In Place | example.com HTTP 200 ✅ |
-| WARP（31496） | `104.28.201.80` | United States / **Cloudflare, Inc.** | example.com HTTP 200 ✅ |
+| WARP（30023） | `104.28.201.80` | United States / **Cloudflare, Inc.** | example.com HTTP 200 ✅ |
 
 服务端访问日志佐证分流正确：
 
 ```
 accepted tcp:api.ipify.org:443  [VLESS-REALITY-XHTTP-30022 -> direct]
-accepted tcp:api.ipify.org:443  [VLESS-REALITY-XHTTP-WARP-51820 -> warp]
+accepted tcp:api.ipify.org:443  [VLESS-REALITY-XHTTP-WARP-51822 -> warp]
 ```
 
 单出口（direct）的早期记录：
