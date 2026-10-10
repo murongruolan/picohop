@@ -24,7 +24,7 @@ import (
 // 然后让 ChainProxy 的 WireGuard 客户端**经前置代理（前置代理）**去连它。
 //
 //   - 如果握手成功 → 说明 前置代理能正常转发 WireGuard 的 UDP，
-//     那 192.168.31.94 连不上就是**那台服务器/它的防火墙**的问题；
+//     那 对端服务器 连不上就是**那台服务器/它的防火墙**的问题；
 //   - 如果握手失败 → 说明问题在前置这一侧。
 //
 // 启用：CHAINPROXY_WG_LAN_FRONT_TEST=1
@@ -131,12 +131,12 @@ func TestWireGuardThroughFrontOnLAN(t *testing.T) {
 	start := time.Now()
 	if err := real.Start(ctx, front); err != nil {
 		t.Fatalf("❌ 经前置代理 连本机局域网 WG 服务端失败（%d ms）：%v\n"+
-			"   → 说明问题在前置代理这一侧，不是那台 192.168.31.94 的问题",
+			"   → 说明问题在前置代理这一侧，不是那台 对端服务器 的问题",
 			time.Since(start).Milliseconds(), err)
 	}
 	defer real.Stop()
 	t.Logf("✅ 经前置代理 连本机局域网 WG 服务端握手成功，耗时 %d ms", time.Since(start).Milliseconds())
-	t.Logf("   → 说明 前置代理能正常转发 WireGuard 的 UDP；192.168.31.94 连不上是那台服务器那一侧的问题")
+	t.Logf("   → 说明 前置代理能正常转发 WireGuard 的 UDP；对端服务器 连不上是那台服务器那一侧的问题")
 
 	c, derr := real.Dial(ctx, front, serverIP+":9000")
 	if derr != nil {

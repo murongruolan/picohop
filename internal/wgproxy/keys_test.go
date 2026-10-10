@@ -5,15 +5,15 @@ import (
 	"testing"
 )
 
-// TestPublicKeyFromPrivateKnownVector 用一份真实配置校验推导结果。
+// TestPublicKeyFromPrivateKnownVector 用一组固定向量校验私钥到公钥的推导。
 //
-// 这组值来自实际使用的配置：私钥 → 公钥必须与 WireGuard 服务端登记的完全一致。
-// 公钥对不上时协议只会静默丢包，所以这个推导必须分毫不差
-// （尤其是 Curve25519 的夹位处理，少做一步结果就完全不同）。
+// 这组向量与任何真实服务端无关，且已用独立实现交叉验证过：
+// 同一份私钥在 Python cryptography 的 X25519 与本项目实现下得到相同公钥。
+// 公钥对不上时 WireGuard 只会静默丢包，所以夹位（clamping）必须分毫不差。
 func TestPublicKeyFromPrivateKnownVector(t *testing.T) {
 	const (
-		priv = "sGZUVwUocDPP+hMyfH0qzuQP2BBOGm0Vqa0mCsH0+ns="
-		want = "7HJHCIBX8qHxHEh5bD4gy9NkF7TNFbC2JZkWHfFO0Ws="
+		priv = "YPRXVXeYap1NQGmTWwf746EzPZF7nGYO0X+GQTtbRPA="
+		want = "tCjGtgOJ7IKGnmlGR7PABFE/XulAKGYev6Oh6BcuXmY="
 	)
 	got, err := PublicKeyFromPrivate(priv)
 	if err != nil {

@@ -48,7 +48,7 @@ func TestPrivateKeyValidation(t *testing.T) {
 		}
 	}
 	// 正常私钥（含首尾空白，模拟粘贴带上换行）应通过
-	good := "sGZUVwUocDPP+hMyfH0qzuQP2BBOGm0Vqa0mCsH0+ns="
+	good := "YPRXVXeYap1NQGmTWwf746EzPZF7nGYO0X+GQTtbRPA="
 	if _, err := PublicKeyFromPrivate("\n " + good + " \r\n"); err != nil {
 		t.Errorf("带空白的合法私钥应能解析，却失败：%v", err)
 	}

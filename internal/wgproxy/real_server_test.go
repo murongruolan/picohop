@@ -20,7 +20,7 @@ import (
 // 默认跳过（避免日常 go test 依赖外部环境）。启用方式：
 //
 //	$env:CHAINPROXY_WG_REAL=1
-//	$env:CHAINPROXY_WG_ENDPOINT=192.168.31.94:51820
+//	$env:CHAINPROXY_WG_ENDPOINT=203.0.113.10:51820
 //	$env:CHAINPROXY_WG_PRIVKEY=<base64 私钥>
 //	$env:CHAINPROXY_WG_PUBKEY=<base64 对端公钥>
 //	$env:CHAINPROXY_WG_PSK=<base64 预共享密钥，可留空>
@@ -39,7 +39,7 @@ func TestWireGuardRealServer(t *testing.T) {
 		t.Skip("未设置 CHAINPROXY_WG_REAL，跳过真实服务端测试")
 	}
 
-	endpoint := envOr("CHAINPROXY_WG_ENDPOINT", "192.168.31.94:51820")
+	endpoint := envOr("CHAINPROXY_WG_ENDPOINT", "203.0.113.10:51820")
 	host, portStr, err := net.SplitHostPort(endpoint)
 	if err != nil {
 		t.Fatalf("端点格式错误 %q：%v", endpoint, err)
