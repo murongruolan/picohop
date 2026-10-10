@@ -8,8 +8,14 @@
 #   .\scripts\build.ps1 -SkipFrontend   跳过前端 npm 构建（前端没改时省时间）
 #
 # 产物都在 dist\ 内：
-#   dist\ChainProxy.exe   图形界面（Wails + Vue）
-#   dist\chainproxy.exe   命令行（排障、自动化测试）
+#   dist\ChainProxy.exe        图形界面（Wails + Vue）—— 平时双击这个
+#   dist\chainproxy-cli.exe    命令行（排障、自动化测试）
+#
+# 【为什么命令行版不能叫 chainproxy.exe】
+# NTFS 文件名**不区分大小写**，`ChainProxy.exe` 与 `chainproxy.exe` 是同一个文件。
+# 早先就是这么命名的，结果图形界面那一步把命令行版直接覆盖掉了 ——
+# 表现是"想用命令行却弹出界面"，而且 PE 子系统变成了 GUI，
+# 在控制台里跑它既不输出也不退出（挂住）。
 #
 # 【关于构建标签】
 # sing-box 把 Reality(uTLS) 与 Hysteria2(QUIC) 放在构建标签后面，
@@ -23,8 +29,7 @@ param(
     [string]$Version = "1.0.0",
     [switch]$Cli,
     [switch]$Gui,
-    [switch]$SkipFrontend,
-    [switch]$Console
+    [switch]$SkipFrontend
 )
 
 $ErrorActionPreference = 'Stop'
@@ -47,16 +52,12 @@ Set-Location $Root
 # ---------------------------------------------------------------------------
 if ($buildCli) {
     $ldflags = "-s -w -X main.Version=$Version"
+    $cliName = 'chainproxy-cli.exe'
     Write-Host "[ChainProxy] 编译命令行版（version=$Version, tags=$Tags）……"
-    if ($Console) {
-        # 带控制台窗口，方便看到实时日志
-        go build -tags $Tags -trimpath -ldflags $ldflags -o (Join-Path $OutDir 'chainproxy.exe') ./cmd/chainproxy
-    } else {
-        go build -tags $Tags -trimpath -ldflags $ldflags -o (Join-Path $OutDir 'chainproxy.exe') ./cmd/chainproxy
-    }
+    go build -tags $Tags -trimpath -ldflags $ldflags -o (Join-Path $OutDir $cliName) ./cmd/chainproxy
     if ($LASTEXITCODE -ne 0) { throw "命令行版编译失败" }
-    $size = (Get-Item (Join-Path $OutDir 'chainproxy.exe')).Length
-    Write-Host "[ChainProxy] 完成：dist\chainproxy.exe  ($([math]::Round($size/1MB,2)) MB)"
+    $size = (Get-Item (Join-Path $OutDir $cliName)).Length
+    Write-Host "[ChainProxy] 完成：dist\$cliName  ($([math]::Round($size/1MB,2)) MB)"
 }
 
 # ---------------------------------------------------------------------------
@@ -98,5 +99,5 @@ if ($buildGui) {
 Set-Location $Root
 Write-Host ""
 Write-Host "[ChainProxy] 全部完成。产物在 dist\ 内。"
-Write-Host "  图形界面： dist\ChainProxy.exe"
-Write-Host "  命令行：   dist\chainproxy.exe ls / run / test / fetch / import / express"
+Write-Host "  图形界面： dist\ChainProxy.exe      （双击运行）"
+Write-Host "  命令行：   dist\chainproxy-cli.exe  （ls / run / test / fetch / import / express）"
