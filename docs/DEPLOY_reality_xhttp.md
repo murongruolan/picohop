@@ -108,9 +108,43 @@ ss -ltnp | grep xray
 
 ## 3. 客户端参数（**属于凭据，勿外传**）
 
+### 3.1 双出口：direct + WARP
+
+对应 WarpPool 的 `dual` 模式 —— **两个入站，按入站标签分流到不同出站**：
+
+| 出口 | 内部端口 | 公网端口 | 出站 | 出口 IP |
+|---|---|---|---|---|
+| **direct**（NAT 自身网络） | `51821` | `30022` | `freedom` | `204.197.163.238` |
+| **WARP**（Cloudflare） | `51820`(TCP) | `31496` | `socks → 127.0.0.1:40000` | `104.28.x.x`（Cloudflare） |
+
+> `51820` 这个内部端口与 WireGuard 的 UDP 端口同号但**协议不同**（一个是 TCP 一个是 UDP），
+> 互不影响；之所以用它，是因为公网 `31496` 已经映射到这里，无需新增映射即可使用。
+> 想换成更清爽的编号（如内部 `51822` ← 公网 `30023`）随时可以说。
+
+分流实现（加在 `/etc/xray/config.json`）：
+
+```jsonc
+// outbounds 追加
+{ "tag": "warp", "protocol": "socks",
+  "settings": { "servers": [ { "address": "127.0.0.1", "port": 40000 } ] } }
+
+// routing.rules **放在最前面**（Xray 第一条匹配生效）
+{ "type": "field", "inboundTag": ["VLESS-REALITY-XHTTP-WARP-51820"], "outboundTag": "warp" },
+{ "type": "field", "inboundTag": ["VLESS-REALITY-XHTTP-30022"],      "outboundTag": "direct" }
 ```
-地址     : 204.197.163.238
-端口     : 30022
+
+`127.0.0.1:40000` 是 `warp-svc` 提供的 SOCKS5（与 WarpPool 的 redsocks 用的是同一个）。
+
+**服务端访问日志可见分流确实生效：**
+
+```
+accepted tcp:api.ipify.org:443  [VLESS-REALITY-XHTTP-30022 -> direct]
+accepted tcp:api.ipify.org:443  [VLESS-REALITY-XHTTP-WARP-51820 -> warp]
+```
+
+### 3.2 公共参数（两条链路完全一致，只有地址端口不同）
+
+```
 协议     : VLESS
 UUID     : ed401d40-9c96-4217-8e6b-ab6ac21169c1
 流控flow : （留空！xHTTP 不能填 xtls-rprx-vision）
@@ -126,13 +160,21 @@ SNI      : www.amazon.com
 spiderX  : /
 ```
 
-主流客户端直接导入用（复制下面整行 →主流客户端「从剪贴板导入批量URL」）：
+主流客户端导入用（复制整行 → 「从剪贴板导入批量 URL」）：
+
+**① 直连出口 `204.197.163.238:30022`**
 
 ```
-vless://ed401d40-9c96-4217-8e6b-ab6ac21169c1@204.197.163.238:30022?encryption=none&security=reality&sni=www.amazon.com&fp=chrome&pbk=j9hlAZUR9UIfQJdv8Ti6lW07zonxbYOjJufVxILOTTw&sid=d423dbf66168796e&spx=%2F&type=xhttp&path=%2F63ffaa1022cf&host=www.amazon.com&mode=auto
+vless://ed401d40-9c96-4217-8e6b-ab6ac21169c1@204.197.163.238:30022?encryption=none&security=reality&sni=www.amazon.com&fp=chrome&pbk=j9hlAZUR9UIfQJdv8Ti6lW07zonxbYOjJufVxILOTTw&sid=d423dbf66168796e&spx=%2F&type=xhttp&path=%2F63ffaa1022cf&host=www.amazon.com&mode=auto#NAT-direct
 ```
 
-（同一份链接也存在 `.cache/xray-test/share-link.txt`，该目录被 gitignore。）
+**② WARP 出口 `204.197.163.238:31496`**
+
+```
+vless://ed401d40-9c96-4217-8e6b-ab6ac21169c1@204.197.163.238:31496?encryption=none&security=reality&sni=www.amazon.com&fp=chrome&pbk=j9hlAZUR9UIfQJdv8Ti6lW07zonxbYOjJufVxILOTTw&sid=d423dbf66168796e&spx=%2F&type=xhttp&path=%2F63ffaa1022cf&host=www.amazon.com&mode=auto#NAT-WARP
+```
+
+（两条链接另存于 `.cache/xray-test/share-link-direct.txt` / `share-link-warp.txt`，该目录被 gitignore。）
 
 ---
 
@@ -151,6 +193,22 @@ vless://ed401d40-9c96-4217-8e6b-ab6ac21169c1@204.197.163.238:30022?encryption=no
 即：探测者拿到的是**真 Amazon 的响应**，与直接访问 Amazon 无法区分。
 
 ### 4.2 真实代理（从家宽经 Xray 客户端）
+
+**双出口实测（一个客户端进程，两个本地端口分别走两条链路）：**
+
+| 链路 | 出口 IPv4 | 地区 / ISP | 真实网站 |
+|---|---|---|---|
+| direct（30022） | `204.197.163.238` | United States / System In Place | example.com HTTP 200 ✅ |
+| WARP（31496） | `104.28.201.80` | United States / **Cloudflare, Inc.** | example.com HTTP 200 ✅ |
+
+服务端访问日志佐证分流正确：
+
+```
+accepted tcp:api.ipify.org:443  [VLESS-REALITY-XHTTP-30022 -> direct]
+accepted tcp:api.ipify.org:443  [VLESS-REALITY-XHTTP-WARP-51820 -> warp]
+```
+
+单出口（direct）的早期记录：
 
 ```
 出口 IP:
@@ -193,15 +251,15 @@ Server: TencentEdgeOne
 
 ### 5.2 出口 IP 不是住宅 IP
 
-`204.197.163.238` 归属美国机房（`System In Place`）。若要住宅/特定地区出口，
-应把出站改到 WARP：
+`204.197.163.238` 归属美国机房（`System In Place`）。**WARP 出口是 `104.28.x.x`（Cloudflare）**，
+两条链路都**不是住宅 IP**。若需要特定地区/住宅出口，需要换出口节点或另接上游。
 
-```json
-"outbounds": [{ "tag": "warp", "protocol": "socks",
-  "settings": { "servers": [{ "address": "127.0.0.1", "port": 40000 }] } }]
-```
+### 5.2.1 WARP 出口的 UDP 可能不可用
 
-（`warp-svc` 已在 `127.0.0.1:40000` 提供 SOCKS5，即 WarpPool 的 WARP 出口。）
+direct 入站的出站是 `freedom`，TCP/UDP 都支持；
+WARP 入站的出站是 `socks → warp-svc:40000`，**取决于 WARP 的 SOCKS5 是否支持 UDP ASSOCIATE**。
+浏览器走 QUIC(UDP/443) 若失败会自动回退 TCP，**网页浏览不受影响**；
+如果发现某些依赖 UDP 的应用异常，可以给该入站单独加一条出站规则。
 
 ### 5.3 IPv6 出口会导致出口 IP 不一致
 
