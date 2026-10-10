@@ -1,0 +1,18 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "chainproxy",
+  "outputfilename": "ChainProxy",
+  "frontend:install": "npm install --no-audit --no-fund",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "chainproxy-dev",
+    "email": "chainproxy@local"
+  },
+  "info": {
+    "productName": "ChainProxy",
+    "productVersion": "1.0.0",
+    "comments": "链式代理：本地多端口 → 前置代理 → 出口节点。不会注册开机自启动。"
+  }
+}

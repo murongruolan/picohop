@@ -22,6 +22,14 @@
 /refs/local-refs/
 /refs/local-refs/
 
+# 前端构建产物（Vite 每次都会清空 dist 目录，所以只保留一个占位文件 —— 
+# Go 的 //go:embed all:frontend/dist 要求这个目录至少存在一个文件，
+# 否则在不构建前端的场景（go build ./... / go test ./...）下会直接编译失败）。
+/desktop/frontend/dist/*
+!/desktop/frontend/dist/.keep
+/desktop/frontend/node_modules/
+/desktop/build/bin/
+
 # 编辑器 / 系统
 .idea/
 .vscode/

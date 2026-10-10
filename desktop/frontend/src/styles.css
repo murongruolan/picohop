@@ -1,0 +1,551 @@
+/* ---------------------------------------------------------------------------
+ * ChainProxy 界面样式
+ *
+ * 设计基调：简洁、克制、有层次。
+ *  - 只用一套中性色 + 一个品牌色，靠"间距 + 描边 + 轻微底色差"分层，不靠大色块
+ *  - 圆角统一 8px，控件高度统一 30/32px，避免"每个控件都长得不一样"
+ *  - 深色/浅色都通过 CSS 变量切换，组件里不写死颜色
+ * ------------------------------------------------------------------------- */
+
+:root {
+  --cp-bg: #f4f5f7;
+  --cp-panel: #ffffff;
+  --cp-panel-2: #fafbfc;
+  --cp-border: #e5e7eb;
+  --cp-border-strong: #d4d7dd;
+  --cp-text: #1f2329;
+  --cp-text-2: #5f6672;
+  --cp-text-3: #9aa1ad;
+  --cp-brand: #4f7cff;
+  --cp-brand-soft: rgba(79, 124, 255, 0.1);
+  --cp-success: #18a058;
+  --cp-warning: #f0a020;
+  --cp-danger: #d03050;
+  --cp-info: #6b7280;
+  --cp-shadow: 0 6px 24px rgba(15, 23, 42, 0.1);
+  --cp-radius: 8px;
+  --cp-radius-sm: 6px;
+  --cp-toolbar-h: 52px;
+  --cp-filter-h: 46px;
+
+  /* Element Plus 主色跟着走，避免出现"两套蓝" */
+  --el-color-primary: var(--cp-brand);
+  --el-border-radius-base: var(--cp-radius-sm);
+  --el-font-size-base: 13px;
+}
+
+html.dark {
+  --cp-bg: #13151b;
+  --cp-panel: #1a1d25;
+  --cp-panel-2: #20242d;
+  --cp-border: #2a2f3a;
+  --cp-border-strong: #3a4050;
+  --cp-text: #e7e9ee;
+  --cp-text-2: #a2a9b8;
+  --cp-text-3: #6f7686;
+  --cp-brand: #5b8bff;
+  --cp-brand-soft: rgba(91, 139, 255, 0.16);
+  --cp-success: #2fbd6e;
+  --cp-warning: #e5a53a;
+  --cp-danger: #e45c78;
+  --cp-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  /* 任何子元素超宽都不允许顶出滚动条：这是桌面程序，不是网页 */
+  overflow: hidden;
+}
+
+body {
+  font-family: 'Microsoft YaHei UI', 'Microsoft YaHei', -apple-system, 'Segoe UI',
+    Roboto, 'Helvetica Neue', sans-serif;
+  font-size: 13px;
+  color: var(--cp-text);
+  background: var(--cp-bg);
+  /* 桌面程序：禁掉整页文本选中与拖拽，避免"选着选着把界面选中了" */
+  -webkit-user-select: none;
+  user-select: none;
+  overflow: hidden;
+}
+
+/* 需要选中的地方（分享链接、日志）单独打开 */
+input,
+textarea,
+.cp-selectable {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* --------------------------------------------------------------------------
+ * 滚动条：默认的又宽又亮，在深色界面里很扎眼
+ * ------------------------------------------------------------------------ */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--cp-border-strong);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--cp-text-3);
+  background-clip: content-box;
+  border: 3px solid transparent;
+}
+
+/* --------------------------------------------------------------------------
+ * 应用骨架
+ * ------------------------------------------------------------------------ */
+.cp-app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--cp-bg);
+  overflow: hidden;
+}
+
+.cp-toolbar {
+  height: var(--cp-toolbar-h);
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  background: var(--cp-panel);
+  border-bottom: 1px solid var(--cp-border);
+  /* 工具栏是单行布局：宁可让次要信息在窄窗口下隐藏，也不允许换行或溢出 */
+  overflow: hidden;
+}
+
+/* 窗口变窄时按重要性依次让出空间，避免右侧按钮被挤出可视区 */
+@media (max-width: 1180px) {
+  .cp-stat-conn {
+    display: none;
+  }
+}
+@media (max-width: 1080px) {
+  .cp-stat-today {
+    display: none;
+  }
+}
+@media (max-width: 980px) {
+  .cp-front-chip span {
+    display: none;
+  }
+  .cp-front-chip {
+    padding: 0 8px;
+  }
+}
+
+.cp-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: 0.2px;
+  margin-right: 4px;
+}
+
+.cp-brand-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--cp-text-3);
+  box-shadow: 0 0 0 3px transparent;
+  transition: all 0.2s;
+}
+.cp-brand-dot.is-on {
+  background: var(--cp-success);
+  box-shadow: 0 0 0 3px rgba(24, 160, 88, 0.16);
+}
+
+.cp-spacer {
+  flex: 1 1 auto;
+}
+
+.cp-filterbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: var(--cp-panel);
+  border-bottom: 1px solid var(--cp-border);
+}
+
+.cp-table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 10px 14px 12px;
+  background: var(--cp-panel);
+  border: 1px solid var(--cp-border);
+  border-radius: var(--cp-radius);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* --------------------------------------------------------------------------
+ * 统计小卡片
+ * ------------------------------------------------------------------------ */
+.cp-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0 9px;
+  border-left: 1px solid var(--cp-border);
+  min-width: 62px;
+  flex: 0 0 auto;
+}
+.cp-stat:first-of-type {
+  border-left: none;
+}
+.cp-stat-label {
+  font-size: 11px;
+  color: var(--cp-text-3);
+  line-height: 1.3;
+  white-space: nowrap;
+}
+.cp-stat-value {
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------------------------------
+ * Element Plus 微调：让表格看起来"紧、齐、干净"
+ * ------------------------------------------------------------------------ */
+.cp-table-wrap .el-table {
+  --el-table-border-color: var(--cp-border);
+  --el-table-header-bg-color: var(--cp-panel-2);
+  --el-table-row-hover-bg-color: var(--cp-brand-soft);
+  --el-table-current-row-bg-color: var(--cp-brand-soft);
+  font-size: 13px;
+}
+.cp-table-wrap .el-table th.el-table__cell {
+  height: 36px;
+  padding: 0;
+  font-weight: 600;
+  color: var(--cp-text-2);
+  font-size: 12px;
+}
+.cp-table-wrap .el-table td.el-table__cell {
+  height: 34px;
+  padding: 0;
+  border-bottom-color: var(--cp-border);
+}
+.cp-table-wrap .el-table .cell {
+  padding: 0 10px;
+  line-height: 1.4;
+}
+.cp-table-wrap .el-table__inner-wrapper::before {
+  display: none; /* Element 底部那条多余的横线 */
+}
+.cp-table-wrap .el-table__empty-block {
+  background: var(--cp-panel);
+}
+.cp-table-wrap .el-table__empty-text {
+  color: var(--cp-text-3);
+}
+
+.cp-mono {
+  font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
+  font-size: 12px;
+}
+.cp-num {
+  font-variant-numeric: tabular-nums;
+}
+.cp-dim {
+  color: var(--cp-text-3);
+}
+.cp-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+
+/* 状态点 */
+.cp-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+  background: var(--cp-text-3);
+  flex: 0 0 auto;
+}
+.cp-dot.is-run {
+  background: var(--cp-success);
+  box-shadow: 0 0 0 3px rgba(24, 160, 88, 0.15);
+}
+.cp-dot.is-err {
+  background: var(--cp-danger);
+  box-shadow: 0 0 0 3px rgba(208, 48, 80, 0.15);
+}
+.cp-dot.is-idle {
+  background: var(--cp-text-3);
+}
+
+.cp-name {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.cp-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cp-name-dim {
+  color: var(--cp-text-3);
+}
+
+/* 标签：协议 / 传输 */
+.cp-tag {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 5px;
+  font-size: 11.5px;
+  line-height: 17px;
+  background: var(--cp-panel-2);
+  border: 1px solid var(--cp-border);
+  color: var(--cp-text-2);
+  white-space: nowrap;
+}
+html.dark .cp-tag {
+  background: #23272f;
+}
+.cp-tag.is-brand {
+  color: var(--cp-brand);
+  border-color: color-mix(in srgb, var(--cp-brand) 35%, transparent);
+  background: var(--cp-brand-soft);
+}
+
+/* --------------------------------------------------------------------------
+ * 右键菜单
+ * ------------------------------------------------------------------------ */
+.cp-menu {
+  position: fixed;
+  z-index: 4000;
+  min-width: 196px;
+  padding: 5px;
+  background: var(--cp-panel);
+  border: 1px solid var(--cp-border);
+  border-radius: var(--cp-radius);
+  box-shadow: var(--cp-shadow);
+}
+.cp-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 9px;
+  border-radius: var(--cp-radius-sm);
+  cursor: default;
+  color: var(--cp-text);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.cp-menu-item:hover {
+  background: var(--cp-brand-soft);
+  color: var(--cp-brand);
+}
+.cp-menu-item.is-danger:hover {
+  background: rgba(208, 48, 80, 0.12);
+  color: var(--cp-danger);
+}
+.cp-menu-item.is-disabled {
+  color: var(--cp-text-3);
+  pointer-events: none;
+}
+.cp-menu-item .cp-menu-key {
+  margin-left: auto;
+  color: var(--cp-text-3);
+  font-size: 11.5px;
+}
+.cp-menu-sep {
+  height: 1px;
+  margin: 5px 4px;
+  background: var(--cp-border);
+}
+
+/* --------------------------------------------------------------------------
+ * 通知：5 种类型，位置在控制栏下方（见 api.js 里的 offset）
+ * ------------------------------------------------------------------------ */
+.el-notification.cp-notify {
+  border-radius: var(--cp-radius);
+  border: 1px solid var(--cp-border);
+  background: var(--cp-panel);
+  box-shadow: var(--cp-shadow);
+}
+.el-notification.cp-notify .el-notification__title {
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--cp-text);
+}
+.el-notification.cp-notify .el-notification__content {
+  color: var(--cp-text-2);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+/* primary 是 element-plus 没有的类型，用品牌色补上 */
+.el-notification.cp-notify-primary .el-notification__icon,
+.el-notification.cp-notify-primary .el-notification__title {
+  color: var(--cp-brand);
+}
+.el-notification.cp-notify-error .el-notification__icon,
+.el-notification.cp-notify-error .el-notification__title {
+  color: var(--cp-danger);
+}
+.el-notification.cp-notify-warning .el-notification__icon,
+.el-notification.cp-notify-warning .el-notification__title {
+  color: var(--cp-warning);
+}
+.el-notification.cp-notify-success .el-notification__icon,
+.el-notification.cp-notify-success .el-notification__title {
+  color: var(--cp-success);
+}
+
+/* --------------------------------------------------------------------------
+ * 对话框：表单紧凑一点，标签右对齐
+ * ------------------------------------------------------------------------ */
+.cp-dialog .el-dialog__header {
+  margin-right: 0;
+  padding: 16px 20px 10px;
+  border-bottom: 1px solid var(--cp-border);
+}
+.cp-dialog .el-dialog__title {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--cp-text);
+}
+.cp-dialog .el-dialog__body {
+  padding: 16px 20px;
+}
+.cp-dialog .el-dialog__footer {
+  padding: 10px 20px 16px;
+  border-top: 1px solid var(--cp-border);
+  /* 用 flex 才能让 .cp-spacer 真的把按钮推向两侧；默认的 text-align:right 不行 */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cp-form .el-form-item {
+  margin-bottom: 14px;
+}
+.cp-form .el-form-item__label {
+  color: var(--cp-text-2);
+  font-size: 12.5px;
+}
+/* 分节标题 */
+.cp-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 12px;
+  color: var(--cp-text-2);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+.cp-section::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--cp-border);
+}
+.cp-hint {
+  color: var(--cp-text-3);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+.cp-error-text {
+  color: var(--cp-danger);
+  font-size: 11.5px;
+}
+.cp-ok-text {
+  color: var(--cp-success);
+  font-size: 11.5px;
+}
+
+/* 端口输入：数字 + 随机按钮 贴在一起 */
+.cp-port-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+/* 分享对话框 */
+.cp-share-qr {
+  display: flex;
+  justify-content: center;
+  padding: 14px;
+  background: #fff;
+  border-radius: var(--cp-radius);
+  border: 1px solid var(--cp-border);
+}
+.cp-share-qr img {
+  width: 232px;
+  height: 232px;
+  image-rendering: pixelated;
+}
+.cp-share-text {
+  width: 100%;
+  margin-top: 12px;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  resize: none;
+}
+
+/* 日志抽屉 */
+.cp-log {
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--cp-text-2);
+}
+.cp-log-line {
+  padding: 1px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--cp-border) 55%, transparent);
+}
+
+/* 空列表 */
+.cp-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 48px 0;
+  color: var(--cp-text-3);
+}
+
+/* 让 tooltip 也跟随主题 */
+.el-popper.is-dark {
+  background: #2a2f3a;
+  border-color: #2a2f3a;
+}
