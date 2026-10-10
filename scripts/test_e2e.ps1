@@ -1,4 +1,4 @@
-# ---------------------------------------------------------------------------
+﻿# ---------------------------------------------------------------------------
 # ChainProxy 端到端测试脚本
 #
 #   .\scripts\test_e2e.ps1
@@ -117,7 +117,7 @@ if ($fail -eq 0) {
     Write-Host "=== 全部通过 ===" -ForegroundColor Green
 } else {
     Write-Host "=== 失败 $fail 项 ===" -ForegroundColor Red
-    Get-Content (Join-Path $Root 'data\e2e.out') -ErrorAction SilentlyContinue | Select-Object -Last 40
-    Get-Content (Join-Path $Root 'data\e2e.err') -ErrorAction SilentlyContinue | Select-Object -Last 40
+    Get-Content (Join-Path $Root 'data\e2e.out') -Encoding UTF8 -ErrorAction SilentlyContinue | Select-Object -Last 40
+    Get-Content (Join-Path $Root 'data\e2e.err') -Encoding UTF8 -ErrorAction SilentlyContinue | Select-Object -Last 40
 }
 exit $fail

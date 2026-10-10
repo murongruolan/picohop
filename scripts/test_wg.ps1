@@ -1,4 +1,4 @@
-# 一键验证 WireGuard 出口：先查前置 UDP -> 启动服务 -> 经本地端口取出口 IP -> 报告
+﻿# 一键验证 WireGuard 出口：先查前置 UDP -> 启动服务 -> 经本地端口取出口 IP -> 报告
 #
 # 用法：
 #   .\scripts\test_wg.ps1
@@ -11,10 +11,15 @@
 #   [3] 经 WireGuard 隧道的出口 IP + SOCKS5 / HTTP 两种客户端
 
 param(
-    [string]$Config = (Join-Path $PSScriptRoot '..\dist\data\config.json'),
+    [string]$Config,
     [string]$TestUrl = 'https://ifconfig.me/ip',
     [int]$WaitSec = 25
 )
+
+# 注意：默认值不能写成 (Join-Path ...)，Windows PowerShell 5.1 的 param() 解析器
+# 不接受在参数默认值里调用命令，会报 "The assignment expression is not valid"。
+# 所以在函数体里解析，5.1 与 7 都能用。
+if (-not $Config) { $Config = Join-Path $PSScriptRoot '..\dist\data\config.json' }
 
 $ErrorActionPreference = 'Continue'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..')
@@ -91,7 +96,7 @@ Write-Host "配置   : $Config"
 Write-Host "测试URL: $TestUrl"
 Write-Host ""
 
-try { $j = Get-Content $Config -Raw | ConvertFrom-Json }
+try { $j = Get-Content $Config -Raw -Encoding UTF8 | ConvertFrom-Json }
 catch { Write-Host "配置读取失败：$_" -ForegroundColor Red; exit 1 }
 
 $wg = $j.upstreams | Where-Object { $_.type -eq 'wireguard' } | Select-Object -First 1
@@ -116,7 +121,7 @@ Write-Host ""
 
 # ---- 私钥检查 ----
 $pk = "$($wg.wireguard.privateKey)".Trim()
-if ($pk -like '*<<<*') {
+if ($pk -like '*<<<*' -or $pk -like 'PASTE_YOUR_FULL_PRIVATE_KEY*') {
     Write-Host "X 私钥还没填（当前是占位符）。" -ForegroundColor Red
     Write-Host "  私钥固定 44 个字符、以 = 结尾。可用下面命令生成，避免界面复制不全："
     Write-Host "    .\dist\chainproxy-console.exe wgkey" -ForegroundColor Yellow
@@ -168,8 +173,8 @@ while ((Get-Date) -lt $deadline) {
 
 if ($proc.HasExited) {
     Write-Host "X 进程已退出，日志：" -ForegroundColor Red
-    Get-Content $logFile -ErrorAction SilentlyContinue | Select-Object -Last 10
-    Get-Content ($logFile + '.err') -ErrorAction SilentlyContinue | Select-Object -Last 6
+    Get-Content $logFile -Encoding UTF8 -ErrorAction SilentlyContinue | Select-Object -Last 10
+    Get-Content ($logFile + '.err') -Encoding UTF8 -ErrorAction SilentlyContinue | Select-Object -Last 6
     exit 1
 }
 Write-Host "    端口 $localPort $(if ($ready) { '已监听' } else { '尚未监听（继续尝试）' })"
@@ -183,7 +188,7 @@ Write-Host "  经隧道 HTTP   127.0.0.1:$lp : $(FetchIp @('-x', "http://127.0.0
 
 Write-Host ""
 Write-Host "===== 隧道状态（来自日志）=====" -ForegroundColor Cyan
-Get-Content $logFile -ErrorAction SilentlyContinue |
+Get-Content $logFile -Encoding UTF8 -ErrorAction SilentlyContinue |
     Select-String -Pattern '隧道已建立|last_handshake_time_sec|tx_bytes|rx_bytes|allowed_ip|preshared_key|握手超时|失败|专属前置' |
     Select-Object -First 16 | ForEach-Object { Write-Host ("  " + $_.Line.Trim()) }
 
