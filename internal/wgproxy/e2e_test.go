@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -126,13 +127,13 @@ func TestWireGuardEndToEnd(t *testing.T) {
 		ListenPort: 10812,
 		TimeoutMs:  15000,
 		WireGuard: &config.WireGuardConfig{
-			PrivateKey:          clientKeys.privHex,
-			Address:             clientIP + "/32",
-			PeerPublicKey:       serverKeys.pubHex,
-			EndpointHost:        "127.0.0.1",
-			EndpointPort:        serverPort,
-			AllowedIPs:          "10.77.0.0/24",
-			MTU:                 1420,
+			PrivateKey:    clientKeys.privHex,
+			Address:       clientIP + "/32",
+			PeerPublicKey: serverKeys.pubHex,
+			EndpointHost:  "127.0.0.1",
+			EndpointPort:  serverPort,
+			// 可用环境变量换成全隧道写法，用来验证用户的 "0.0.0.0/0, ::/0" 配置
+			AllowedIPs: envOr("CHAINPROXY_WG_E2E_ALLOWED", "10.77.0.0/24"), MTU: 1420,
 			PersistentKeepalive: 25,
 		},
 	}
@@ -156,6 +157,18 @@ func TestWireGuardEndToEnd(t *testing.T) {
 	}
 	defer u.Stop()
 	t.Logf("✅ 隧道握手完成，耗时 %d ms", time.Since(start).Milliseconds())
+
+	// 若配的是全隧道，必须确认两条前缀都真的生效了
+	want := envOr("CHAINPROXY_WG_E2E_ALLOWED", "")
+	if strings.Contains(want, "::") {
+		st := up.dumpDeviceState()
+		hasV4 := strings.Contains(st, "allowed_ip=0.0.0.0/0")
+		hasV6 := strings.Contains(st, "allowed_ip=::/0")
+		if !hasV4 || !hasV6 {
+			t.Fatalf("全隧道前缀没有都生效（v4=%v v6=%v）：\n%s", hasV4, hasV6, st)
+		}
+		t.Log("✅ 全隧道 AllowedIPs 两条前缀都生效（0.0.0.0/0 与 ::/0）")
+	}
 
 	// ---------------- 通过隧道连到隧道内的 echo 服务 ----------------
 	conn, err := u.Dial(ctx, front, net.JoinHostPort(serverIP, fmt.Sprint(echoPort)))
