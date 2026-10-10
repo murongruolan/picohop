@@ -333,19 +333,28 @@ func (u *Upstream) stopLocked() error {
 	u.closed = true
 
 	var firstErr error
-	// 【顺序很重要】先关设备再关 bind。
-	// 反过来的话，设备在 closeBind 之后仍可能再调一次 Send，
-	// 而那时 b.ch 已被置空 —— 会 panic（"退出时莫名崩一下"）。
+	// 【顺序：必须先关 bind，再关设备】
+	//
+	// 原因：device.Close() 会**等待收包协程退出**，而收包协程正阻塞在
+	// b.ch.ReceiveFromUDP(...) 上（UDP 套接字阻塞读，故意不设读超时）。
+	// 若先调 device.Close()，收包协程永远等不到数据、device.Close() 就永远不返回 —— 死锁。
+	// 实测表现是「点停止后界面卡死」「命令行 test 卡住不退出」。
+	//
+	// 反过来先 shutdown() 会关掉 UDP 套接字，阻塞读立刻返回，收包协程正常退出，
+	// 之后 device.Close() 才能干净收尾。
+	// 这期间设备可能还会再调一次 Send，而 b.ch 已置空 —— Send 里已加空值保护。
+	if u.bind != nil {
+		if err := u.bind.shutdown(); err != nil {
+			firstErr = err
+		}
+	}
+	// device.Close() 内部已经会关闭 tun 设备，所以不能再单独关一次
+	// （netstack 的 netTun.Close 非幂等，第二次会 panic）。
 	if u.dev != nil {
 		u.dev.Close()
 		u.dev = nil
 	} else if u.tunDev != nil {
 		_ = u.tunDev.Close()
-	}
-	if u.bind != nil {
-		if err := u.bind.shutdown(); err != nil {
-			firstErr = err
-		}
 	}
 	u.tunDev = nil
 	u.tnet = nil
