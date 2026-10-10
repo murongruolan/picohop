@@ -40,7 +40,7 @@ import (
 
 // Upstream 是一条 WireGuard 链路的实现，满足 proxy.Upstream 接口。
 type Upstream struct {
-	cfg   config.Upstream
+	node  config.Node
 	front proxy.Front
 	logf  func(format string, args ...any)
 
@@ -53,25 +53,25 @@ type Upstream struct {
 	closed bool
 }
 
-// New 按配置构造 WireGuard 上游（此时还不会建立隧道）。
-func New(cfg config.Upstream, front proxy.Front) (proxy.Upstream, error) {
-	if cfg.WireGuard == nil {
+// New 按配置构造 WireGuard 出口（此时还不会建立隧道）。
+func New(node config.Node, front proxy.Front) (proxy.Upstream, error) {
+	if node.WireGuard == nil {
 		return nil, fmt.Errorf("缺少 WireGuard 配置")
 	}
-	return &Upstream{cfg: cfg, front: front}, nil
+	return &Upstream{node: node, front: front}, nil
 }
 
-func (u *Upstream) Describe() string { return u.cfg.Describe() }
+func (u *Upstream) Describe() string { return u.node.Describe() }
 
 func (u *Upstream) SupportsUDP() bool { return false } // 用户态栈支持 UDP，但先不开放，避免增加不确定性
 
 func (u *Upstream) DialTimeout() time.Duration {
-	return time.Duration(u.cfg.Timeout()) * time.Millisecond
+	return time.Duration(u.node.Timeout()) * time.Millisecond
 }
 
 func (u *Upstream) log(format string, args ...any) {
 	if u.logf != nil {
-		u.logf("[WireGuard %s] "+format, append([]any{u.cfg.Name}, args...)...)
+		u.logf("[WireGuard %s] "+format, append([]any{u.node.Name}, args...)...)
 	}
 }
 
@@ -82,7 +82,7 @@ func (u *Upstream) Start(ctx context.Context, front proxy.Front) error {
 	if u.dev != nil {
 		return nil
 	}
-	w := u.cfg.WireGuard
+	w := u.node.WireGuard
 	if w == nil {
 		return fmt.Errorf("缺少 WireGuard 配置")
 	}
@@ -136,25 +136,25 @@ func (u *Upstream) Start(ctx context.Context, front proxy.Front) error {
 		peer: netip.AddrPortFrom(netip.Addr{}, 0),
 		logf: u.log,
 	}
-	if ip := net.ParseIP(w.EndpointHost); ip != nil {
+	if ip := net.ParseIP(u.node.Server); ip != nil {
 		a, _ := netip.AddrFromSlice(ip)
-		bind.peer = netip.AddrPortFrom(a.Unmap(), uint16(w.EndpointPort))
+		bind.peer = netip.AddrPortFrom(a.Unmap(), uint16(u.node.Port))
 	} else {
 		// 域名形式交给 wireguard-go 解析不了（我们不提供系统解析），这里本地解析一次
-		addrs, lerr := net.DefaultResolver.LookupNetIP(ctx, "ip", w.EndpointHost)
+		addrs, lerr := net.DefaultResolver.LookupNetIP(ctx, "ip", u.node.Server)
 		if lerr != nil || len(addrs) == 0 {
 			_ = tunDev.Close()
 			udpCh.Close()
-			return fmt.Errorf("无法解析 WireGuard 服务器地址 %q：%v", w.EndpointHost, lerr)
+			return fmt.Errorf("无法解析 WireGuard 服务器地址 %q：%v", u.node.Server, lerr)
 		}
-		bind.peer = netip.AddrPortFrom(addrs[0], uint16(w.EndpointPort))
+		bind.peer = netip.AddrPortFrom(addrs[0], uint16(u.node.Port))
 	}
 
 	devLevel := device.LogLevelError
 	if os.Getenv("CHAINPROXY_WG_VERBOSE") != "" {
 		devLevel = device.LogLevelVerbose
 	}
-	dev := device.NewDevice(tunDev, bind, device.NewLogger(devLevel, "wg: "+u.cfg.Name+" "))
+	dev := device.NewDevice(tunDev, bind, device.NewLogger(devLevel, "wg: "+u.node.Name+" "))
 	bind.dev = dev
 
 	// --- 5. UAPI 配置 ---
@@ -210,7 +210,7 @@ func (u *Upstream) Start(ctx context.Context, front proxy.Front) error {
 		_ = u.stopLocked()
 		return err
 	}
-	u.log("隧道已建立，出口经 %s:%d", w.EndpointHost, w.EndpointPort)
+	u.log("隧道已建立，出口经 %s:%d", u.node.Server, u.node.Port)
 	u.log("设备状态：\n%s", u.dumpDeviceState())
 	return nil
 }

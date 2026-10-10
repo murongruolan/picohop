@@ -10,25 +10,24 @@ import (
 	"chainproxy/internal/config"
 )
 
-// Upstream 是"第二跳/出口"：负责把客户端要访问的目标地址，变成一条真正连到目标的连接。
+// Upstream 是"出口"：负责把客户端要访问的目标地址，变成一条真正连到目标的连接。
 //
-// 对 socks5 / http 上游，实现方式是经典的"套娃"：
+// 实现方式分两类：
 //
-//	conn := front.DialTCP(upstream.ServerAddr())   // ← 已经在前置隧道内部
-//	upstream.握手(conn, target)                     // ← 第二次握手
-//
-// 对 wireguard 上游，隧道在 Start() 时就已建立，front 仅用于外层 UDP；
-// Dial() 直接从用户态网络栈出栈，不存在第二次握手。
+//	socks5 / http     经典"套娃"：先在前置隧道里连上出口服务器，再做第二次握手
+//	wireguard         隧道在 Start() 时就已建立，Dial() 直接从用户态网络栈出栈
+//	vmess/vless/...   由内嵌的 sing-box 引擎负责（internal/engine）
 type Upstream interface {
-	// Start 建立底层通道。socks5/http 上游这里是空操作；wireguard 上游在此完成握手。
+	// Start 建立底层通道。socks5/http 出口这里是空操作；
+	// wireguard 在这里完成握手；sing-box 出口在这里拉起实例。
 	Start(ctx context.Context, front Front) error
 	// Stop 释放资源。
 	Stop() error
 	// Dial 建立到 target（"host:port"）的连接，连接已就绪，可直接读写应用数据。
 	Dial(ctx context.Context, front Front, target string) (net.Conn, error)
-	// DialUDP 建立 UDP 通道。socks5 上游可用；http 上游返回 ErrUDPUnsupported。
+	// DialUDP 建立 UDP 通道。http 出口返回 ErrUDPUnsupported。
 	DialUDP(ctx context.Context, front Front) (UDPChannel, error)
-	// SupportsUDP 说明该上游能否转发 UDP。
+	// SupportsUDP 说明该出口能否转发 UDP。
 	SupportsUDP() bool
 	// Describe 返回一行可读描述。
 	Describe() string
@@ -36,54 +35,78 @@ type Upstream interface {
 	DialTimeout() time.Duration
 }
 
-// NewUpstream 按配置创建住宅上游实现。
+// 两个工厂函数由外部包在 init 时注入，避免 proxy 包反向依赖它们
+// （也方便在不需要某个出口类型的构建里完全不引入相关依赖）。
 //
-// wgFactory 由 internal/wg 包在启动时注入，避免 proxy 包反向依赖 wg 包
-// （也方便在未启用 WireGuard 的构建里完全不引入相关依赖）。
-var wgFactory func(config.Upstream, Front) (Upstream, error)
+//   - wgFactory   由 internal/wgproxy 注册
+//   - singFactory 由 internal/engine 注册
+var (
+	wgFactory   func(config.Node, Front) (Upstream, error)
+	singFactory func(config.Node, config.Front, func(string, ...any)) (Upstream, error)
+)
 
-// RegisterWireGuardFactory 让 internal/wg 在 init 时注册构造器。
-func RegisterWireGuardFactory(f func(config.Upstream, Front) (Upstream, error)) {
+// RegisterWireGuardFactory 让 internal/wgproxy 在 init 时注册构造器。
+func RegisterWireGuardFactory(f func(config.Node, Front) (Upstream, error)) {
 	wgFactory = f
 }
 
-// NewUpstream 创建指定类型的上游。
-func NewUpstream(u config.Upstream) (Upstream, error) {
-	switch u.Type {
-	case config.UpstreamTypeHTTP:
-		return &httpUpstream{u: u}, nil
-	case config.UpstreamTypeWireGuard:
+// RegisterSingBoxFactory 让 internal/engine 在 init 时注册构造器。
+func RegisterSingBoxFactory(f func(config.Node, config.Front, func(string, ...any)) (Upstream, error)) {
+	singFactory = f
+}
+
+// NewUpstream 按节点配置创建出口实现。
+//
+// frontCfg 是已经解析好的前置（直连 / 全局代理 / 另一个节点的本地端口）。
+// 原生实现（socks5/http/wireguard）在 Dial 时使用运行期的 Front 实例；
+// sing-box 实现则需要在构造时就知道前置是什么，因为前置是写进它的配置里的。
+func NewUpstream(n config.Node, frontCfg config.Front, logf func(string, ...any)) (Upstream, error) {
+	switch n.Protocol {
+	case config.ProtocolHTTP:
+		return &httpUpstream{n: n}, nil
+
+	case config.ProtocolSOCKS5:
+		return &socks5Upstream{n: n}, nil
+
+	case config.ProtocolWireGuard:
 		if wgFactory == nil {
 			return nil, errors.New("当前构建未包含 WireGuard 支持")
 		}
-		// 构造器需要 Front，延迟到 Start 时注入；这里只做配置校验。
-		return &lazyWireGuardUpstream{u: u}, nil
-	case config.UpstreamTypeSocks5:
-		return &socks5Upstream{u: u}, nil
+		// WireGuard 需要一个 Front 来建立外层 UDP 通道，
+		// 这里按前置配置造一个（Front 本身无状态，会话状态在返回的连接里）。
+		return &lazyWireGuardUpstream{n: n, front: NewFront(frontCfg)}, nil
+
+	case config.ProtocolVMess, config.ProtocolVLESS,
+		config.ProtocolShadowsocks, config.ProtocolTrojan, config.ProtocolHysteria2:
+		if singFactory == nil {
+			return nil, fmt.Errorf("当前构建未包含 %s 支持", config.ProtocolLabel(n.Protocol))
+		}
+		return singFactory(n, frontCfg, logf)
+
 	default:
-		return nil, fmt.Errorf("不支持的上游类型 %q", u.Type)
+		return nil, fmt.Errorf("不支持的协议 %q", n.Protocol)
 	}
 }
 
 // ------------------------------------------------------------------
-// socks5 上游
+// socks5 出口
 // ------------------------------------------------------------------
 
 type socks5Upstream struct {
-	u config.Upstream
+	n config.Node
 }
 
-func (s *socks5Upstream) Describe() string                   { return s.u.Describe() }
+func (s *socks5Upstream) Describe() string                   { return s.n.Describe() }
 func (s *socks5Upstream) Start(context.Context, Front) error { return nil }
 func (s *socks5Upstream) Stop() error                        { return nil }
 func (s *socks5Upstream) SupportsUDP() bool                  { return true }
 
 func (s *socks5Upstream) DialTimeout() time.Duration {
-	return time.Duration(s.u.Timeout()) * time.Millisecond
+	return time.Duration(s.n.Timeout()) * time.Millisecond
 }
 
 func (s *socks5Upstream) Dial(ctx context.Context, front Front, target string) (net.Conn, error) {
-	conn, err := front.DialTCP(ctx, s.u.ServerAddress())
+	conn, err := front.DialTCP(ctx, s.n.Address())
 	if err != nil {
 		return nil, err
 	}
@@ -93,27 +116,27 @@ func (s *socks5Upstream) Dial(ctx context.Context, front Front, target string) (
 		return nil, err
 	}
 	_ = conn.SetDeadline(time.Now().Add(s.DialTimeout()))
-	if err := socks5Connect(conn, s.u.Username, s.u.Password, host, port); err != nil {
+	if err := socks5Connect(conn, s.n.Username, s.n.Password, host, port); err != nil {
 		conn.Close()
-		return nil, fmt.Errorf("住宅 SOCKS5 握手失败（连 %s）: %w", target, err)
+		return nil, fmt.Errorf("SOCKS5 出口握手失败（连 %s）: %w", target, err)
 	}
 	_ = conn.SetDeadline(time.Time{})
 	return conn, nil
 }
 
 func (s *socks5Upstream) DialUDP(ctx context.Context, front Front) (UDPChannel, error) {
-	ctrl, err := front.DialTCP(ctx, s.u.ServerAddress())
+	ctrl, err := front.DialTCP(ctx, s.n.Address())
 	if err != nil {
 		return nil, err
 	}
 	_ = ctrl.SetDeadline(time.Now().Add(s.DialTimeout()))
-	host, port, err := socks5UDPAssociate(ctrl, s.u.Username, s.u.Password)
+	host, port, err := socks5UDPAssociate(ctrl, s.n.Username, s.n.Password)
 	if err != nil {
 		ctrl.Close()
-		return nil, fmt.Errorf("住宅 SOCKS5 UDP ASSOCIATE 失败: %w", err)
+		return nil, fmt.Errorf("SOCKS5 出口不支持 UDP ASSOCIATE: %w", err)
 	}
 	if host == "" || host == "0.0.0.0" || host == "::" {
-		host = s.u.ServerHost
+		host = s.n.Server
 	}
 	_ = ctrl.SetDeadline(time.Time{})
 
@@ -124,30 +147,30 @@ func (s *socks5Upstream) DialUDP(ctx context.Context, front Front) (UDPChannel, 
 	relay, err := net.DialUDP("udp", nil, udpAddr)
 	if err != nil {
 		ctrl.Close()
-		return nil, fmt.Errorf("连接住宅 UDP relay %s 失败: %w", udpAddr, err)
+		return nil, fmt.Errorf("连接出口 UDP relay %s 失败: %w", udpAddr, err)
 	}
 	return newSocks5UDPChannel(ctrl, relay), nil
 }
 
 // ------------------------------------------------------------------
-// http 上游
+// http 出口
 // ------------------------------------------------------------------
 
 type httpUpstream struct {
-	u config.Upstream
+	n config.Node
 }
 
-func (h *httpUpstream) Describe() string                   { return h.u.Describe() }
+func (h *httpUpstream) Describe() string                   { return h.n.Describe() }
 func (h *httpUpstream) Start(context.Context, Front) error { return nil }
 func (h *httpUpstream) Stop() error                        { return nil }
 func (h *httpUpstream) SupportsUDP() bool                  { return false }
 
 func (h *httpUpstream) DialTimeout() time.Duration {
-	return time.Duration(h.u.Timeout()) * time.Millisecond
+	return time.Duration(h.n.Timeout()) * time.Millisecond
 }
 
 func (h *httpUpstream) Dial(ctx context.Context, front Front, target string) (net.Conn, error) {
-	conn, err := front.DialTCP(ctx, h.u.ServerAddress())
+	conn, err := front.DialTCP(ctx, h.n.Address())
 	if err != nil {
 		return nil, err
 	}
@@ -157,37 +180,44 @@ func (h *httpUpstream) Dial(ctx context.Context, front Front, target string) (ne
 		return nil, err
 	}
 	_ = conn.SetDeadline(time.Now().Add(h.DialTimeout()))
-	if err := httpConnect(conn, host, port, h.u.Username, h.u.Password); err != nil {
+	if err := httpConnect(conn, host, port, h.n.Username, h.n.Password); err != nil {
 		conn.Close()
-		return nil, fmt.Errorf("住宅 HTTP CONNECT 握手失败（连 %s）: %w", target, err)
+		return nil, fmt.Errorf("HTTP 出口 CONNECT 握手失败（连 %s）: %w", target, err)
 	}
 	_ = conn.SetDeadline(time.Time{})
 	return conn, nil
 }
 
 func (h *httpUpstream) DialUDP(context.Context, Front) (UDPChannel, error) {
-	return nil, fmt.Errorf("HTTP 住宅代理不支持 UDP: %w", ErrUDPUnsupported)
+	return nil, fmt.Errorf("HTTP 出口不支持 UDP: %w", ErrUDPUnsupported)
 }
 
 // ------------------------------------------------------------------
-// WireGuard 上游的延迟构造包装
+// WireGuard 出口的延迟构造包装
 // ------------------------------------------------------------------
 
-// lazyWireGuardUpstream 在 Start() 时用真实的 Front 创建底层 wireguard 上游，
-// 这样 Front 实例（可能因配置变化被重建）始终是最新的。
+// lazyWireGuardUpstream 在 Start() 时才创建底层 wireguard 出口。
+//
+// 这样"点激活"之前的构造阶段不会去碰网络，失败也能在激活时明确报出来。
 type lazyWireGuardUpstream struct {
-	u     config.Upstream
+	n     config.Node
+	front Front
 	inner Upstream
 }
 
-func (l *lazyWireGuardUpstream) Describe() string { return l.u.Describe() }
+func (l *lazyWireGuardUpstream) Describe() string { return l.n.Describe() }
 
 func (l *lazyWireGuardUpstream) Start(ctx context.Context, front Front) error {
 	if l.inner == nil {
 		if wgFactory == nil {
 			return errors.New("当前构建未包含 WireGuard 支持")
 		}
-		inner, err := wgFactory(l.u, front)
+		// 优先用调用方传进来的前置；没传就用构造时根据配置生成的。
+		f := front
+		if f == nil {
+			f = l.front
+		}
+		inner, err := wgFactory(l.n, f)
 		if err != nil {
 			return err
 		}
@@ -217,8 +247,10 @@ func (l *lazyWireGuardUpstream) DialUDP(ctx context.Context, front Front) (UDPCh
 	return l.inner.DialUDP(ctx, front)
 }
 
-func (l *lazyWireGuardUpstream) SupportsUDP() bool { return l.inner != nil && l.inner.SupportsUDP() }
+func (l *lazyWireGuardUpstream) SupportsUDP() bool {
+	return l.inner != nil && l.inner.SupportsUDP()
+}
 
 func (l *lazyWireGuardUpstream) DialTimeout() time.Duration {
-	return time.Duration(l.u.Timeout()) * time.Millisecond
+	return time.Duration(l.n.Timeout()) * time.Millisecond
 }

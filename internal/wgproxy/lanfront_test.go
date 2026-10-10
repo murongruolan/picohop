@@ -103,22 +103,21 @@ func TestWireGuardThroughFrontOnLAN(t *testing.T) {
 	})
 	defer front.Close()
 
-	cfg := config.Upstream{
-		Name: "局域网前置测试", Type: config.UpstreamTypeWireGuard,
-		ListenHost: "127.0.0.1", ListenPort: 10830, TimeoutMs: 20000,
+	node := config.Node{
+		Name: "局域网前置测试", Protocol: config.ProtocolWireGuard,
+		ListenHost: "127.0.0.1", ListenPort: 10830,
+		Server: lanIP, Port: port,
 		WireGuard: &config.WireGuardConfig{
 			PrivateKey:    hexToB64(clientKeys.privHex),
 			Address:       clientIP + "/32",
 			PeerPublicKey: hexToB64(serverKeys.pubHex),
-			EndpointHost:  lanIP,
-			EndpointPort:  port,
 			AllowedIPs:    serverIP + "/32",
 			// 【必须有】keepalive=0 且没有数据要发时，WireGuard 不会主动发起握手，
 			// 于是表现为 tx_bytes=0、一直没有握手包。测试里漏掉这项会得出错误结论。
 			PersistentKeepalive: 25, MTU: 1420,
 		},
 	}
-	up, err := New(cfg, front)
+	up, err := New(node, front)
 	if err != nil {
 		t.Fatalf("构造客户端失败：%v", err)
 	}

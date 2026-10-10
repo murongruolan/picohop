@@ -46,25 +46,24 @@ func TestWireGuardRealServer(t *testing.T) {
 	}
 	port, _ := strconv.Atoi(portStr)
 
-	cfg := config.Upstream{
+	node := config.Node{
 		Name:       "真实WG",
-		Type:       config.UpstreamTypeWireGuard,
+		Protocol:   config.ProtocolWireGuard,
 		ListenHost: "127.0.0.1",
 		ListenPort: 10813,
-		TimeoutMs:  20000,
+		Server:     host,
+		Port:       port,
 		WireGuard: &config.WireGuardConfig{
 			PrivateKey:          os.Getenv("CHAINPROXY_WG_PRIVKEY"),
 			Address:             envOr("CHAINPROXY_WG_ADDR", "10.8.0.2/32"),
 			PeerPublicKey:       os.Getenv("CHAINPROXY_WG_PUBKEY"),
 			PresharedKey:        os.Getenv("CHAINPROXY_WG_PSK"),
-			EndpointHost:        host,
-			EndpointPort:        port,
 			AllowedIPs:          envOr("CHAINPROXY_WG_ALLOWED", "10.8.0.0/24"),
 			PersistentKeepalive: 25,
 			MTU:                 1420,
 		},
 	}
-	if cfg.WireGuard.PrivateKey == "" || cfg.WireGuard.PeerPublicKey == "" {
+	if node.WireGuard.PrivateKey == "" || node.WireGuard.PeerPublicKey == "" {
 		t.Fatal("必须设置 CHAINPROXY_WG_PRIVKEY 与 CHAINPROXY_WG_PUBKEY")
 	}
 
@@ -73,12 +72,12 @@ func TestWireGuardRealServer(t *testing.T) {
 
 	// 先把"本端公钥"算出来打印。服务端的 peer 配置里必须就是这一个，
 	// 否则 WireGuard 只会静默丢包，看不出任何错误。
-	if myPub, kerr := PublicKeyFromPrivate(cfg.WireGuard.PrivateKey); kerr == nil {
+	if myPub, kerr := PublicKeyFromPrivate(node.WireGuard.PrivateKey); kerr == nil {
 		t.Logf("本端公钥（服务端 peer 必须配置这一个）= %s", myPub)
 	} else {
 		t.Logf("私钥解析失败：%v", kerr)
 	}
-	t.Logf("对端公钥（我们用来连接的服务端）= %s", cfg.WireGuard.PeerPublicKey)
+	t.Logf("对端公钥（我们用来连接的服务端）= %s", node.WireGuard.PeerPublicKey)
 
 	frontCfg := config.Front{Type: config.FrontTypeDirect, TimeoutMs: 8000}
 	if envOr("CHAINPROXY_WG_FRONT", "direct") == "socks5" {
@@ -104,7 +103,7 @@ func TestWireGuardRealServer(t *testing.T) {
 	t.Log("第 0 步通过：UDP 探针已发出（对端对非法包静默丢弃属正常）")
 
 	// ---- 第 1 步：起隧道 ----
-	up, err := New(cfg, front)
+	up, err := New(node, front)
 	if err != nil {
 		t.Fatalf("构造上游失败：%v", err)
 	}

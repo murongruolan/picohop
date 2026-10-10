@@ -11,10 +11,13 @@ import (
 	"chainproxy/internal/config"
 )
 
-// Server 是一条链路的本地监听服务：绑定一个端口，处理所有客户端连接。
+// Server 是一个节点的本地监听服务：绑定一个端口，处理所有客户端连接。
+//
+// 它同时暴露 mixed 协议（SOCKS5 + HTTP），并把流量经"前置 → 出口"转发出去。
 type Server struct {
 	mu       sync.Mutex
-	cfg      config.Upstream
+	node     config.Node
+	frontCfg config.Front
 	front    Front
 	upstream Upstream
 	handler  *Handler
@@ -27,28 +30,37 @@ type Server struct {
 }
 
 // NewServer 构造监听服务（此时尚未绑定端口）。
-func NewServer(cfg config.Upstream, front Front, logf func(string, ...any)) (*Server, error) {
-	up, err := NewUpstream(cfg)
+//
+// node.ListenHost 应当是**已经解析好的**实际监听地址
+// （见 config.Config.ListenHostEffective）——这里不再做 AllowLan 判断，
+// 免得同一套规则散落在两个包里。
+func NewServer(node config.Node, frontCfg config.Front, logf func(string, ...any)) (*Server, error) {
+	front := NewFront(frontCfg)
+	up, err := NewUpstream(node, frontCfg, logf)
 	if err != nil {
 		return nil, err
 	}
+
 	var auth *Auth
-	if cfg.ListenUsername != "" || cfg.ListenPassword != "" {
-		auth = &Auth{Username: cfg.ListenUsername, Password: cfg.ListenPassword}
+	if node.ListenUsername != "" || node.ListenPassword != "" {
+		auth = &Auth{Username: node.ListenUsername, Password: node.ListenPassword}
 	}
+
 	idle := 300 * time.Second
-	if cfg.TimeoutMs > 0 {
-		idle = time.Duration(cfg.TimeoutMs) * time.Millisecond
+	if node.Timeout() > 0 {
+		idle = time.Duration(node.Timeout()) * time.Millisecond
 	}
+
 	s := &Server{
-		cfg:      cfg,
+		node:     node,
+		frontCfg: frontCfg,
 		front:    front,
 		upstream: up,
 		stats:    &Stats{},
 		conns:    make(map[net.Conn]struct{}),
 	}
 	s.handler = &Handler{
-		Name:     cfg.Name,
+		Name:     node.Name,
 		Front:    front,
 		Upstream: up,
 		Listen:   auth,
@@ -60,29 +72,31 @@ func NewServer(cfg config.Upstream, front Front, logf func(string, ...any)) (*Se
 	return s, nil
 }
 
-// Start 绑定端口、启动上游、开始接受连接。
+// Start 绑定端口、启动出口、开始接受连接。
 func (s *Server) Start() error {
 	if s.started.Load() {
 		return nil
 	}
-	host := s.cfg.ListenHost
+	host := s.node.ListenHost
 	if host == "" {
 		host = "127.0.0.1"
 	}
-	addr := net.JoinHostPort(host, fmt.Sprint(s.cfg.ListenPort))
+	addr := net.JoinHostPort(host, fmt.Sprint(s.node.ListenPort))
 
-	// 先启动上游（WireGuard 需要在这里握手），再绑定端口。
+	// 先启动出口（WireGuard 需要在这里握手、sing-box 要在这里拉实例），再绑定端口。
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := s.upstream.Start(ctx, s.front); err != nil {
 		s.setErr(err)
-		return fmt.Errorf("上游启动失败: %w", err)
+		return fmt.Errorf("出口启动失败: %w", err)
 	}
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		s.setErr(err)
-		return fmt.Errorf("端口 %d 绑定失败: %w", s.cfg.ListenPort, err)
+		// 端口没绑上就把已经起来的出口关掉，避免留下后台实例
+		_ = s.upstream.Stop()
+		return fmt.Errorf("端口 %d 绑定失败: %w", s.node.ListenPort, err)
 	}
 
 	s.mu.Lock()
@@ -162,8 +176,7 @@ func (s *Server) Stop() error {
 	for _, c := range conns {
 		_ = c.Close()
 	}
-	_ = s.upstream.Stop()
-	return nil
+	return s.upstream.Stop()
 }
 
 // Addr 返回实际监听地址（Start 之后有效）。
@@ -171,16 +184,16 @@ func (s *Server) Addr() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.ln == nil {
-		return net.JoinHostPort(s.cfg.ListenHost, fmt.Sprint(s.cfg.ListenPort))
+		return net.JoinHostPort(s.node.ListenHost, fmt.Sprint(s.node.ListenPort))
 	}
 	return s.ln.Addr().String()
 }
 
-// Name 返回链路名称（住宅代理名）。
-func (s *Server) Name() string { return s.cfg.Name }
+// Name 返回节点别名。
+func (s *Server) Name() string { return s.node.Name }
 
 // ListenPort 返回配置中的端口号。
-func (s *Server) ListenPort() int { return s.cfg.ListenPort }
+func (s *Server) ListenPort() int { return s.node.ListenPort }
 
 // Stats 返回流量统计。
 func (s *Server) Stats() *Stats { return s.stats }

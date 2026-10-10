@@ -120,18 +120,17 @@ func TestWireGuardEndToEnd(t *testing.T) {
 	}()
 
 	// ---------------- 客户端（本项目的 wgproxy） ----------------
-	cfg := config.Upstream{
+	node := config.Node{
 		Name:       "测试WG",
-		Type:       config.UpstreamTypeWireGuard,
+		Protocol:   config.ProtocolWireGuard,
 		ListenHost: "127.0.0.1",
 		ListenPort: 10812,
-		TimeoutMs:  15000,
+		Server:     "127.0.0.1",
+		Port:       serverPort,
 		WireGuard: &config.WireGuardConfig{
 			PrivateKey:    clientKeys.privHex,
 			Address:       clientIP + "/32",
 			PeerPublicKey: serverKeys.pubHex,
-			EndpointHost:  "127.0.0.1",
-			EndpointPort:  serverPort,
 			// 可用环境变量换成全隧道写法，用来验证用户的 "0.0.0.0/0, ::/0" 配置
 			AllowedIPs: envOr("CHAINPROXY_WG_E2E_ALLOWED", "10.77.0.0/24"), MTU: 1420,
 			PersistentKeepalive: 25,
@@ -141,7 +140,7 @@ func TestWireGuardEndToEnd(t *testing.T) {
 	front := proxy.NewFront(config.Front{Type: config.FrontTypeDirect})
 	defer front.Close()
 
-	u, err := New(cfg, front)
+	u, err := New(node, front)
 	if err != nil {
 		t.Fatalf("构造上游失败：%v", err)
 	}
