@@ -9,3 +9,5 @@ import (
 func randRead(p []byte) (int, error) { return rand.Read(p) }
 
 func nowNano() int64 { return time.Now().UnixNano() }
+
+func nowTime() time.Time { return time.Now() }
