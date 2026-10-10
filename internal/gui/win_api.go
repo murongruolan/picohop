@@ -174,19 +174,26 @@ func setProcessDPIAware() {
 // GDI / 字体
 // ---------------------------------------------------------------------------
 
-func createFont(height, width, escapement, orientation, weight int32, italic, underline, strikeOut uint32,
-	family, face string) uintptr {
-	pFamily, _ := utf16Ptr(family)
+// createFont 是 CreateFontW 的薄封装。
+//
+// CreateFontW 一共 14 个参数（最后一个是字体名），
+// 之前这里多传了一个 family，导致**真正的字体名参数被错位**——
+// 界面实际用的是回退字体，中文宽度比预期大得多，于是所有按钮/标签都超宽。
+func createFont(height, weight int32, face string) uintptr {
 	pFace, _ := utf16Ptr(face)
+	const (
+		defaultCharSet = 0
+		outDefaultPrec = 0
+		clipDefault    = 0
+		cleartypeQual  = 5
+		defaultPitch   = 0
+	)
 	r, _, _ := pCreateFontW.Call(
-		uintptr(height), uintptr(width), uintptr(escapement), uintptr(orientation), uintptr(weight),
-		uintptr(italic), uintptr(underline), uintptr(strikeOut),
-		0, // DEFAULT_CHARSET
-		0, // OUT_DEFAULT_PRECIS
-		0, // CLIP_DEFAULT_PRECIS
-		5, // CLEARTYPE_QUALITY
-		0, // DEFAULT_PITCH | FF_DONTCARE
-		uintptr(unsafe.Pointer(pFamily)), uintptr(unsafe.Pointer(pFace)))
+		uintptr(height), 0, 0, 0, uintptr(weight),
+		0, 0, 0, // bItalic / bUnderline / bStrikeOut
+		uintptr(defaultCharSet), uintptr(outDefaultPrec), uintptr(clipDefault),
+		uintptr(cleartypeQual), uintptr(defaultPitch),
+		uintptr(unsafe.Pointer(pFace)))
 	return r
 }
 
@@ -332,4 +339,45 @@ func lvSetExtendedStyle(hwnd uintptr, style uintptr) {
 
 func lvSelectedItem(hwnd uintptr) int32 {
 	return lvGetNextItem(hwnd, -1, 0x0002 /* LVNI_SELECTED */)
+}
+
+// ---------------------------------------------------------------------------
+// 文字测量（布局体检用）
+// ---------------------------------------------------------------------------
+
+var (
+	pGetDCZero    = user32.NewProc("GetDC")
+	pReleaseDCAll = user32.NewProc("ReleaseDC")
+)
+
+type size struct{ CX, CY int32 }
+
+func getDCZero(hwnd uintptr) uintptr {
+	r, _, _ := pGetDCZero.Call(hwnd)
+	return r
+}
+
+func releaseDCZero(hwnd uintptr, hdc uintptr) {
+	if hdc != 0 {
+		pReleaseDCAll.Call(hwnd, hdc)
+	}
+}
+
+func selectObject(hdc, obj uintptr) uintptr {
+	r, _, _ := pSelectObject.Call(hdc, obj)
+	return r
+}
+
+// getTextExtentPoint32 量出字符串在指定 DC 上占的像素宽度。
+func getTextExtentPoint32(hdc uintptr, s string) int {
+	if hdc == 0 {
+		return 0
+	}
+	p, _ := utf16Ptr(s)
+	var sz size
+	r, _, _ := pGetTextExtentPoint32W.Call(hdc, uintptr(unsafe.Pointer(p)), uintptr(len(s)), uintptr(unsafe.Pointer(&sz)))
+	if r == 0 {
+		return 0
+	}
+	return int(sz.CX)
 }

@@ -49,6 +49,21 @@ for ($i = 1; $i -le $Repeat; $i++) {
     Check "第 $i 次：前置地址已回填" ($s -match '127\.0\.0\.1' -and $s -match '10808') ""
     Check "第 $i 次：住宅代理表格已渲染" ($s -match '住宅代理列表（表格文本）' -and $s -match '10810') ""
     Check "第 $i 次：链路状态已就绪" ($s -match 'running' -or $s -match 'stopped') ""
+
+    # 布局体检：控件必须全部落在客户区内，文字必须全部装得下控件。
+    # 这两条是"界面错位 / 按钮文字超出"的直接防线。
+    $overflowCtrl = 0
+    if ($s -match '超出客户区的控件：(\d+) 个') { $overflowCtrl = [int]$Matches[1] }
+    Check "第 $i 次：没有控件越出窗口" ($overflowCtrl -eq 0) "(越界 $overflowCtrl 个)"
+
+    $overflowText = 0
+    if ($s -match '文字宽度超过控件宽度：(\d+) 个') { $overflowText = [int]$Matches[1] }
+    Check "第 $i 次：没有文字被控件截断" ($overflowText -eq 0) "(截断 $overflowText 个)"
+
+    # 点击模拟：按钮必须真的产生可观测效果（防止"点了没反应"复发）
+    $clickFail = ([regex]::Matches($s, '\[FAIL\]|❌')).Count
+    $clickWarn = ([regex]::Matches($s, '⚠️')).Count
+    Check "第 $i 次：所有按钮点击都有响应" ($clickFail -eq 0 -and $clickWarn -eq 0) "(❌ $clickFail / ⚠️ $clickWarn)"
 }
 
 Write-Host "`n[编辑对话框自检]"
@@ -62,6 +77,14 @@ if (Test-Path $dump) {
     Check "对话框自检报告已生成" ($s -match '编辑对话框自检报告') ""
     Check "对话框含名称/类型/本地端口字段" ($s -match '名称' -and $s -match '类型' -and $s -match '本地端口') ""
     Check "对话框含 WireGuard 分组" ($s -match 'WireGuard') ""
+
+    # 对话框同样要过布局体检
+    $dCtrl = 0
+    if ($s -match '对话框[\s\S]*?超出客户区的控件：(\d+) 个') { $dCtrl = [int]$Matches[1] }
+    Check "对话框没有控件越出窗口" ($dCtrl -eq 0) "(越界 $dCtrl 个)"
+    $dText = 0
+    if ($s -match '对话框[\s\S]*?文字宽度超过控件宽度：(\d+) 个') { $dText = [int]$Matches[1] }
+    Check "对话框没有文字被截断" ($dText -eq 0) "(截断 $dText 个)"
 } else {
     Check "对话框自检报告已生成" $false ""
 }

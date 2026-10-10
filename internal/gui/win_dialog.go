@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
+	"unsafe"
 
 	"chainproxy/internal/config"
 )
@@ -44,7 +45,7 @@ const (
 )
 
 // dgParse 属于"住宅代理"控件组，不能写成 const（groupID 是函数）。
-var dgParse = id(groupID(gUpstream) | 40)
+var dgParse = id(groupID(gUpstream) + 40)
 
 var dlgClassName = mustUTF16("ChainProxyEditDialog")
 
@@ -145,91 +146,159 @@ func (d *dlgState) dpi() int32 {
 // 布局
 // ---------------------------------------------------------------------------
 
+// build 用**实测文字宽度**排版，不再靠估算。
+// 每个"标签 + 输入框"对都由 labelRightAuto + 精确宽度组成，
+// 配合 scripts\test_ui.ps1 的对话框布局体检可以杜绝文字被截断。
 func (d *dlgState) build() {
 	f := d.parent.fonts
-	d.l = layout{parent: d.hwnd, inst: d.inst, fRegular: f.regular, fBold: f.bold, fMono: f.mono}
-	s := func(v int32) int32 { return scaleDPI(v, d.dpi()) }
+	d.l = layout{parent: d.hwnd, inst: d.inst, dpi: d.dpi(),
+		fRegular: f.regular, fBold: f.bold, fMono: f.mono}
+	s := d.l.s
 
-	d.cName = d.l.edit(dgName, s(78), s(13), s(240), s(24), 0)
-	d.l.label("名称", groupID(gUpstream)|1, s(30), s(17), s(44), s(18))
-	d.l.label("类型", groupID(gUpstream)|2, s(340), s(17), s(40), s(18))
-	d.cType = d.l.combo(dgType, dlgTypes, s(384), s(13), s(150), s(160))
-	d.cEnable = d.l.checkbox("启用此代理", dgEnable, s(440), s(46), s(130), s(22))
+	// 以实际客户区为准
+	var cr RECT
+	pGetClientRect.Call(d.hwnd, uintptr(unsafe.Pointer(&cr)))
+	cw := cr.Right - cr.Left
+	const pad = 18
+	inner := cw - pad*2
 
-	// 快速导入
-	d.l.group("快速导入 —— 可直接粘贴 user:pass@host:port", groupID(gUpstream)|3, s(18), s(78), s(564), s(62))
-	d.cQuick = d.l.edit(dgQuick, s(30), s(98), s(400), s(24), 0)
-	d.l.button("解析并填入", dgParse, s(438), s(96), s(132), s(26))
-
-	// 本地端口
-	d.l.group("本地端口 —— 浏览器 / 软件里填这个", groupID(gUpstream)|5, s(18), s(148), s(564), s(96))
-	d.l.label("地址", groupID(gUpstream)|6, s(30), s(178), s(34), s(18))
-	d.cLHost = d.l.edit(dgLHost, s(68), s(174), s(130), s(24), 0)
-	d.l.label("端口", groupID(gUpstream)|7, s(206), s(178), s(34), s(18))
-	d.cListen = d.l.edit(dgListen, s(244), s(174), s(84), s(24), esNumber)
-	d.l.make(control{Class: "STATIC", Text: "端口全局唯一，重复会在保存时拦截", Style: wsChild | wsVisible | ssLeft, ID: groupID(gUpstream) | 30}, s(342), s(180), s(232), s(18)).font(f.tiny)
-
-	d.l.label("端口账号", groupID(gUpstream)|8, s(30), s(212), s(56), s(18))
-	d.cLUser = d.l.edit(dgLUser, s(90), s(208), s(110), s(24), 0)
-	d.l.label("密码", groupID(gUpstream)|9, s(212), s(212), s(34), s(18))
-	d.cLPass = d.l.edit(dgLPass, s(250), s(208), s(110), s(24), esPassword)
-	d.l.make(control{Class: "STATIC", Text: "默认只监听 127.0.0.1，可留空", Style: wsChild | wsVisible | ssLeft, ID: groupID(gUpstream) | 31}, s(372), s(214), s(200), s(18)).font(f.tiny)
-
-	// 住宅代理服务器
-	d.cServerGroup = d.l.group("住宅代理服务器 —— 本程序会经前置代理连接它", dgServerGroup, s(18), s(252), s(564), s(108))
-	d.l.make(control{Class: "STATIC", Text: "DNS 由住宅代理解析，本地不做污染的解析", Style: wsChild | wsVisible | ssLeft, ID: groupID(gUpstream) | 32}, s(30), s(340), s(540), s(18)).font(f.tiny)
-	d.cServerLbls = append(d.cServerLbls,
-		d.l.label("地址", groupID(gUpstream)|10, s(30), s(282), s(40), s(18)),
-		d.l.label("端口", groupID(gUpstream)|11, s(352), s(282), s(34), s(18)),
-		d.l.label("用户名", groupID(gUpstream)|12, s(30), s(316), s(48), s(18)),
-		d.l.label("密码", groupID(gUpstream)|13, s(230), s(316), s(34), s(18)),
-		d.l.label("超时ms", groupID(gUpstream)|14, s(396), s(316), s(50), s(18)),
-	)
-	d.cHost = d.l.edit(dgHost, s(74), s(278), s(270), s(24), 0)
-	d.cPort = d.l.edit(dgPort, s(390), s(278), s(84), s(24), esNumber)
-	d.cUser = d.l.edit(dgUser, s(82), s(312), s(140), s(24), 0)
-	d.cPass = d.l.edit(dgPass, s(268), s(312), s(120), s(24), esPassword)
-	d.cTimeout = d.l.edit(dgTimeout, s(450), s(312), s(84), s(24), esNumber)
-	d.cServerCtrls = []ctrl{d.cHost, d.cPort, d.cUser, d.cPass, d.cTimeout}
-
-	// WireGuard
-	d.cWGGroup = d.l.group("WireGuard 隧道 —— 纯用户态，不需要驱动、不改系统路由", dgWGGroup, s(18), s(368), s(564), s(228))
-	wgField := func(label string, cid int32, lx, ex, ey, ew int32) ctrl {
-		d.wgLbls = append(d.wgLbls, d.l.label(label, id(cid+1000), s(lx), s(ey+4), s(ex-lx-4), s(18)))
-		ct := d.l.edit(id(cid), s(ex), s(ey), s(ew), s(24), 0)
-		d.wgCtrls = append(d.wgCtrls, ct)
-		return ct
+	// 便捷：造一个"左对齐标签 + 输入框"整体，返回下一个可用 x。
+	//
+	// 注意这里必须**左对齐**：早先用 labelRightAuto 把标签右对齐到 x 上，
+	// 结果第一个标签被推到了负坐标（x - 标签宽），整列标签都跑到窗口左边界外面。
+	labeled := func(text string, cid id, x, y, fieldW, h int32) int32 {
+		lw := d.l.measure(d.l.fRegular, text) + 10
+		d.l.make(control{Class: "STATIC", Text: text, Style: wsChild | wsVisible | ssLeft, ID: cid + 1000},
+			x, y+s(4), lw, s(18))
+		d.l.edit(id(cid), x+lw+s(8), y-s(4), fieldW, h, 0)
+		return x + lw + s(8) + fieldW
 	}
-	d.cWGPriv = wgField("私钥", dgWGPriv, 30, 84, 396, 470)
-	d.cWGAddr = wgField("隧道地址", dgWGAddr, 30, 90, 428, 464)
-	d.cWGPub = wgField("对端公钥", dgWGPub, 30, 90, 460, 464)
-	d.cWGEHost = wgField("服务器", dgWGEHost, 30, 84, 492, 300)
-	d.wgLbls = append(d.wgLbls, d.l.label("端口", groupID(gUpstream)|50, s(392), s(496), s(34), s(18)))
-	d.cWGEPort = d.l.edit(dgWGEPort, s(430), s(492), s(100), s(24), esNumber)
+
+	// ---- 第一行：名称 / 类型 / 启用 ----
+	nmX := s(pad)
+	nlw := d.l.measure(d.l.fRegular, "名称") + 10
+	d.l.make(control{Class: "STATIC", Text: "名称", Style: wsChild | wsVisible | ssLeft, ID: groupID(gUpstream) + 1},
+		nmX, s(17), nlw, s(18))
+	d.cName = d.l.edit(dgName, nmX+nlw+s(8), s(13), s(230), s(24), 0)
+
+	x2 := s(296)
+	tlw := d.l.measure(d.l.fRegular, "类型") + 10
+	d.l.make(control{Class: "STATIC", Text: "类型", Style: wsChild | wsVisible | ssLeft, ID: groupID(gUpstream) + 2},
+		x2, s(17), tlw, s(18))
+	d.cType = d.l.combo(dgType, dlgTypes, x2+tlw+s(8), s(13), s(136), s(160))
+	d.cEnable = d.l.checkbox("启用此代理", dgEnable, cw-s(196), s(15), s(178), s(22))
+
+	// ---- 快速导入 ----
+	by := s(44)
+	d.l.group(d.l.fitGroupTitle("快速导入 —— 可直接粘贴 user:pass@host:port", inner-s(20)), groupID(gUpstream)+3, s(pad), by, inner, s(62))
+	d.cQuick = d.l.edit(dgQuick, s(pad+12), by+s(20), inner-s(160), s(24), 0)
+	// 按钮宽度先算出来再定位，否则会像之前那样从右边溢出
+	_, wParse := d.l.buttonAuto("解析并填入", dgParse, 0, by+s(18), s(96), s(28))
+	moveCtrl(getCtrlByID(d.hwnd, dgParse), cw-s(pad+12)-wParse, by+s(18), wParse, s(28))
+
+	// ---- 本地端口 ----
+	cy := s(114)
+	d.l.group(d.l.fitGroupTitle("本地端口 —— 浏览器 / 软件里填这个", inner-s(20)), groupID(gUpstream)+5, s(pad), cy, inner, s(100))
+
+	// hint 造一条"按剩余空间自动截断"的说明文字，避免文字溢出控件
+	hint := func(text string, cid id, x, right, y int32) ctrl {
+		w := right - x
+		if w < s(40) {
+			return 0
+		}
+		c := d.l.make(control{Class: "STATIC", Text: d.l.ellipsize(text, w-s(4)),
+			Style: wsChild | wsVisible | ssLeft, ID: cid}, x, y, w, s(18))
+		c.font(f.tiny)
+		return c
+	}
+
+	rowA := cy + s(28)
+	nx := labeled("地址", groupID(gUpstream)+6, s(pad+14), rowA, s(150), s(24))
+	nx = labeled("端口", groupID(gUpstream)+7, nx+s(18), rowA, s(90), s(24))
+	hint("端口全局唯一，重复会被拦截", groupID(gUpstream)+30, nx+s(18), cw-s(pad+14), rowA+s(4))
+
+	rowB := rowA + s(34)
+	nx = labeled("端口账号", groupID(gUpstream)+8, s(pad+14), rowB, s(110), s(24))
+	nx = labeled("密码", groupID(gUpstream)+9, nx+s(18), rowB, s(110), s(24))
+	hint("默认只监听 127.0.0.1，可留空", groupID(gUpstream)+31, nx+s(18), cw-s(pad+14), rowB+s(4))
+
+	// ---- 住宅代理服务器 ----
+	dy := s(222)
+	d.cServerGroup = d.l.group(d.l.fitGroupTitle("住宅代理服务器 —— 本程序会经前置代理连接它", inner-s(20)), dgServerGroup, s(pad), dy, inner, s(100))
+	rowC := dy + s(28)
+	nx = labeled("地址", groupID(gUpstream)+10, s(pad+14), rowC, s(230), s(24))
+	nx = labeled("端口", groupID(gUpstream)+11, nx+s(18), rowC, s(90), s(24))
+	d.cServerLbls = append(d.cServerLbls,
+		hint("域名交给住宅代理解析", groupID(gUpstream)+32, nx+s(18), cw-s(pad+14), rowC+s(4)))
+
+	rowD := rowC + s(34)
+	nx = labeled("用户名", groupID(gUpstream)+12, s(pad+14), rowD, s(84), s(24))
+	nx = labeled("密码", groupID(gUpstream)+13, nx+s(14), rowD, s(88), s(24))
+	nx = labeled("超时", groupID(gUpstream)+14, nx+s(14), rowD, s(76), s(24))
+	d.cServerLbls = append(d.cServerLbls,
+		hint("本地不做可能被污染的 DNS 解析", groupID(gUpstream)+33, s(pad+14), cw-s(pad+14), rowD+s(32)))
+
+	// 上面 labeled() 造的是普通 EDIT，这里把需要联动的几个换成具名句柄
+	d.cLHost = getCtrlByID(d.hwnd, groupID(gUpstream)+6)
+	d.cListen = getCtrlByID(d.hwnd, groupID(gUpstream)+7)
+	d.cLUser = getCtrlByID(d.hwnd, groupID(gUpstream)+8)
+	d.cLPass = getCtrlByID(d.hwnd, groupID(gUpstream)+9)
+	d.cHost = getCtrlByID(d.hwnd, groupID(gUpstream)+10)
+	d.cPort = getCtrlByID(d.hwnd, groupID(gUpstream)+11)
+	d.cUser = getCtrlByID(d.hwnd, groupID(gUpstream)+12)
+	d.cPass = getCtrlByID(d.hwnd, groupID(gUpstream)+13)
+	d.cTimeout = getCtrlByID(d.hwnd, groupID(gUpstream)+14)
+
+	// ---- WireGuard ----
+	wy := s(330)
+	d.cWGGroup = d.l.group(d.l.fitGroupTitle("WireGuard 隧道 —— 纯用户态，不需要驱动、不改系统路由", inner-s(20)), dgWGGroup, s(pad), wy, inner, s(226))
+	// wgRow 造一行"左对齐标签 + 输入框"，返回输入框右边界。
+	// 之前这里同时造了一个右对齐标签和一个左对齐标签，
+	// 右对齐那个被推到 x=-16，体检报告立刻就把问题抓出来了。
+	wgRow := func(text string, cid id, y, fieldW int32) int32 {
+		lw := d.l.measure(d.l.fRegular, text) + 10
+		d.wgLbls = append(d.wgLbls, d.l.label(text, cid+1000, s(pad+14), y+s(4), lw, s(18)))
+		ct := d.l.edit(id(cid), s(pad+14)+lw+s(8), y-s(4), fieldW, s(24), 0)
+		d.wgCtrls = append(d.wgCtrls, ct)
+		return s(pad+14) + lw + s(8) + fieldW
+	}
+	wgRow("私钥", dgWGPriv, wy+s(26), s(280))
+	wgRow("隧道地址", dgWGAddr, wy+s(56), s(280))
+	wgRow("对端公钥", dgWGPub, wy+s(86), s(280))
+	hostRight := wgRow("服务器", dgWGEHost, wy+s(116), s(180))
+	d.wgLbls = append(d.wgLbls, d.l.label("端口", groupID(gUpstream)+50, hostRight+s(16), wy+s(120), s(66), s(18)))
+	d.cWGEPort = d.l.edit(dgWGEPort, hostRight+s(16)+s(66), wy+s(112), s(90), s(24), esNumber)
 	d.wgCtrls = append(d.wgCtrls, d.cWGEPort)
-	d.cWGAllow = wgField("AllowedIPs", dgWGAllow, 30, 104, 524, 300)
-	d.wgLbls = append(d.wgLbls, d.l.label("Keepalive", groupID(gUpstream)|51, s(414), s(528), s(62), s(18)))
-	d.cWGKeep = d.l.edit(dgWGKeep, s(480), s(524), s(80), s(24), esNumber)
+	allowRight := wgRow("AllowedIPs", dgWGAllow, wy+s(146), s(200))
+	d.wgLbls = append(d.wgLbls, d.l.label("Keepalive", groupID(gUpstream)+51, allowRight+s(16), wy+s(150), s(76), s(18)))
+	d.cWGKeep = d.l.edit(dgWGKeep, allowRight+s(16)+s(76), wy+s(142), s(70), s(24), esNumber)
 	d.wgCtrls = append(d.wgCtrls, d.cWGKeep)
-	d.cWGMTU = wgField("MTU", dgWGMTU, 30, 68, 556, 100)
-	d.wgLbls = append(d.wgLbls, d.l.make(control{
-		Class: "STATIC",
-		Text:  "隧道地址示例 10.7.0.2/32；域名一律本地解析后送入隧道",
-		Style: wsChild | wsVisible | ssLeft, ID: groupID(gUpstream) | 52,
-	}, s(184), s(560), s(380), s(18)))
-	d.wgLbls[len(d.wgLbls)-1].font(f.tiny)
+	mtuRight := wgRow("MTU", dgWGMTU, wy+s(176), s(90))
+	d.wgLbls = append(d.wgLbls,
+		hint("隧道地址示例 10.7.0.2/32；域名先本地解析再送入隧道", groupID(gUpstream)+52, mtuRight+s(20), cw-s(pad+14), wy+s(180)))
+
+	// 记住具名句柄
+	d.cWGPriv = getCtrlByID(d.hwnd, dgWGPriv)
+	d.cWGAddr = getCtrlByID(d.hwnd, dgWGAddr)
+	d.cWGPub = getCtrlByID(d.hwnd, dgWGPub)
+	d.cWGEHost = getCtrlByID(d.hwnd, dgWGEHost)
+	d.cWGAllow = getCtrlByID(d.hwnd, dgWGAllow)
+	d.cWGMTU = getCtrlByID(d.hwnd, dgWGMTU)
 
 	d.cStatus = d.l.make(control{
 		Class: "STATIC", Text: "", Style: wsChild | wsVisible | ssLeft | ssEndEllipsis, ID: dgStatus,
-	}, s(18), s(604), s(564), s(20))
+	}, s(pad), s(564), inner, s(20))
 
-	d.l.button("取消", dgCancel, s(400), s(628), s(90), s(30))
-	d.l.defButton("确定", dgOK, s(496), s(628), s(86), s(30))
+	// 底部按钮：右对齐，宽度按文字
+	_, wOK := d.l.defButtonAuto("确定", dgOK, 0, s(594), s(76), s(30))
+	_, wCancel := d.l.buttonAuto("取消", dgCancel, 0, s(594), s(76), s(30))
+	xOK := cw - s(pad) - wOK
+	moveCtrl(getCtrlByID(d.hwnd, dgOK), xOK, s(594), wOK, s(30))
+	moveCtrl(getCtrlByID(d.hwnd, dgCancel), xOK-s(12)-wCancel, s(594), wCancel, s(30))
 
 	d.load()
 	d.typeOnChange()
 }
-
 func (d *dlgState) load() {
 	u := d.up
 	d.cName.setText(u.Name)

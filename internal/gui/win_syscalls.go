@@ -83,7 +83,9 @@ var (
 	pSetBkColor     = gdi32.NewProc("SetBkColor")
 	// 注意：SetTextColor / SetBkMode 在 **gdi32.dll**，不是 user32.dll。
 	// 放错 DLL 会在运行时 panic（LazyProc.Call 找不到符号）。
-	pSetBkMode             = gdi32.NewProc("SetBkMode")
+	pSetBkMode = gdi32.NewProc("SetBkMode")
+	// 注意：SetTextColor / SetBkMode 在 **gdi32.dll**，不是 user32.dll。
+	// 放错 DLL 会在运行时 panic（LazyProc.Call 找不到符号）。
 	pSetTextColor          = gdi32.NewProc("SetTextColor")
 	pSelectObject          = gdi32.NewProc("SelectObject")
 	pCreateSolidBrush      = gdi32.NewProc("CreateSolidBrush")
@@ -184,6 +186,33 @@ const (
 	lvifText     = 0x0001
 	lvcFmtLeft   = 0x0000
 	lvcFmtCenter = 0x2000
+
+	// EM_* 是 0x00B0 起的连续消息号（不是 WM_USER+）。
+	// 写错号位会让编辑框**静默无反应**：消息发给 EDIT 没人处理，直接丢弃。
+	emGetSel       = 0x00B0
+	emSetSel       = 0x00B1
+	emScrollCaret  = 0x00B6
+	emGetLineCount = 0x00BA
+	emLineIndex    = 0x00BB
+	emLineLength   = 0x00BC
+	emReplaceSel   = 0x00C2
+
+	// 按钮消息
+	bmGetCheck = 0x00F0
+	bmSetCheck = 0x00F1
+	bmClick    = 0x00F5
+
+	// 通用消息
+	wmGetText      = 0x000D
+	wmSetFont      = 0x0030
+	wmGetFont      = 0x0031
+	wmGetDlgCtrlID = 0x0000
+	wmEnable       = 0x000A
+	wmSetText      = 0x000C
+	cbAddString    = 0x0143
+	cbGetCurSel    = 0x0147
+	cbGetLbText    = 0x0148
+	cbSetCurSel    = 0x014E
 
 	// 通用控件初始化
 	iccListViewClasses = 0x00000001

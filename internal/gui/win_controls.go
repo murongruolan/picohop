@@ -3,6 +3,7 @@
 package gui
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"syscall"
@@ -12,13 +13,37 @@ import (
 // ctrl 是窗口上一个子控件的句柄。
 type ctrl uintptr
 
-// id 为控件 ID（高 16 位为组编号，低 16 位为序号，便于区分不同区域的同名控件）。
+// id 是控件 ID。
+//
+// ⚠️ 硬性约束：**控件 ID 必须 <= 0xFFFF（65535）**。
+// 原因：按钮点击产生的 WM_COMMAND 里，wParam = MAKEWPARAM(控件ID, 通知码)，
+// 而 MAKEWPARAM 只能携带 **低 16 位**的控件 ID。
+// 早先这里用 "组<<16 | 序号" 生成 ID（例如 0x1000A），
+// GetDlgItem 找得到控件，但通知到达时 cid 会退化成 0x0A，
+// 于是每个按钮都"点了没反应"——这是个非常隐蔽的坑。
+// 现在用 checkIDOK 在创建控件时就把越界的 ID 直接 panic 出来。
 type id int32
 
-func groupID(g int32) id   { return id(g) << 16 }
-func groupIDOf(v id) int32 { return int32(v) >> 16 }
+// maxControlID 是 Win32 通知机制允许的最大控件 ID。
+const maxControlID = 0xFFFF
+
+// groupID 按"组 × 100 + 序号"分配 ID，保证落在 16 位内且互不冲突。
+func groupID(g int32) id { return id(g) * 100 }
+
+// groupIDOf 返回组编号。
+func groupIDOf(v id) int32 { return int32(v) / 100 }
 
 func lowPart(v id) int32 { return int32(v) & 0xFFFF }
+
+// checkIDOK 在创建控件前校验 ID 是否落在 16 位范围内。
+func checkIDOK(cid id) id {
+	if cid <= 0 || cid > maxControlID {
+		panic(fmt.Sprintf(
+			"控件 ID %d(0x%X) 超出 16 位范围：WM_COMMAND 的 wParam 只能携带控件 ID 的低 16 位，"+
+				"越界会导致按钮永远收不到通知（表现为点击无反应）。", int32(cid), uint32(cid)))
+	}
+	return cid
+}
 
 // ---------------------------------------------------------------------------
 // 控件创建
@@ -35,15 +60,19 @@ type control struct {
 type layout struct {
 	parent   uintptr
 	inst     uintptr
+	dpi      int32
 	fRegular uintptr
 	fBold    uintptr
 	fMono    uintptr
 }
 
+// s 按当前 DPI 换算设计尺寸（96 DPI 为基准）。
+func (l layout) s(v int32) int32 { return scaleDPI(v, l.dpi) }
+
 func (l layout) font() uintptr { return l.fRegular }
 
 func (l layout) make(c control, x, y, w, h int32) ctrl {
-	hwnd := createWindowExW(c.Ex, c.Class, c.Text, c.Style, x, y, w, h, l.parent, uintptr(c.ID), l.inst)
+	hwnd := createWindowExW(c.Ex, c.Class, c.Text, c.Style, x, y, w, h, l.parent, uintptr(checkIDOK(c.ID)), l.inst)
 	if hwnd == 0 {
 		return 0
 	}
@@ -220,28 +249,28 @@ func (c ctrl) addText(s string) {
 		return
 	}
 	buf := utf16Slice(s)
-	sendMessage(uintptr(c), 0x0177 /* EM_REPLACESEL */, 1, uintptr(unsafe.Pointer(&buf[0])))
+	sendMessage(uintptr(c), emReplaceSel, 1, uintptr(unsafe.Pointer(&buf[0])))
 }
 
 func (c ctrl) selectAll() {
 	if c == 0 {
 		return
 	}
-	sendMessage(uintptr(c), 0x00B1 /* EM_SETSEL */, 0, uintptr(^uintptr(0)))
+	sendMessage(uintptr(c), emSetSel, 0, uintptr(^uintptr(0)))
 }
 
 func (c ctrl) lineCount() int32 {
 	if c == 0 {
 		return 0
 	}
-	return int32(sendMessage(uintptr(c), 0x00BA /* EM_GETLINECOUNT */, 0, 0))
+	return int32(sendMessage(uintptr(c), emGetLineCount, 0, 0))
 }
 
 func (c ctrl) scrollToEnd() {
 	if c == 0 {
 		return
 	}
-	sendMessage(uintptr(c), 0x0115 /* EM_SCROLLCARET */, 0, 0)
+	sendMessage(uintptr(c), emScrollCaret, 0, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -276,4 +305,9 @@ func errno() uintptr {
 		return uintptr(e)
 	}
 	return 0
+}
+
+// getCtrlByID 在父窗口下按控件 ID 找子控件（自检与布局体检用）。
+func getCtrlByID(parent uintptr, cid id) ctrl {
+	return ctrl(getDlgItem(parent, int32(cid)))
 }

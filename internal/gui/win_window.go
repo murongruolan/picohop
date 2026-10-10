@@ -11,6 +11,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"chainproxy/internal/app"
 	"chainproxy/internal/config"
@@ -31,40 +32,40 @@ const (
 )
 
 var (
-	idHeaderTitle = groupID(gHeader) | 1
-	idHeaderState = groupID(gHeader) | 2
-	idHeaderDot   = groupID(gHeader) | 3
-	idBtnToggle   = groupID(gHeader) | 10
-	idBtnTestAll  = groupID(gHeader) | 11
-	idBtnOpenDir  = groupID(gHeader) | 12
+	idHeaderTitle = groupID(gHeader) + 1
+	idHeaderState = groupID(gHeader) + 2
+	idHeaderDot   = groupID(gHeader) + 3
+	idBtnToggle   = groupID(gHeader) + 10
+	idBtnTestAll  = groupID(gHeader) + 11
+	idBtnOpenDir  = groupID(gHeader) + 12
 
-	idFrontGroup   = groupID(gFront) | 1
-	idFrontType    = groupID(gFront) | 2
-	idFrontHost    = groupID(gFront) | 3
-	idFrontPort    = groupID(gFront) | 4
-	idFrontUser    = groupID(gFront) | 5
-	idFrontPass    = groupID(gFront) | 6
-	idFrontTime    = groupID(gFront) | 7
-	idBtnFrontSave = groupID(gFront) | 20
-	idBtnFrontTest = groupID(gFront) | 21
-	idFrontResult  = groupID(gFront) | 22
+	idFrontGroup   = groupID(gFront) + 1
+	idFrontType    = groupID(gFront) + 2
+	idFrontHost    = groupID(gFront) + 3
+	idFrontPort    = groupID(gFront) + 4
+	idFrontUser    = groupID(gFront) + 5
+	idFrontPass    = groupID(gFront) + 6
+	idFrontTime    = groupID(gFront) + 7
+	idBtnFrontSave = groupID(gFront) + 20
+	idBtnFrontTest = groupID(gFront) + 21
+	idFrontResult  = groupID(gFront) + 22
 
-	idUpGroup     = groupID(gUpstream) | 1
-	idUpList      = groupID(gUpstream) | 2
-	idBtnUpAdd    = groupID(gUpstream) | 20
-	idBtnUpEdit   = groupID(gUpstream) | 21
-	idBtnUpDel    = groupID(gUpstream) | 22
-	idBtnUpMoveU  = groupID(gUpstream) | 23
-	idBtnUpMoveD  = groupID(gUpstream) | 24
-	idBtnUpToggle = groupID(gUpstream) | 25
-	idBtnUpTest   = groupID(gUpstream) | 26
+	idUpGroup     = groupID(gUpstream) + 1
+	idUpList      = groupID(gUpstream) + 2
+	idBtnUpAdd    = groupID(gUpstream) + 20
+	idBtnUpEdit   = groupID(gUpstream) + 21
+	idBtnUpDel    = groupID(gUpstream) + 22
+	idBtnUpMoveU  = groupID(gUpstream) + 23
+	idBtnUpMoveD  = groupID(gUpstream) + 24
+	idBtnUpToggle = groupID(gUpstream) + 25
+	idBtnUpTest   = groupID(gUpstream) + 26
 
-	idLogGroup    = groupID(gLog) | 1
-	idLogEdit     = groupID(gLog) | 2
-	idBtnLogClear = groupID(gLog) | 20
-	idBtnLogCopy  = groupID(gLog) | 21
+	idLogGroup    = groupID(gLog) + 1
+	idLogEdit     = groupID(gLog) + 2
+	idBtnLogClear = groupID(gLog) + 20
+	idBtnLogCopy  = groupID(gLog) + 21
 
-	idStatusText = groupID(gStatus) | 1
+	idStatusText = groupID(gStatus) + 1
 )
 
 const (
@@ -114,6 +115,10 @@ type winMain struct {
 
 	closing      bool
 	timerTicks   int
+	cmdTotal     int
+	cmdLast      int32
+	cmdNotif     int32
+	cmdHits      map[int32]int
 	refreshTicks int
 	closedCh     chan struct{}
 
@@ -239,100 +244,167 @@ func runWindow(a *app.App) error {
 // ---------------------------------------------------------------------------
 
 func (w *winMain) layoutControls() {
-	w.l = layout{parent: w.hwnd, inst: w.inst, fRegular: w.fonts.regular, fBold: w.fonts.bold, fMono: w.fonts.mono}
+	w.l = layout{parent: w.hwnd, inst: w.inst, dpi: w.dpi, fRegular: w.fonts.regular, fBold: w.fonts.bold, fMono: w.fonts.mono}
 
 	s := func(v int32) int32 { return scaleDPI(v, w.dpi) }
-	m := 0
-	sw := s(winWidth)
+
+	// 关键：**按真实客户区尺寸排版**，而不是按"我以为的窗口尺寸"。
+	// 上一版按 1060x762 排版，而客户区只有 1044x723，
+	// 结果右边整整一截、下边整整一截掉在窗口外。
+	var cr RECT
+	pGetClientRect.Call(w.hwnd, uintptr(unsafe.Pointer(&cr)))
+	cw := cr.Right - cr.Left
+	const pad = 16
+	inner := cw - pad*2
 
 	// ---- 顶部标题栏 ----
-	title := w.l.make(control{Class: "STATIC", Text: "ChainProxy 链式代理", Style: wsChild | wsVisible | ssLeft, ID: idHeaderTitle}, s(20), s(14), s(320), s(30))
+	title := w.l.make(control{Class: "STATIC", Text: "ChainProxy 链式代理", Style: wsChild | wsVisible | ssLeft, ID: idHeaderTitle}, s(pad), s(10), s(320), s(30))
 	title.font(w.fonts.title)
-	w.l.make(control{Class: "STATIC", Text: "本地主流客户端作前置 → 你的住宅 IP 作出口，按需走住宅流量", Style: wsChild | wsVisible | ssLeft, ID: groupID(gHeader) | 4}, s(20), s(44), s(560), s(20)).font(w.fonts.tiny)
+	w.l.make(control{
+		Class: "STATIC",
+		Text:  "本地主流客户端作前置 → 你的住宅 IP 作出口，按需走住宅流量",
+		Style: wsChild | wsVisible | ssLeft, ID: groupID(gHeader) + 4,
+	}, s(pad), s(40), s(760), s(20)).font(w.fonts.tiny)
 
-	w.headerDot = w.l.make(control{Class: "STATIC", Text: "●", Style: wsChild | wsVisible | ssCenter, ID: idHeaderDot}, s(700), s(20), s(20), s(24))
-	w.headerState = w.l.make(control{Class: "STATIC", Text: "已停止", Style: wsChild | wsVisible | ssLeft, ID: idHeaderState}, s(722), s(22), s(180), s(22))
+	w.headerDot = w.l.make(control{Class: "STATIC", Text: "○", Style: wsChild | wsVisible | ssCenter, ID: idHeaderDot}, cw-s(250), s(18), s(34), s(24))
+	w.headerState = w.l.make(control{Class: "STATIC", Text: "已停止", Style: wsChild | wsVisible | ssLeft, ID: idHeaderState}, cw-s(210), s(20), s(190), s(22))
 
-	w.btnToggle = w.l.defButton("启动", idBtnToggle, s(852), s(18), s(96), s(32))
-	w.l.button("一键测试", idBtnTestAll, s(954), s(18), s(90), s(32))
+	// 右上角按钮：宽度按文字实测，再从右往左摆
+	bTest, wTest := w.l.buttonAuto("一键测试", idBtnTestAll, 0, s(18), s(76), s(32))
+	bToggle, wToggle := w.l.buttonAuto("启动", idBtnToggle, 0, s(18), s(76), s(32))
+	xToggle := cw - pad - wToggle
+	moveCtrl(bToggle, xToggle, s(18), wToggle, s(32))
+	moveCtrl(bTest, xToggle-s(10)-wTest, s(18), wTest, s(32))
+	w.btnToggle = bToggle
 
-	// ---- 前置代理 ----
-	fy := s(84)
-	w.l.group("① 前置代理 —— 通常就是本地主流客户端的 127.0.0.1:10808（mixed 协议）", idFrontGroup, s(16), fy, sw-s(32), s(140))
+	// ---- ① 前置代理 ----
+	fy := s(70)
+	fh := s(150)
+	w.l.group(w.l.fitGroupTitle("① 前置代理 —— 通常就是本地主流客户端的 127.0.0.1:10808（mixed 协议）", inner-s(28)),
+		idFrontGroup, s(pad), fy, inner, fh)
 
-	row1 := fy + s(28)
-	w.l.label("类型", groupID(gFront)|40, s(32), row1+s(4), s(34), s(18))
-	w.frontType = w.l.combo(idFrontType, []string{"socks5", "http", "直连"}, s(70), row1, s(96), s(150))
+	rowY := fy + s(28)
+	editH := s(24)
 
-	w.l.label("地址", groupID(gFront)|41, s(182), row1+s(4), s(34), s(18))
-	w.frontHost = w.l.edit(idFrontHost, s(220), row1, s(140), s(24), 0)
+	// 第一行：类型 / 地址 / 端口 / 用户名 / 密码
+	// （"超时"挪到第二行——第一行放不下，实测会整块溢出客户区）
+	cx := s(pad + 16)
+	cx = w.placeLabel("类型", groupID(gFront)+40, cx, rowY+s(4))
+	w.frontType = w.l.combo(idFrontType, []string{"socks5", "http", "直连"}, cx, rowY, s(78), s(130))
+	cx += s(78) + s(14)
 
-	w.l.label("端口", groupID(gFront)|42, s(370), row1+s(4), s(34), s(18))
-	w.frontPort = w.l.edit(idFrontPort, s(408), row1, s(74), s(24), esNumber)
+	cx = w.placeLabel("地址", groupID(gFront)+41, cx, rowY+s(4))
+	w.frontHost = w.l.edit(idFrontHost, cx, rowY, s(126), editH, 0)
+	cx += s(126) + s(14)
 
-	w.l.label("用户名", groupID(gFront)|43, s(492), row1+s(4), s(48), s(18))
-	w.frontUser = w.l.edit(idFrontUser, s(544), row1, s(120), s(24), 0)
+	cx = w.placeLabel("端口", groupID(gFront)+42, cx, rowY+s(4))
+	w.frontPort = w.l.edit(idFrontPort, cx, rowY, s(66), editH, esNumber)
+	cx += s(66) + s(14)
 
-	w.l.label("密码", groupID(gFront)|44, s(674), row1+s(4), s(34), s(18))
-	w.frontPass = w.l.edit(idFrontPass, s(712), row1, s(120), s(24), esPassword)
+	cx = w.placeLabel("用户名", groupID(gFront)+43, cx, rowY+s(4))
+	w.frontUser = w.l.edit(idFrontUser, cx, rowY, s(104), editH, 0)
+	cx += s(104) + s(14)
 
-	w.l.label("超时 ms", groupID(gFront)|45, s(842), row1+s(4), s(58), s(18))
-	w.frontTime = w.l.edit(idFrontTime, s(904), row1, s(90), s(24), esNumber)
+	cx = w.placeLabel("密码", groupID(gFront)+44, cx, rowY+s(4))
+	w.frontPass = w.l.edit(idFrontPass, cx, rowY, s(104), editH, esPassword)
+	cx += s(104) + s(14)
 
-	row2 := row1 + s(36)
-	w.l.button("保存前置设置", idBtnFrontSave, s(32), row2, s(120), s(28))
-	w.l.button("测试前置", idBtnFrontTest, s(160), row2, s(96), s(28))
-	w.frontResult = w.l.make(control{Class: "STATIC", Text: "", Style: wsChild | wsVisible | ssLeft | ssEndEllipsis, ID: idFrontResult}, s(268), row2+s(6), s(740), s(20))
+	// 第二行：超时 + 按钮 + 测试结果
+	row2 := rowY + s(40)
+	tx := w.placeLabel("超时 ms", groupID(gFront)+45, s(pad+16), row2+s(4))
+	w.frontTime = w.l.edit(idFrontTime, tx, row2, s(76), editH, esNumber)
+	tx += s(76) + s(20)
 
-	// ---- 住宅代理列表 ----
-	uy := fy + s(152)
-	uh := s(252)
-	w.l.group("② 住宅代理（出口）—— 每个代理绑定一个独立本地端口，浏览器填该端口即可走住宅 IP", idUpGroup, s(16), uy, sw-s(32), uh)
+	bSave, wSave := w.l.buttonAuto("保存前置设置", idBtnFrontSave, tx, row2, s(104), s(28))
+	tx += wSave + s(10)
+	bTestF, wTestF := w.l.buttonAuto("测试前置", idBtnFrontTest, tx, row2, s(80), s(28))
+	tx += wTestF + s(14)
+	_, _ = bSave, bTestF
+	w.frontResult = w.l.make(control{
+		Class: "STATIC", Text: "", Style: wsChild | wsVisible | ssLeft | ssEndEllipsis, ID: idFrontResult,
+	}, tx, row2+s(6), cw-pad-s(14)-tx, s(20))
+
+	// ---- ② 住宅代理 ----
+	uy := fy + fh + s(12)
+	uh := s(246)
+	w.l.group(w.l.fitGroupTitle("② 住宅代理（出口）—— 每个代理绑定一个独立本地端口", inner-s(28)),
+		idUpGroup, s(pad), uy, inner, uh)
 
 	by := uy + s(12)
-	w.l.button("▲", idBtnUpMoveU, s(688), by, s(30), s(26))
-	w.l.button("▼", idBtnUpMoveD, s(722), by, s(30), s(26))
-	w.l.button("删除", idBtnUpDel, s(758), by, s(76), s(26))
-	w.l.button("编辑", idBtnUpEdit, s(840), by, s(76), s(26))
-	w.l.button("+ 添加住宅代理", idBtnUpAdd, s(922), by, s(100), s(26))
+	bh := s(26)
+	right := cw - pad - s(12)
+	placeBtn := func(text string, cid id, minW int32) {
+		c, bw := w.l.buttonAuto(text, cid, 0, by, minW, bh)
+		right -= bw
+		moveCtrl(c, right, by, bw, bh)
+		right -= s(8)
+	}
+	placeBtn("+ 添加住宅代理", idBtnUpAdd, s(120))
+	placeBtn("编辑", idBtnUpEdit, s(52))
+	placeBtn("删除", idBtnUpDel, s(52))
+	placeBtn("▼", idBtnUpMoveD, s(26))
+	placeBtn("▲", idBtnUpMoveU, s(26))
+	placeBtn("测试选中", idBtnUpTest, s(80))
+	placeBtn("启用 / 禁用", idBtnUpToggle, s(96))
 
 	ly := uy + s(44)
-	lh := uh - s(52)
-	// 表头（只读单行，等宽字体）
 	w.listHeader = w.l.make(control{
 		Class: "EDIT",
 		Style: wsChild | wsVisible | wsBorder | wsExClientEdge | esLeft | esReadOnly,
 		Ex:    wsExClientEdge,
-		ID:    groupID(gUpstream) | 8,
-	}, s(24), ly, sw-s(40), s(20))
+		ID:    groupID(gUpstream) + 8,
+	}, s(pad+10), ly, inner-s(20), s(20))
 	w.listHeader.font(w.fonts.mono)
 	w.listHeader.setText(renderTableHeader())
 
-	// 表格本体（只读多行，等宽字体）
-	w.list = w.l.multiline(idUpList, s(24), ly+s(24), sw-s(40), lh-s(24), esReadOnly)
+	w.list = w.l.multiline(idUpList, s(pad+10), ly+s(24), inner-s(20), uh-s(52), esReadOnly)
 	w.list.font(w.fonts.mono)
 
-	// ---- 日志 ----
+	// ---- ③ 日志 ----
 	gy := uy + uh + s(12)
-	gh := s(176)
-	w.l.group("③ 运行状态与测试输出", idLogGroup, s(16), gy, sw-s(32), gh)
-	w.logEdit = w.l.multiline(idLogEdit, s(24), gy+s(24), sw-s(40), gh-s(78), esReadOnly)
+	gh := s(160)
+	w.l.group(w.l.fitGroupTitle("③ 运行状态与测试输出", inner-s(28)), idLogGroup, s(pad), gy, inner, gh)
+	w.logEdit = w.l.multiline(idLogEdit, s(pad+10), gy+s(24), inner-s(20), gh-s(74), esReadOnly)
 	w.logEdit.font(w.fonts.mono)
 
-	w.l.button("清空", idBtnLogClear, s(24), gy+gh-s(48), s(76), s(28))
-	w.l.button("复制全部", idBtnLogCopy, s(108), gy+gh-s(48), s(84), s(28))
-	w.l.button("打开配置目录", idBtnOpenDir, s(200), gy+gh-s(48), s(120), s(28))
+	lx := s(pad + 10)
+	bClr, wClr := w.l.buttonAuto("清空", idBtnLogClear, lx, gy+gh-s(46), s(56), s(28))
+	lx += wClr + s(8)
+	bCp, wCp := w.l.buttonAuto("复制全部", idBtnLogCopy, lx, gy+gh-s(46), s(80), s(28))
+	lx += wCp + s(8)
+	bDir, _ := w.l.buttonAuto("打开配置目录", idBtnOpenDir, lx, gy+gh-s(46), s(104), s(28))
+	_, _, _ = bClr, bCp, bDir
 
 	// ---- 底部状态栏 ----
 	w.statusText = w.l.make(control{
-		Class: "STATIC", Text: "",
-		Style: wsChild | wsVisible | ssLeft,
-		ID:    idStatusText,
-	}, s(20), gy+gh+s(6), sw-s(40), s(20))
+		Class: "STATIC", Text: "", Style: wsChild | wsVisible | ssLeft | ssEndEllipsis, ID: idStatusText,
+	}, s(pad), gy+gh+s(2), inner, s(20))
 
-	_ = m
 	w.refreshList()
 	w.refreshStatus()
+}
+
+// placeLabel 造一个**左对齐**标签，返回下一个控件应放置的 x（已含 8px 间距）。
+//
+// 最初用的是右对齐（把标签贴到 x 的左侧），结果每行第一个标签都被推到负坐标，
+// 也就是整列标签都跑到窗口左边界外面——这正是"界面布局错位"的直接原因。
+// 布局体检现在会检测负坐标，这类问题不会再溜过去。
+func (w *winMain) placeLabel(text string, cid id, x, y int32) int32 {
+	lw := w.l.measure(w.l.fRegular, text) + 10
+	w.l.make(control{Class: "STATIC", Text: text, Style: wsChild | wsVisible | ssLeft, ID: cid}, x, y, lw, w.l.s(18))
+	return x + lw + w.l.s(8)
+}
+
+// moveCtrl 移动并按需缩放已创建的控件。
+func moveCtrl(c ctrl, x, y, w, h int32) {
+	if c == 0 {
+		return
+	}
+	if w <= 0 || h <= 0 {
+		pMoveWindow.Call(uintptr(c), uintptr(x), uintptr(y), 0, 0)
+		return
+	}
+	pMoveWindow.Call(uintptr(c), uintptr(x), uintptr(y), uintptr(w), uintptr(h))
 }
 
 // ---------------------------------------------------------------------------
@@ -448,19 +520,33 @@ func (w *winMain) refreshStatus() {
 		}
 	}
 
+	// 这两处文字会在运行期变化，必须保证"最长的一版"也塞得进控件，
+	// 否则会像之前那样出现按钮文字被截断。
 	if running {
-		w.headerState.setText(fmt.Sprintf("运行中 · %d/%d 条链路已占用端口", active, len(rows)))
+		w.setHeaderText(fmt.Sprintf("运行中 · %d/%d 链路", active, len(rows)))
 		w.headerDot.setText("●")
-		w.btnToggle.setText("停止并释放端口")
+		w.setToggleText("停止")
 	} else {
-		w.headerState.setText("已停止 · 未占用任何端口")
+		w.setHeaderText("已停止 · 未占用端口")
 		w.headerDot.setText("○")
-		w.btnToggle.setText("启动")
+		w.setToggleText("启动")
 	}
 
 	desc, _ := w.app.FrontStatus()
-	w.statusText.setText(fmt.Sprintf("前置：%s    配置：%s    程序不注册任何开机自启动项", desc, config.ConfigPath()))
+	w.statusText.setText(w.l.ellipsize(
+		fmt.Sprintf("前置：%s    配置：%s    程序不注册任何开机自启动项", desc, config.ConfigPath()),
+		scaleDPI(1004, w.dpi)))
 }
+
+// setHeaderText 写顶部状态文字，并保证它在 190px 内显示得下（放不下就自动截断）。
+func (w *winMain) setHeaderText(txt string) {
+	w.headerState.setText(w.l.ellipsize(txt, scaleDPI(178, w.dpi)))
+}
+
+// setToggleText 写主开关按钮文字。
+// 「启动」与「停止」都是两个汉字，实测宽度一致，
+// 所以按钮宽度在布局时一次定好即可，这里直接改文字。
+func (w *winMain) setToggleText(s string) { w.btnToggle.setText(s) }
 
 // ---------------------------------------------------------------------------
 // 日志

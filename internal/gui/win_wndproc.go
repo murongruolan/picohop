@@ -64,6 +64,16 @@ func (w *winMain) wndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uint
 // ---------------------------------------------------------------------------
 
 func (w *winMain) handleCommand(cid int32, notif int32) {
+	w.cmdTotal++
+	w.cmdLast = cid
+	w.cmdNotif = notif
+	if w.cmdHits == nil {
+		w.cmdHits = map[int32]int{}
+	}
+	// 按 ID 精确计数：EN_CHANGE 之类的通知会不断覆盖 cmdLast，
+	// 只看"最后一条"无法判断某个按钮到底有没有被点到。
+	w.cmdHits[cid]++
+
 	if notif != 0 { // 0 == BN_CLICKED
 		return
 	}

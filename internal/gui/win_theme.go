@@ -26,6 +26,19 @@ type uiFont struct {
 	title   uintptr
 }
 
+// ---------------------------------------------------------------------------
+// 字体规格（相对 96 DPI 的像素高度）
+//
+// 之前的字号是拍脑袋定的，实测发现中文渲染宽度远大于预期，
+// 导致 23 处按钮/标签文字溢出。这里把字号显式收敛，
+// 并且布局一律按 **实测文字宽度** 排版，不再估算。
+const (
+	fontUI    = 15 // 正文：Segoe UI 15px
+	fontSmall = 13 // 辅助说明
+	fontMono  = 14 // 表格 / 日志（等宽）
+	fontTitle = 22 // 窗口标题
+)
+
 // initFonts 创建界面字体。
 //
 // 注意：这里**不再**用 "where segoeui.ttf" 探测字体是否存在。
@@ -42,11 +55,11 @@ func initFonts(dpi int32) *uiFont {
 	face := "Segoe UI"
 	mono := "Consolas"
 	return &uiFont{
-		regular: createFont(-scale(16), 0, 0, 0, 400, 0, 0, 0, "Segoe UI", face),
-		bold:    createFont(-scale(16), 0, 0, 0, 700, 0, 0, 0, "Segoe UI", face),
-		mono:    createFont(-scale(14), 0, 0, 0, 400, 0, 0, 0, mono, mono),
-		tiny:    createFont(-scale(14), 0, 0, 0, 400, 0, 0, 0, "Segoe UI", face),
-		title:   createFont(-scale(21), 0, 0, 0, 700, 0, 0, 0, "Segoe UI", face),
+		regular: createFont(-scale(fontUI), 400, face),
+		bold:    createFont(-scale(fontUI), 700, face),
+		mono:    createFont(-scale(fontMono), 400, mono),
+		tiny:    createFont(-scale(fontSmall), 400, face),
+		title:   createFont(-scale(fontTitle), 700, face),
 	}
 }
 func (f *uiFont) destroy() {

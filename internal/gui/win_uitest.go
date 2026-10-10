@@ -25,6 +25,7 @@ import (
 var (
 	pEnumChildWindows          = user32.NewProc("EnumChildWindows")
 	pIsWindowVisible           = user32.NewProc("IsWindowVisible")
+	pIsWindowEnabled           = user32.NewProc("IsWindowEnabled")
 	pGetClassNameW             = user32.NewProc("GetClassNameW")
 	pGetDlgCtrlIDProc          = user32.NewProc("GetDlgCtrlID")
 	pSendMessageTimeoutW       = user32.NewProc("SendMessageTimeoutW")
@@ -32,13 +33,14 @@ var (
 )
 
 type uiDumpEntry struct {
-	hwnd  uintptr
-	class string
-	id    int32
-	x, y  int32
-	w, h  int32
-	vis   bool
-	text  string
+	hwnd    uintptr
+	class   string
+	id      int32
+	x, y    int32
+	w, h    int32
+	vis     bool
+	enabled bool
+	text    string
 }
 
 const lvifTextD = 0x0001
@@ -68,16 +70,18 @@ func collectChildWindows(root uintptr) []uiDumpEntry {
 		var r RECT
 		pGetWindowRect.Call(h, uintptr(unsafe.Pointer(&r)))
 		vis, _, _ := pIsWindowVisible.Call(h)
+		eb, _, _ := pIsWindowEnabled.Call(h)
 		out = append(out, uiDumpEntry{
-			hwnd:  h,
-			class: utf16String(cls[:]),
-			id:    int32(id),
-			x:     r.Left,
-			y:     r.Top,
-			w:     r.Right - r.Left,
-			h:     r.Bottom - r.Top,
-			vis:   vis != 0,
-			text:  crossGetText(h),
+			hwnd:    h,
+			class:   utf16String(cls[:]),
+			id:      int32(id),
+			x:       r.Left,
+			y:       r.Top,
+			w:       r.Right - r.Left,
+			h:       r.Bottom - r.Top,
+			vis:     vis != 0,
+			enabled: eb != 0,
+			text:    crossGetText(h),
 		})
 		return 1
 	})
@@ -132,12 +136,10 @@ func maybeDumpUI(w *winMain) bool {
 	// 给界面一次机会完成"载入配置 → 刷新列表 → 自动启动"。
 	// 这里不能真正 sleep：睡眠期间没人处理消息，控件状态不会前进。
 	// 因此采用"手动泵消息"的方式等待。
-	stageDump(path, "A: 进入 maybeDumpUI")
 	deadline := time.Now().Add(2500 * time.Millisecond)
 	for time.Now().Before(deadline) {
 		pumpMessagesFor(50 * time.Millisecond)
 	}
-	stageDump(path, "B: 消息泵完成")
 
 	var sb strings.Builder
 	sb.WriteString("ChainProxy UI 自检报告\n")
@@ -145,10 +147,9 @@ func maybeDumpUI(w *winMain) bool {
 	sb.WriteString(fmt.Sprintf("主窗口 hwnd=%d  标题=%q\n", w.hwnd, crossGetText(w.hwnd)))
 	sb.WriteString(fmt.Sprintf("DPI=%d  链路运行中=%v  WM_TIMER触发次数=%d  PostMessage刷新次数=%d\n\n", w.dpi, w.app.IsRunning(), w.timerTicks, w.refreshTicks))
 
-	stageDump(path, "C: 收集控件完成")
 	entries := collectChildWindows(w.hwnd)
 	sb.WriteString(fmt.Sprintf("控件总数: %d\n\n", len(entries)))
-	sb.WriteString(fmt.Sprintf("%-4s %-16s %-8s %6s %6s %6s %6s %-3s %s\n", "#", "类名", "ID", "X", "Y", "W", "H", "可见", "文本"))
+	sb.WriteString(fmt.Sprintf("%-4s %-16s %-8s %6s %6s %6s %6s %-4s %-4s %s\n", "#", "类名", "ID", "X", "Y", "W", "H", "可见", "可用", "文本"))
 	for i, e := range entries {
 		t := e.text
 		if len(t) > 70 {
@@ -156,9 +157,15 @@ func maybeDumpUI(w *winMain) bool {
 		}
 		t = strings.ReplaceAll(t, "\r", "")
 		t = strings.ReplaceAll(t, "\n", " ⏎ ")
-		sb.WriteString(fmt.Sprintf("%-4d %-16s %-8d %6d %6d %6d %6d %-3s %s\n",
-			i, e.class, e.id, e.x, e.y, e.w, e.h, yesNo(e.vis), t))
+		sb.WriteString(fmt.Sprintf("%-4d %-16s %-8d %6d %6d %6d %6d %-4s %-4s %s\n",
+			i, e.class, e.id, e.x, e.y, e.w, e.h, yesNo(e.vis), yesNo(e.enabled), t))
 	}
+
+	sb.WriteString("\n=== 布局体检 ===\n")
+	sb.WriteString(checkLayout(w.hwnd).render())
+
+	sb.WriteString("\n=== 点击模拟（验证按钮真的会被响应）===\n")
+	sb.WriteString(simulateClicks(w))
 
 	sb.WriteString("\n住宅代理列表（表格文本）：\n")
 	tbl := w.list.text()
@@ -171,7 +178,6 @@ func maybeDumpUI(w *winMain) bool {
 			row.Name, row.Type, row.State, row.ListenPort, row.Detail))
 	}
 
-	stageDump(path, "E: 内容组装完成")
 	// 追加写：对话框自检报告会先写入同一个文件，不能被截断。
 	fMain, errMain := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if errMain == nil {
@@ -228,6 +234,8 @@ func maybeDumpDialog(d *dlgState) {
 		sb.WriteString(fmt.Sprintf("%-4d %-14s %-8d %6d %6d %6d %6d %-4s %s\n",
 			i, e.class, e.id, e.x, e.y, e.w, e.h, yesNo(e.vis), t))
 	}
+	sb.WriteString("\n=== 对话框布局体检 ===\n")
+	sb.WriteString(checkLayout(d.hwnd).render())
 	sb.WriteString(fmt.Sprintf("\n住宅服务器组可见=%v  WireGuard 组可见=%v\n",
 		d.cServerGroup.enabled() && d.cServerGroup.visible(), d.cWGGroup.visible()))
 
@@ -245,18 +253,27 @@ func maybeDumpDialog(d *dlgState) {
 
 // pumpMessagesFor 手动处理一小段时间的消息（用于自检与初始化等待）。
 //
-// 刻意不用 MsgWaitForMultipleObjects：它要求至少一个句柄，传 0 会导致行为不确定
-// （实测会偶发卡住）。GetMessage + 短暂 sleep 更稳。
+// 必须用 **PeekMessage** 而不是 GetMessage：
+// GetMessage 会阻塞到"下一条消息到达"为止，而 WM_TIMER 是 1 秒一次，
+// 于是每次 pump 都要等将近一秒，自检会慢到不可用，
+// 而且"点击后立刻观察效果"的时序全被打乱。
+// PeekMessage 是非阻塞的：取空就退出循环，配合外层 deadline 才可控。
 func pumpMessagesFor(d time.Duration) {
 	var msg MSG
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
-		r, _, _ := pGetMessageW.Call(uintptr(unsafe.Pointer(&msg)), 0, 0, 0)
-		if int32(r) <= 0 {
-			return
+		for {
+			r, _, _ := pPeekMessageW.Call(uintptr(unsafe.Pointer(&msg)), 0, 0, 0, pmRemove)
+			if r == 0 {
+				break
+			}
+			pTranslateMessage.Call(uintptr(unsafe.Pointer(&msg)))
+			pDispatchMessageW.Call(uintptr(unsafe.Pointer(&msg)))
 		}
-		pTranslateMessage.Call(uintptr(unsafe.Pointer(&msg)))
-		pDispatchMessageW.Call(uintptr(unsafe.Pointer(&msg)))
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+var pPeekMessageW = user32.NewProc("PeekMessageW")
+
+const pmRemove = 0x0001
