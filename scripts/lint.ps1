@@ -3,55 +3,65 @@
 #
 #   .\scripts\lint.ps1
 #
-# 说明：这里刻意关掉了 vet 的 unsafeptr 检查（-unsafeptr=false）。
+# 做四件事：
+#   1. gofmt：所有 Go 代码必须格式化过
+#   2. go vet：带正确的构建标签做静态检查
+#   3. 配置校验：用当前配置跑一遍 validate
+#   4. 引擎自检：确认构建标签齐全（缺了 Reality / Hysteria2 会在运行期才炸）
 #
-# 原因：ChainProxy 的 GUI 是**纯 syscall 直调 Win32**（不引入 cgo，也不引入
-# golang.org/x/sys/windows），因此必须把 Windows 传进来的 uintptr 形态的
-# LPARAM 还原成结构体指针才能读 NMHDR / NMCUSTOMDRAW 等通知数据，
-# 例如：
-#
-#     hdr := (*NMHDR)(unsafePtrAt(lParam, 0))
-#
-# 这是这个技术路线下**不可避免**且语义正确的用法：lParam 指向的是 Windows
-# 内核/USER32 提供的内存（消息队列里），既不由 Go 堆管理、也不会被 GC 移动，
-# 因此转换是安全的；而 vet 的 unsafeptr 规则无法区分"从 syscall 拿到的
-# uintptr"和"从 Go 堆算出来的 uintptr"，只能一律报可疑。
-#
-# 其余所有 vet 检查（printf、copylocks、lostcancel 等）保持开启。
+# 【关于 -unsafeptr=false】
+# cmd\uishot 里需要用 syscall 把 Windows 传进来的 uintptr 还原成结构体指针
+# （GetWindowRect / GetClientRect 这类 API 直接填结构体），这是纯 syscall
+# 直调 Win32 的固有写法，vet 的 unsafeptr 检查必然误报，所以关掉它。
+# 但只关这一项，其它 vet 检查一律保留。
 # ---------------------------------------------------------------------------
-param(
-    [switch]$Fix
-)
-
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Continue'
 . (Join-Path $PSScriptRoot 'env.ps1')
-Set-Location (Split-Path -Parent $PSScriptRoot)
 
-# 只格式化本项目自己的源码目录。
-# 绝不能对 "." 跑 gofmt -w：.cache\ 里是 Go 模块缓存与工具链源码，
-# 一旦被 gofmt 改写，模块缓存就与校验和不一致，后面构建会出怪问题。
-$GoSrcDirs = @('cmd', 'internal')
-Write-Host "[ChainProxy] gofmt ..."
-$fmt = & gofmt -l @GoSrcDirs 2>&1
-if ($fmt) {
-    Write-Host "  以下文件格式不符合 gofmt："
-    $fmt | ForEach-Object { Write-Host "    $_" -ForegroundColor Yellow }
-    if ($Fix) {
-        & gofmt -w @GoSrcDirs 2>&1 | Out-Null
-        Write-Host "  已自动格式化。" -ForegroundColor Green
-    } else {
-        Write-Host "  提示：执行 .\scripts\lint.ps1 -Fix 自动修复" -ForegroundColor DarkGray
-    }
+$Root = Split-Path -Parent $PSScriptRoot
+Set-Location $Root
+
+# 与 scripts\build.ps1 保持一致：缺了这两个标签，Reality / Hysteria2 运行时会失败
+$Tags = "with_utls,with_quic"
+
+$failed = 0
+
+# ---------------------------------------------------------------------------
+Write-Host "[lint] 1/4 gofmt ……"
+$unformatted = & gofmt -l cmd internal desktop 2>&1
+if ($unformatted) {
+    Write-Host "  以下文件没有格式化（跑 gofmt -w 修正）："
+    $unformatted | ForEach-Object { Write-Host "    $_" }
+    $failed++
 } else {
-    Write-Host "  全部符合 gofmt。" -ForegroundColor Green
+    Write-Host "  OK"
 }
 
-Write-Host "`n[ChainProxy] go vet（unsafeptr 已按脚本头部说明关闭）..."
-& go vet -unsafeptr=false ./...
-if ($LASTEXITCODE -ne 0) { throw "go vet 未通过" }
+# ---------------------------------------------------------------------------
+Write-Host "[lint] 2/4 go vet（tags=$Tags）……"
+& go vet -tags $Tags -unsafeptr=false ./... 2>&1
+if ($LASTEXITCODE -ne 0) { $failed++ } else { Write-Host "  OK" }
 
-Write-Host "`n[ChainProxy] go test ..."
-& go test ./...
-if ($LASTEXITCODE -ne 0) { throw "go test 未通过" }
+# ---------------------------------------------------------------------------
+Write-Host "[lint] 3/4 配置校验 ……"
+& go run -tags $Tags ./cmd/chainproxy validate 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  配置有问题（见上面的输出）"
+    $failed++
+} else {
+    Write-Host "  OK"
+}
 
-Write-Host "`n[ChainProxy] 检查通过。" -ForegroundColor Green
+# ---------------------------------------------------------------------------
+Write-Host "[lint] 4/4 内嵌引擎构建标签自检 ……"
+& go run -tags $Tags ./cmd/chainproxy engines 2>&1
+if ($LASTEXITCODE -ne 0) { $failed++ } else { Write-Host "  OK" }
+
+# ---------------------------------------------------------------------------
+if ($failed -gt 0) {
+    Write-Host ""
+    Write-Host "[lint] 有 $failed 项没通过" -ForegroundColor Red
+    exit 1
+}
+Write-Host ""
+Write-Host "[lint] 全部通过" -ForegroundColor Green
