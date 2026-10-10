@@ -365,6 +365,28 @@ func maybeDumpDialog(d *dlgState) {
 		}
 	}
 
+	// ---- 回传体检：在界面上改成一组有辨识度的值，再点「确定」----
+	//
+	// 这一条盯的是"对话框改的内容会不会被丢掉"：
+	// 早先 editUpstreamDialog 只返回 bool，改好的 upstream 被直接丢弃，
+	// 于是"界面上填的参数从来没被保存过"，存下来的永远是调用方预置的空壳。
+	// 只在显式要求时点确定（否则会改变自检的流程）。
+	if os.Getenv("CHAINPROXY_UI_DUMP_OK") != "" {
+		d.cName.setText("回传体检")
+		d.cType.comboSelect(int32(indexOf(dlgTypes, "wireguard")))
+		d.typeOnChange()
+		d.cWGPriv.setText("YPRXVXeYap1NQGmTWwf746EzPZF7nGYO0X+GQTtbRPA=")
+		d.cWGAddr.setText("10.99.0.9/32")
+		d.cWGPub.setText("k5A/QJPa8Hh84IXIoIPXyz1diaQ3Ng6xZ6ws9j67ZAQ=")
+		d.cWGEHost.setText("198.51.100.7")
+		d.cWGEPort.setText("51821")
+		d.cWGAllow.setText("0.0.0.0/0, ::/0")
+		d.cWGKeep.setText("33")
+		d.cWGMTU.setText("1300")
+		d.cWGPSK.setText("OKMmvu3c08jfOW8O2InzdbnzpLXmRDMPr/r8z6XLTnU=")
+		d.accept()
+	}
+
 	// 追加到已有报告（可能与主窗口报告写在同一个文件里）
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
@@ -424,8 +446,21 @@ func shortKey(s string) string {
 	return string(r[:8]) + "…" + string(r[len(r)-4:])
 }
 
-// getClipboardText 读取剪贴板文本（用于验证"复制公钥"真的写进去了）。
+// getClipboardText 读取剪贴板文本（用于验证"复制"真的写进去了）。
+//
+// 会重试几次：剪贴板是全局资源，别的进程可能正占用它，
+// OpenClipboard 失败时直接返回空串会让自检偶发假失败。
 func getClipboardText() string {
+	for attempt := 0; attempt < 8; attempt++ {
+		if s := tryGetClipboardText(); s != "" {
+			return s
+		}
+		time.Sleep(40 * time.Millisecond)
+	}
+	return ""
+}
+
+func tryGetClipboardText() string {
 	ok, _, _ := pOpenClipboard.Call(0)
 	if ok == 0 {
 		return ""
@@ -465,4 +500,18 @@ func ctrlClientWidth(c ctrl) int32 {
 	var r RECT
 	pGetClientRect.Call(uintptr(c), uintptr(unsafe.Pointer(&r)))
 	return r.Right - r.Left
+}
+
+// appendToDump 往自检报告文件里追加一段文本（供跨文件的自检断言使用）。
+func appendToDump(text string) {
+	path := os.Getenv("CHAINPROXY_UI_DUMP")
+	if path == "" {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = f.WriteString(text)
 }

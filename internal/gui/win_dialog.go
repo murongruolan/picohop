@@ -90,11 +90,20 @@ type dlgState struct {
 }
 
 // editUpstreamDialog 打开"添加/编辑住宅代理"对话框。
-// 返回 true 表示用户点了确定且校验通过。
-func (w *winMain) editUpstreamDialog(u config.Upstream, isEdit bool) bool {
+//
+// 返回**修改后的 upstream** 与"是否点了确定"。
+//
+// 【为什么必须回传 upstream】
+// 早先这里只返回 bool，而 Go 是值传递 —— 用户在对话框里填的内容写在
+// st.up 上，函数一返回就被丢掉了，调用方继续用它自己那份**没被改过**的副本。
+// 后果是"添加/编辑时填的参数从来没被保存过"，存下来的永远是调用方预置的空壳
+// （典型现象：类型存成 socks5、服务器地址与端口全空）。
+//
+// 现在签名强制把结果带出来，调用方想忽略都难。
+func (w *winMain) editUpstreamDialog(u config.Upstream, isEdit bool) (config.Upstream, bool) {
 	st := &dlgState{parent: w, inst: w.inst, up: u, isEdit: isEdit}
 	st.run()
-	return st.ok
+	return st.up, st.ok
 }
 
 func (d *dlgState) run() {

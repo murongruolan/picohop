@@ -74,6 +74,8 @@ for ($i = 1; $i -le $Repeat; $i++) {
 Write-Host "`n[编辑对话框自检]"
 Remove-Item $dump -ErrorAction SilentlyContinue
 $env:CHAINPROXY_UI_DUMP_DIALOG = '1'
+# 让对话框自检在末尾点一次确定，以验证「界面上改的内容能回传到调用方」
+$env:CHAINPROXY_UI_DUMP_OK = '1'
 $p = Start-Process -FilePath $Exe -PassThru
 $p.WaitForExit(30000) | Out-Null
 if (-not $p.HasExited) { $p.Kill(); Start-Sleep -Milliseconds 500 }
@@ -113,6 +115,11 @@ if (Test-Path $dump) {
     Check "「复制对端公钥」按钮有效" ($s -match '✅ 「复制对端公钥」') ""
     Check "「复制预共享密钥」按钮有效" ($s -match '✅ 「复制预共享密钥」') ""
 
+    # 对话框里改的内容必须能回传到调用方。
+    # 曾经 editUpstreamDialog 只返回 bool，改好的 upstream 被直接丢弃，
+    # 导致"界面上填的参数从来没被保存过"（存下来永远是空壳）。
+    Check "对话框改动能完整回传（不被丢弃）" ($s -match '✅ 对话框改动完整回传') ""
+
     # 类型切换：用户在下拉框里换类型时，下面那组输入框必须跟着变。
     # 这条路径以前从没被测到（自检一直是直接摆好类型），
     # 所以"切换后界面不变"这个真实 bug 溜了过去。
@@ -135,6 +142,7 @@ if (Test-Path $dump) {
     Check "对话框自检报告已生成" $false ""
 }
 Remove-Item Env:\CHAINPROXY_UI_DUMP_DIALOG -ErrorAction SilentlyContinue
+Remove-Item Env:\CHAINPROXY_UI_DUMP_OK -ErrorAction SilentlyContinue
 
 Write-Host "`n[真实 GUI 启动检查]"
 Remove-Item Env:\CHAINPROXY_UI_DUMP -ErrorAction SilentlyContinue

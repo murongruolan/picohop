@@ -205,12 +205,12 @@ func runWindow(a *app.App) error {
 	// 只测 socket5 的话，WireGuard 那一组控件是隐藏的，布局体检会直接跳过它们，
 	// 等于白测。
 	if os.Getenv("CHAINPROXY_UI_DUMP_DIALOG") != "" {
-		w.editUpstreamDialog(config.Upstream{
+		_, _ = w.editUpstreamDialog(config.Upstream{
 			Name: "示例住宅代理", Type: config.UpstreamTypeSocks5, Enabled: true,
 			ListenHost: "127.0.0.1", ListenPort: 10810, TimeoutMs: 15000,
 		}, false)
 
-		w.editUpstreamDialog(config.Upstream{
+		wgProbe, wgOK := w.editUpstreamDialog(config.Upstream{
 			Name: "示例WG", Type: config.UpstreamTypeWireGuard, Enabled: true,
 			ListenHost: "127.0.0.1", ListenPort: 10812, TimeoutMs: 15000,
 			WireGuard: &config.WireGuardConfig{
@@ -223,6 +223,27 @@ func runWindow(a *app.App) error {
 				PersistentKeepalive: 25, MTU: 1420,
 			},
 		}, false)
+
+		// 断言：对话框里改的内容必须原样回传，不能被丢掉
+		{
+			verdict := "❌ 「确定」没有把界面上的改动回传出来（editUpstreamDialog 又丢掉结果了）"
+			if wgOK && wgProbe.Type == config.UpstreamTypeWireGuard && wgProbe.WireGuard != nil {
+				w := wgProbe.WireGuard
+				if wgProbe.Name == "回传体检" &&
+					w.Address == "10.99.0.9/32" &&
+					w.EndpointHost == "198.51.100.7" &&
+					w.EndpointPort == 51821 &&
+					w.PersistentKeepalive == 33 &&
+					w.MTU == 1300 &&
+					w.PrivateKey == "YPRXVXeYap1NQGmTWwf746EzPZF7nGYO0X+GQTtbRPA=" {
+					verdict = "✅ 对话框改动完整回传（类型/地址/端点/端口/keepalive/MTU/私钥 全部一致）"
+				} else {
+					verdict = fmt.Sprintf("❌ 回传内容不一致：name=%q addr=%q endpoint=%s:%d keepalive=%d mtu=%d",
+						wgProbe.Name, w.Address, w.EndpointHost, w.EndpointPort, w.PersistentKeepalive, w.MTU)
+				}
+			}
+			appendToDump("=== 对话框回传体检 ===\n  " + verdict + "\n")
+		}
 	}
 
 	// 自检模式：导出界面状态后直接退出（不进入消息循环）。
@@ -722,7 +743,9 @@ func (w *winMain) addUpstream() {
 		ListenPort: w.nextFreePort(),
 		TimeoutMs:  15000,
 	}
-	if w.editUpstreamDialog(u, false) {
+	// 必须用对话框回传的那一份：u 传进去只是"初始值"，用户改的结果在返回值里
+	if edited, ok := w.editUpstreamDialog(u, false); ok {
+		u = edited
 		if err := w.app.AddUpstream(u); err != nil {
 			w.warn("添加失败：" + err.Error())
 			return
@@ -744,7 +767,8 @@ func (w *winMain) editSelected() {
 		w.warn("该住宅代理已不存在")
 		return
 	}
-	if w.editUpstreamDialog(u, true) {
+	if edited, ok := w.editUpstreamDialog(u, true); ok {
+		u = edited
 		if err := w.app.UpdateUpstream(u); err != nil {
 			w.warn("保存失败：" + err.Error())
 			return
