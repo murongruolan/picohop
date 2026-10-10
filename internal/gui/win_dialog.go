@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 
@@ -100,15 +102,12 @@ func (d *dlgState) run() {
 		title = "编辑住宅代理"
 	}
 
-	wc := WNDCLASSEX{
-		Style:         0x0008 | 0x0002,
-		LpfnWndProc:   syscall.NewCallback(d.wndProc),
-		HInstance:     d.inst,
-		HCursor:       loadCursor(idcArrowW),
-		HbrBackground: getSysColorBrush(systemColorBtnFace),
-		LpszClassName: dlgClassName,
-	}
-	registerClassExW(&wc) // 重复注册返回 0，属正常情况，忽略
+	ensureDlgClass(d.inst)
+
+	// 把"当前打开的对话框"登记进去，供共用的窗口过程路由。
+	// 必须在 createWindowExW 之前设置，否则窗口一创建就可能先收到消息。
+	dlgCurrent.Store(d)
+	defer dlgCurrent.Store(nil)
 
 	d.hwnd = createWindowExW(wsExDlgModalFrame, "ChainProxyEditDialog", title,
 		wsPopup|wsCaption|wsBorder|wsSysMenu,
@@ -394,6 +393,9 @@ func (d *dlgState) load() {
 	}
 	d.cWGMTU.setIntValue(mtu)
 
+	// 载入后立刻刷新一次本端公钥，打开对话框就能看到
+	d.refreshPubKey()
+
 	d.cWGPSK.setText(w.PresharedKey)
 }
 
@@ -425,10 +427,67 @@ func (d *dlgState) typeOnChange() {
 // 消息
 // ---------------------------------------------------------------------------
 
-func (d *dlgState) wndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
+// ---------------------------------------------------------------------------
+// 对话框窗口类与共用窗口过程
+//
+// 【为什么必须共用】
+// Win32 的窗口类**每个进程只能注册一次**：第二次调用 RegisterClassExW 会失败，
+// 而类里保存的仍然是**第一次**注册时的窗口过程。
+// 早先这里是每次打开对话框都 NewCallback(d.wndProc) + registerClassExW，
+// 于是从**第二次打开对话框**开始，所有按钮消息都被派发到
+// **第一次那个已经被销毁的 dlgState** 上 —— 表现就是"点生成密钥/复制公钥没反应"，
+// 而且第一次打开时一切正常，极具迷惑性。
+//
+// 现在：类只注册一次，窗口过程是固定的一个，通过 dlgCurrent 路由到当前实例。
+// ---------------------------------------------------------------------------
+
+var (
+	dlgClassOnce sync.Once
+	dlgProcAddr  uintptr
+	dlgCurrent   atomic.Pointer[dlgState]
+)
+
+func ensureDlgClass(inst uintptr) {
+	dlgClassOnce.Do(func() {
+		dlgProcAddr = syscall.NewCallback(dlgWndProc)
+		wc := WNDCLASSEX{
+			Style:         0x0008 | 0x0002,
+			LpfnWndProc:   dlgProcAddr,
+			HInstance:     inst,
+			HCursor:       loadCursor(idcArrowW),
+			HbrBackground: getSysColorBrush(systemColorBtnFace),
+			LpszClassName: dlgClassName,
+		}
+		registerClassExW(&wc)
+	})
+}
+
+// dlgWndProc 是对话框类的唯一窗口过程，把消息转给当前打开的那个对话框。
+func dlgWndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
+	if d := dlgCurrent.Load(); d != nil {
+		return d.handleMsg(hwnd, msg, wParam, lParam)
+	}
+	r, _, _ := pDefWindowProcW.Call(hwnd, uintptr(msg), wParam, lParam)
+	return r
+}
+
+func (d *dlgState) handleMsg(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 	switch msg {
 	case wmCommand:
-		switch id(int32(wParam & 0xFFFF)) {
+		cid := int32(wParam & 0xFFFF)
+		notif := int32((wParam >> 16) & 0xFFFF)
+
+		// 私钥一改就实时推导"本端公钥"：
+		// 用户粘贴完私钥，立刻就能拿到该交给服务端的那一串。
+		if cid == dgWGPriv && notif == 0x0300 /* EN_CHANGE */ {
+			d.refreshPubKey()
+			return 0
+		}
+		if notif != 0 {
+			return 0
+		}
+
+		switch id(cid) {
 		case dgOK:
 			d.accept()
 		case dgCancel:
@@ -438,6 +497,14 @@ func (d *dlgState) wndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uin
 			d.applyQuickImport()
 		case dgType:
 			d.typeOnChange()
+		case dgWGGen:
+			d.generateKeys()
+		case dgWGCopyPub:
+			if err := putClipboard(d.cWGPubShow.text()); err != nil {
+				d.setStatus("复制失败：" + err.Error())
+			} else {
+				d.setStatus("已复制本端公钥到剪贴板")
+			}
 		}
 		return 0
 	case wmClose:

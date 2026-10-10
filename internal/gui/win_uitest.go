@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"chainproxy/internal/wgproxy"
 )
 
 // ---------------------------------------------------------------------------
@@ -239,6 +241,47 @@ func maybeDumpDialog(d *dlgState) {
 	sb.WriteString(fmt.Sprintf("\n住宅服务器组可见=%v  WireGuard 组可见=%v\n",
 		d.cServerGroup.enabled() && d.cServerGroup.visible(), d.cWGGroup.visible()))
 
+	// ---- 对话框按钮点击体检 ----
+	//
+	// 这一段专门盯住一个曾经真实发生过的坑：
+	// Win32 的窗口类**每个进程只能注册一次**，类里保存的是第一次注册的窗口过程。
+	// 早先每次打开对话框都重新注册，于是**从第二次打开开始**，
+	// 所有按钮消息都派发到第一次那个已被销毁的对象上，点什么都"没反应"。
+	// 而本函数在自检里恰好是**第二次**打开对话框（第一次是 socks5），
+	// 所以在这里点按钮，正好覆盖那个场景。
+	if d.cType.comboText() == "wireguard" {
+		sb.WriteString("\n=== 对话框按钮点击体检 ===\n")
+
+		privBefore := d.cWGPriv.text()
+		sendMessage(uintptr(getCtrlByID(d.hwnd, dgWGGen)), bmClick, 0, 0)
+		pumpMessagesFor(300 * time.Millisecond)
+		privAfter := d.cWGPriv.text()
+		pubAfter := d.cWGPubShow.text()
+
+		genOK := privAfter != "" && privAfter != privBefore && pubAfter != ""
+		sb.WriteString(fmt.Sprintf("  %s 「生成密钥」: 私钥 %s → %s；本端公钥=%s\n",
+			yesNoWord(genOK), shortKey(privBefore), shortKey(privAfter), shortKey(pubAfter)))
+		if !genOK {
+			sb.WriteString("      ❌ 按钮没有生效（窗口类注册或消息路由有问题）\n")
+		}
+
+		// 由私钥反推的公钥必须和显示的一致
+		matchOK := false
+		if derived, derr := wgproxy.PublicKeyFromPrivate(privAfter); derr == nil {
+			matchOK = derived == pubAfter
+		}
+		sb.WriteString(fmt.Sprintf("  %s 「本端公钥」与私钥一致：%s\n",
+			yesNoWord(matchOK), shortKey(pubAfter)))
+
+		// 复制公钥：点一下，再把剪贴板拿回来比对
+		sendMessage(uintptr(getCtrlByID(d.hwnd, dgWGCopyPub)), bmClick, 0, 0)
+		pumpMessagesFor(200 * time.Millisecond)
+		clip := getClipboardText()
+		clipOK := clip != "" && clip == pubAfter
+		sb.WriteString(fmt.Sprintf("  %s 「复制公钥」: 剪贴板内容=%s\n",
+			yesNoWord(clipOK), shortKey(clip)))
+	}
+
 	// 追加到已有报告（可能与主窗口报告写在同一个文件里）
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
@@ -277,3 +320,55 @@ func pumpMessagesFor(d time.Duration) {
 var pPeekMessageW = user32.NewProc("PeekMessageW")
 
 const pmRemove = 0x0001
+
+func yesNoWord(ok bool) string {
+	if ok {
+		return "✅"
+	}
+	return "❌"
+}
+
+// shortKey 把密钥截短显示，报告里只关心"有没有变/一不一致"。
+func shortKey(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "(空)"
+	}
+	r := []rune(s)
+	if len(r) <= 16 {
+		return s
+	}
+	return string(r[:8]) + "…" + string(r[len(r)-4:])
+}
+
+// getClipboardText 读取剪贴板文本（用于验证"复制公钥"真的写进去了）。
+func getClipboardText() string {
+	ok, _, _ := pOpenClipboard.Call(0)
+	if ok == 0 {
+		return ""
+	}
+	defer pCloseClipboard.Call()
+	h, _, _ := pGetClipboardData.Call(cfUnicodeText)
+	if h == 0 {
+		return ""
+	}
+	ptr, _, _ := pGlobalLock.Call(h)
+	if ptr == 0 {
+		return ""
+	}
+	defer pGlobalUnlock.Call(h)
+	return utf16String(unsafeSliceU16(ptr))
+}
+
+// unsafeSliceU16 把一个 NUL 结尾的 UTF-16 裸指针读成切片（长度扫到 NUL 为止）。
+func unsafeSliceU16(ptr uintptr) []uint16 {
+	var out []uint16
+	for i := 0; i < 1<<16; i++ {
+		c := *(*uint16)(unsafePtrAt(ptr, uintptr(i*2)))
+		if c == 0 {
+			break
+		}
+		out = append(out, c)
+	}
+	return out
+}

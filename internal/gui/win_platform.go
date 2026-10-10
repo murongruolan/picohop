@@ -26,6 +26,7 @@ var (
 	pCloseClipboard   = user32.NewProc("CloseClipboard")
 	pEmptyClipboard   = user32.NewProc("EmptyClipboard")
 	pSetClipboardData = user32.NewProc("SetClipboardData")
+	pGetClipboardData = user32.NewProc("GetClipboardData")
 )
 
 const (

@@ -93,6 +93,17 @@ if (Test-Path $dump) {
     $dReports = ([regex]::Matches($s, '编辑对话框自检报告')).Count
     Check "socks5 与 wireguard 两种对话框都做了自检" ($dReports -ge 2) "(共 $dReports 份)"
 
+    # 对话框按钮必须真的有效。
+    # 这里刻意在**第二次**打开的对话框上点按钮：
+    # Win32 窗口类每进程只能注册一次，早先每次打开都重新注册，
+    # 导致第二次起所有按钮消息被派发到已销毁的对象上（点了没反应）。
+    $genOK = $s -match '✅ 「生成密钥」'
+    $pubOK = $s -match '✅ 「本端公钥」与私钥一致'
+    $copyOK = $s -match '✅ 「复制公钥」'
+    Check "对话框「生成密钥」按钮有效" $genOK ""
+    Check "对话框「本端公钥」随私钥正确更新" $pubOK ""
+    Check "对话框「复制公钥」写入剪贴板" $copyOK ""
+
     # 对话框同样要过布局体检
     $dCtrl = 0
     if ($s -match '对话框[\s\S]*?超出客户区的控件：(\d+) 个') { $dCtrl = [int]$Matches[1] }
