@@ -9,7 +9,7 @@ import { onMounted, onBeforeUnmount } from 'vue'
 import { useStore } from './store'
 import { useUi } from './ui'
 import { useActions } from './actions'
-import { hasBridge, notify } from './api'
+import api, { hasBridge, notify } from './api'
 
 import TopBar from './components/TopBar.vue'
 import FilterBar from './components/FilterBar.vue'
@@ -42,9 +42,6 @@ onMounted(async () => {
   await store.init()
   unbind = store.bindEvents()
 
-  // 开发期自测：-open <面板名> 时直接把面板打开（方便截图检查排版）
-  handleDevOpen(store.meta?.devOpen)
-
   // 跟随系统主题变化
   mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
   mediaQuery.addEventListener('change', () => {
@@ -53,14 +50,20 @@ onMounted(async () => {
 
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('blur', () => ui.closeContextMenu())
+
+  // 开发期自测（-open <面板名>）放在**最后**：它可能依赖上面刚注册的监听器。
+  // 踩过一次：enterkey 那一项要在合成回车事件之前就装好 keydown 监听，
+  // 放前面会导致事件派发出去却没有任何人接。
+  await handleDevOpen(store.meta?.devOpen)
 })
 
 /**
  * 开发期自测开关的处理（见 desktop/main.go 的 -open 参数）。
  *
  * 生产环境下 meta.devOpen 恒为空，这段不会执行。
+ * 声明成 async 是因为 enterkey 那一项要先停掉节点再合成回车事件。
  */
-function handleDevOpen(name) {
+async function handleDevOpen(name) {
   if (!name) return
   const first = store.nodes[0]
   switch (name) {
@@ -127,6 +130,23 @@ function handleDevOpen(name) {
       store.setStatusFilter('active')
       store.searchText = '2'
       store.applySearch()
+      break
+
+    // 验证"回车激活"这条路径：先把节点全停掉，选中一行，
+    // 再派发一个**合成的键盘事件**（纯 JS，不涉及任何系统级输入注入）。
+    //
+    // 开头那 1.5 秒等待是必须的：后端启动时会延迟 300ms 做一次"自动激活上次
+    // 激活的节点"，不等它跑完就停节点，它随后又会把节点全部拉起来，
+    // 于是截图里看不出"回车到底有没有生效"（第一次就是这么误判的）。
+    case 'enterkey':
+      if (first) {
+        await new Promise((r) => setTimeout(r, 1500))
+        await api.deactivateAll()
+        store.clearSelection()
+        await store.refresh()
+        store.selectRow(store.nodes[0], {})
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      }
       break
   }
 }
