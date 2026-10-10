@@ -127,16 +127,30 @@ func (b *socksBind) receive(bufs [][]byte, sizes []int, eps []conn.Endpoint) (in
 			continue
 		}
 
-		// 只接受来自对端的包
+		// 先记录"到底收到了什么"，再做后续处理。
+		//
+		// 这一点非常重要：如果回包被丢掉了，日志里必须有痕迹，
+		// 否则只会看到"发出去、收不回来"，完全指不到是哪一步吃掉的。
+		dbg("receive 收到 %d 字节，来自 %s:%d（配置对端 %s）", n, srcHost, srcPort, b.peer)
+
 		addr, ok := addrFromHostPort(srcHost, srcPort)
 		if !ok {
-			continue
-		}
-		if b.peer.IsValid() && addr.Addr() != b.peer.Addr() {
+			dbg("  -> 来源地址无法解析，丢弃")
 			continue
 		}
 
-		dbg("receive 收到 %d 字节，来自 %s:%d", n, srcHost, srcPort)
+		// 【刻意不按源地址过滤】
+		//
+		// 早先这里有一句 `if addr.Addr() != b.peer.Addr() { continue }`，
+		// 想当然地"只收对端的包"。但那会造成一类**完全无声**的故障：
+		//   · 端口映射（DNAT）若没配 SNAT，容器回包的源地址是容器内网 IP；
+		//   · WireGuard 允许对端漫游，换网络后源地址本来就会变。
+		// 这两种情况下回包都会被直接丢掉，外部只看到"握手超时"。
+		//
+		// wireguard-go 自带的 StdNetBind 也**不按源地址过滤** ——
+		// 因为 WireGuard 的每个包都有密码学认证，
+		// 真正的合法性由协议层判断，收包层没必要（也不该）做这件事。
+
 		sizes[0] = n
 		eps[0] = &socksEndpoint{dst: addr}
 		return 1, nil
