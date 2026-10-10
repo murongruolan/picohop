@@ -241,6 +241,11 @@ func maybeDumpDialog(d *dlgState) {
 	sb.WriteString(fmt.Sprintf("\n住宅服务器组可见=%v  WireGuard 组可见=%v\n",
 		d.cServerGroup.enabled() && d.cServerGroup.visible(), d.cWGGroup.visible()))
 
+	// 记下"对话框打开时的类型"：下面的 WG 按钮/密钥体检只对 wireguard 那次有意义
+	//（socks5 那次虽然会被类型切换体检切成 wireguard，但字段本来是空的，
+	//  拿空值去断言复制结果只会得到假失败）。
+	isWGAtOpen := d.cType.comboText() == "wireguard"
+
 	// ---- 类型切换体检 ----
 	//
 	// 【为什么必须单独测这一步】
@@ -286,7 +291,7 @@ func maybeDumpDialog(d *dlgState) {
 	// 所有按钮消息都派发到第一次那个已被销毁的对象上，点什么都"没反应"。
 	// 而本函数在自检里恰好是**第二次**打开对话框（第一次是 socks5），
 	// 所以在这里点按钮，正好覆盖那个场景。
-	if d.cType.comboText() == "wireguard" {
+	if isWGAtOpen {
 		sb.WriteString("\n=== 对话框按钮点击体检 ===\n")
 
 		privBefore := d.cWGPriv.text()
@@ -317,6 +322,47 @@ func maybeDumpDialog(d *dlgState) {
 		clipOK := clip != "" && clip == pubAfter
 		sb.WriteString(fmt.Sprintf("  %s 「复制公钥」: 剪贴板内容=%s\n",
 			yesNoWord(clipOK), shortKey(clip)))
+
+		// ---- 密钥框宽度体检 ----
+		//
+		// 密钥固定 44 个字符，框太窄就看不全；而手动框选又极易选不全
+		// （用户就因此把私钥抄成了 37 个字符，导致握手一直失败还查不出原因）。
+		// 所以这里把"每个密钥框都装得下 44 个字符"钉成断言。
+		sb.WriteString("\n=== 密钥框宽度体检（44 字符必须完整显示）===\n")
+		sampleKey := "YPRXVXeYap1NQGmTWwf746EzPZF7nGYO0X+GQTtbRPA="
+		needW := d.l.measure(d.l.fRegular, sampleKey) + 12
+		for _, f := range []struct {
+			name string
+			c    ctrl
+		}{
+			{"私钥", d.cWGPriv},
+			{"对端公钥", d.cWGPub},
+			{"预共享密钥", d.cWGPSK},
+			{"本端公钥", d.cWGPubShow},
+		} {
+			w := ctrlClientWidth(f.c)
+			sb.WriteString(fmt.Sprintf("  %s %-6s 宽度 %4d px（44 字符需 %4d px）\n",
+				yesNoWord(w >= needW), f.name, w, needW))
+		}
+
+		// ---- 每个密钥字段的一键复制 ----
+		sb.WriteString("\n=== 密钥一键复制体检 ===\n")
+		for _, cc := range []struct {
+			name string
+			btn  id
+			src  ctrl
+		}{
+			{"私钥", dgWGCopyPriv, d.cWGPriv},
+			{"对端公钥", dgWGCopyPeer, d.cWGPub},
+			{"预共享密钥", dgWGCopyPSK, d.cWGPSK},
+		} {
+			sendMessage(uintptr(getCtrlByID(d.hwnd, cc.btn)), bmClick, 0, 0)
+			pumpMessagesFor(200 * time.Millisecond)
+			got := getClipboardText()
+			want := cc.src.text()
+			sb.WriteString(fmt.Sprintf("  %s 「复制%s」: 期待 %s，剪贴板 %s\n",
+				yesNoWord(want != "" && got == want), cc.name, shortKey(want), shortKey(got)))
+		}
 	}
 
 	// 追加到已有报告（可能与主窗口报告写在同一个文件里）
@@ -408,4 +454,15 @@ func unsafeSliceU16(ptr uintptr) []uint16 {
 		out = append(out, c)
 	}
 	return out
+}
+
+// ctrlClientWidth 返回控件的客户区宽度（像素）。
+// 用来断言"密钥框装得下 44 个字符"这类尺寸要求。
+func ctrlClientWidth(c ctrl) int32 {
+	if c == 0 {
+		return 0
+	}
+	var r RECT
+	pGetClientRect.Call(uintptr(c), uintptr(unsafe.Pointer(&r)))
+	return r.Right - r.Left
 }

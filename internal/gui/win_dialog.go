@@ -49,6 +49,10 @@ const (
 	dgWGGen     = 0x7050
 	dgWGPubShow = 0x7051
 	dgWGCopyPub = 0x7052
+	// 密钥都是 44 个字符，手动框选极易选不全，所以每个密钥字段都配一个复制按钮
+	dgWGCopyPriv = 0x7053
+	dgWGCopyPeer = 0x7054
+	dgWGCopyPSK  = 0x7055
 )
 
 // dgParse 属于"住宅代理"控件组，不能写成 const（groupID 是函数）。
@@ -111,7 +115,7 @@ func (d *dlgState) run() {
 
 	d.hwnd = createWindowExW(wsExDlgModalFrame, "ChainProxyEditDialog", title,
 		wsPopup|wsCaption|wsBorder|wsSysMenu,
-		0, 0, scaleDPI(620, d.dpi()), scaleDPI(780, d.dpi()), d.parent.hwnd, 0, d.inst)
+		0, 0, scaleDPI(780, d.dpi()), scaleDPI(790, d.dpi()), d.parent.hwnd, 0, d.inst)
 	if d.hwnd == 0 {
 		d.parent.warn(fmt.Sprintf("创建对话框失败（errno=%d）", errno()))
 		return
@@ -259,10 +263,9 @@ func (d *dlgState) build() {
 
 	// ---- WireGuard ----
 	wy := s(330)
-	d.cWGGroup = d.l.group(d.l.fitGroupTitle("WireGuard 隧道 —— 纯用户态，不需要驱动、不改系统路由", inner-s(20)), dgWGGroup, s(pad), wy, inner, s(280))
+	d.cWGGroup = d.l.group(d.l.fitGroupTitle("WireGuard 隧道 —— 纯用户态，不需要驱动、不改系统路由", inner-s(20)), dgWGGroup, s(pad), wy, inner, s(288))
+
 	// wgRow 造一行"左对齐标签 + 输入框"，返回输入框右边界。
-	// 之前这里同时造了一个右对齐标签和一个左对齐标签，
-	// 右对齐那个被推到 x=-16，体检报告立刻就把问题抓出来了。
 	wgRow := func(text string, cid id, y, fieldW int32) int32 {
 		lw := d.l.measure(d.l.fRegular, text) + 10
 		d.wgLbls = append(d.wgLbls, d.l.label(text, cid+1000, s(pad+14), y+s(4), lw, s(18)))
@@ -270,43 +273,64 @@ func (d *dlgState) build() {
 		d.wgCtrls = append(d.wgCtrls, ct)
 		return s(pad+14) + lw + s(8) + fieldW
 	}
-	wgRow("私钥", dgWGPriv, wy+s(26), s(280))
-	wgRow("隧道地址", dgWGAddr, wy+s(56), s(280))
-	wgRow("对端公钥", dgWGPub, wy+s(86), s(280))
-	hostRight := wgRow("服务器", dgWGEHost, wy+s(116), s(180))
+
+	// wgKeyRow 造一行"标签 + 尽可能宽的输入框 + 一键复制按钮"。
+	//
+	// 密钥固定 44 个字符（实测约需 340px 才能完整显示），
+	// 而用户手动框选时经常选不全 —— 之前就是这样把私钥抄成了 37 个字符，
+	// 导致握手一直失败还查不出原因。所以这里：
+	//   · 输入框给到"标签之后、复制按钮之前"的全部宽度；
+	//   · 每个密钥字段都配一个复制按钮，彻底不用手选。
+	btnW := s(90)
+	fieldRight := cw - s(pad+14) - btnW - s(10)
+	wgKeyRow := func(text string, fieldCid, btnCid id, y int32, readonly bool) int32 {
+		lw := d.l.measure(d.l.fRegular, text) + 10
+		x := s(pad+14) + lw + s(8)
+		w := fieldRight - x
+		d.wgLbls = append(d.wgLbls, d.l.label(text, fieldCid+1000, s(pad+14), y+s(4), lw, s(18)))
+
+		style := uint32(wsChild | wsVisible | wsBorder | wsExClientEdge | esLeft)
+		if readonly {
+			style |= esReadOnly
+		} else {
+			style |= esAutoHScroll // 内容比框长时可以横向滚动看全
+		}
+		d.wgCtrls = append(d.wgCtrls,
+			d.l.make(control{Class: "EDIT", Style: style, Ex: wsExClientEdge, ID: fieldCid},
+				x, y-s(4), w, s(24)))
+
+		bc, _ := d.l.buttonAuto("复制", btnCid, fieldRight+s(10), y-s(5), btnW, s(26))
+		d.wgCtrls = append(d.wgCtrls, bc)
+		return w
+	}
+
+	wgKeyRow("私钥", dgWGPriv, dgWGCopyPriv, wy+s(26), false)
+	wgRow("隧道地址", dgWGAddr, wy+s(56), s(300))
+	wgKeyRow("对端公钥", dgWGPub, dgWGCopyPeer, wy+s(86), false)
+
+	hostRight := wgRow("服务器", dgWGEHost, wy+s(116), s(200))
 	d.wgLbls = append(d.wgLbls, d.l.label("端口", groupID(gUpstream)+50, hostRight+s(16), wy+s(120), s(66), s(18)))
 	d.cWGEPort = d.l.edit(dgWGEPort, hostRight+s(16)+s(66), wy+s(112), s(90), s(24), esNumber)
 	d.wgCtrls = append(d.wgCtrls, d.cWGEPort)
-	allowRight := wgRow("AllowedIPs", dgWGAllow, wy+s(146), s(200))
+
+	allowRight := wgRow("AllowedIPs", dgWGAllow, wy+s(146), s(250))
 	d.wgLbls = append(d.wgLbls, d.l.label("Keepalive", groupID(gUpstream)+51, allowRight+s(16), wy+s(150), s(76), s(18)))
 	d.cWGKeep = d.l.edit(dgWGKeep, allowRight+s(16)+s(76), wy+s(142), s(70), s(24), esNumber)
 	d.wgCtrls = append(d.wgCtrls, d.cWGKeep)
+
 	// 预共享密钥（wg-quick 的 PresharedKey）。不少服务商与家用路由器默认开启，
 	// 缺了它会一直握手失败，而 WireGuard 不会告诉你原因，所以必须能填。
-	psLw := d.l.measure(d.l.fRegular, "预共享密钥") + 10
-	d.wgLbls = append(d.wgLbls, d.l.label("预共享密钥", groupID(gUpstream)+53, s(pad+14), wy+s(180), psLw, s(18)))
-	d.cWGPSK = d.l.edit(dgWGPSK, s(pad+14)+psLw+s(8), wy+s(172), s(300), s(24), 0)
-	d.wgCtrls = append(d.wgCtrls, d.cWGPSK)
+	wgKeyRow("预共享密钥", dgWGPSK, dgWGCopyPSK, wy+s(176), false)
 
-	// MTU 行右侧放"生成密钥 / 复制公钥"两个按钮
+	// MTU 行右侧放「生成密钥」
 	mtuRight := wgRow("MTU", dgWGMTU, wy+s(206), s(90))
-	bGen, wGen := d.l.buttonAuto("生成密钥", dgWGGen, mtuRight+s(20), wy+s(204), s(120), s(28))
-	bCopy, _ := d.l.buttonAuto("复制公钥", dgWGCopyPub, mtuRight+s(20)+wGen+s(10), wy+s(204), s(110), s(28))
-	d.wgCtrls = append(d.wgCtrls, bGen, bCopy)
+	bGen, _ := d.l.buttonAuto("生成密钥", dgWGGen, mtuRight+s(20), wy+s(204), s(120), s(28))
+	d.wgCtrls = append(d.wgCtrls, bGen)
 
-	// 最后一行：本端公钥（只读，跟着私钥实时变）
+	// 最后一行：本端公钥（只读，跟着私钥实时变）。
 	// 服务端的 peer 里必须登记这一个公钥，对不上只会静默丢包，所以直接摊在界面上。
-	pubLw := d.l.measure(d.l.fRegular, "本端公钥") + 10
-	d.wgLbls = append(d.wgLbls, d.l.label("本端公钥", groupID(gUpstream)+54, s(pad+14), wy+s(240), pubLw, s(18)))
-	d.cWGPubShow = d.l.make(control{
-		Class: "EDIT",
-		Style: wsChild | wsVisible | wsBorder | wsExClientEdge | esLeft | esReadOnly,
-		Ex:    wsExClientEdge,
-		ID:    dgWGPubShow,
-	}, s(pad+14)+pubLw+s(8), wy+s(236), cw-s(pad+14)-s(8)-(s(pad+14)+pubLw+s(8)), s(24))
-	d.wgCtrls = append(d.wgCtrls, d.cWGPubShow)
-	d.wgLbls = append(d.wgLbls,
-		d.l.make(control{Class: "STATIC", Text: "", Style: wsChild | wsVisible | ssLeft, ID: groupID(gUpstream) + 52}, 0, 0, 0, 0))
+	wgKeyRow("本端公钥", dgWGPubShow, dgWGCopyPub, wy+s(236), true)
+	d.cWGPubShow = getCtrlByID(d.hwnd, dgWGPubShow)
 
 	// 记住具名句柄
 	d.cWGPriv = getCtrlByID(d.hwnd, dgWGPriv)
@@ -315,17 +339,18 @@ func (d *dlgState) build() {
 	d.cWGEHost = getCtrlByID(d.hwnd, dgWGEHost)
 	d.cWGAllow = getCtrlByID(d.hwnd, dgWGAllow)
 	d.cWGMTU = getCtrlByID(d.hwnd, dgWGMTU)
+	d.cWGPSK = getCtrlByID(d.hwnd, dgWGPSK)
 
 	d.cStatus = d.l.make(control{
 		Class: "STATIC", Text: "", Style: wsChild | wsVisible | ssLeft | ssEndEllipsis, ID: dgStatus,
-	}, s(pad), s(616), inner, s(20))
+	}, s(pad), s(626), inner, s(20))
 
 	// 底部按钮：右对齐，宽度按文字
-	_, wOK := d.l.defButtonAuto("确定", dgOK, 0, s(646), s(76), s(30))
-	_, wCancel := d.l.buttonAuto("取消", dgCancel, 0, s(646), s(76), s(30))
+	_, wOK := d.l.defButtonAuto("确定", dgOK, 0, s(656), s(76), s(30))
+	_, wCancel := d.l.buttonAuto("取消", dgCancel, 0, s(656), s(76), s(30))
 	xOK := cw - s(pad) - wOK
-	moveCtrl(getCtrlByID(d.hwnd, dgOK), xOK, s(646), wOK, s(30))
-	moveCtrl(getCtrlByID(d.hwnd, dgCancel), xOK-s(12)-wCancel, s(646), wCancel, s(30))
+	moveCtrl(getCtrlByID(d.hwnd, dgOK), xOK, s(656), wOK, s(30))
+	moveCtrl(getCtrlByID(d.hwnd, dgCancel), xOK-s(12)-wCancel, s(656), wCancel, s(30))
 
 	d.load()
 	d.typeOnChange()
@@ -510,11 +535,15 @@ func (d *dlgState) handleMsg(hwnd uintptr, msg uint32, wParam, lParam uintptr) u
 		case dgWGGen:
 			d.generateKeys()
 		case dgWGCopyPub:
-			if err := putClipboard(d.cWGPubShow.text()); err != nil {
-				d.setStatus("复制失败：" + err.Error())
-			} else {
-				d.setStatus("已复制本端公钥到剪贴板")
-			}
+			d.copyToClipboard(d.cWGPubShow.text(), "本端公钥")
+		case dgWGCopyPriv:
+			// 私钥是 44 个字符，手动框选极易选不全（就因为这个吃过亏），
+			// 所以必须给一个一键复制的口子。
+			d.copyToClipboard(d.cWGPriv.text(), "私钥（注意保密，不要发给服务端）")
+		case dgWGCopyPeer:
+			d.copyToClipboard(d.cWGPub.text(), "对端公钥")
+		case dgWGCopyPSK:
+			d.copyToClipboard(d.cWGPSK.text(), "预共享密钥")
 		}
 		return 0
 	case wmClose:
@@ -681,6 +710,20 @@ func centerOn(child, parent uintptr) {
 	px := (pr.Left + pr.Right) / 2
 	py := (pr.Top + pr.Bottom) / 2
 	setWindowPos(child, px-cw/2, py-ch/2, cw, ch)
+}
+
+// copyToClipboard 把内容写进剪贴板并给出状态提示。
+// 空内容时明确拒绝，避免"复制了空串却提示成功"。
+func (d *dlgState) copyToClipboard(text, what string) {
+	if strings.TrimSpace(text) == "" {
+		d.setStatus(what + " 是空的，没有可复制的内容")
+		return
+	}
+	if err := putClipboard(text); err != nil {
+		d.setStatus("复制失败：" + err.Error())
+		return
+	}
+	d.setStatus("已复制" + what + "到剪贴板")
 }
 
 // refreshPubKey 由私钥实时推导"本端公钥"并显示。
