@@ -381,3 +381,12 @@ func getTextExtentPoint32(hdc uintptr, s string) int {
 	}
 	return int(sz.CX)
 }
+
+// gwlStyle 是 GetWindowLongPtr 的 nIndex 取值（GW L_STYLE）。
+const gwlStyle = -16
+
+// getWindowLongPtr 读窗口的 32/64 位属性。
+func getWindowLongPtr(hwnd uintptr, index int32) int64 {
+	r, _, _ := pGetWindowLongPtrW.Call(hwnd, uintptr(index))
+	return int64(r)
+}

@@ -179,22 +179,24 @@ func (d *dlgState) build() {
 	nlw := d.l.measure(d.l.fRegular, "名称") + 10
 	d.l.make(control{Class: "STATIC", Text: "名称", Style: wsChild | wsVisible | ssLeft, ID: groupID(gUpstream) + 1},
 		nmX, s(17), nlw, s(18))
-	d.cName = d.l.edit(dgName, nmX+nlw+s(8), s(13), s(230), s(24), 0)
+	d.cName = d.l.edit(dgName, nmX+nlw+s(8), s(13), s(170), s(24), 0)
 
-	x2 := s(296)
+	x2 := s(280)
 	tlw := d.l.measure(d.l.fRegular, "类型") + 10
 	d.l.make(control{Class: "STATIC", Text: "类型", Style: wsChild | wsVisible | ssLeft, ID: groupID(gUpstream) + 2},
 		x2, s(17), tlw, s(18))
-	d.cType = d.l.combo(dgType, dlgTypes, x2+tlw+s(8), s(13), s(136), s(160))
-	d.cEnable = d.l.checkbox("启用此代理", dgEnable, cw-s(196), s(15), s(178), s(22))
+	d.cType = d.l.combo(dgType, dlgTypes, x2+tlw+s(8), s(13), s(96), s(160))
+	d.cEnable = d.l.checkbox("启用", dgEnable, cw-s(102), s(15), s(84), s(22))
 
 	// ---- 快速导入 ----
 	by := s(44)
 	d.l.group(d.l.fitGroupTitle("快速导入 —— 可直接粘贴 user:pass@host:port", inner-s(20)), groupID(gUpstream)+3, s(pad), by, inner, s(62))
-	d.cQuick = d.l.edit(dgQuick, s(pad+12), by+s(20), inner-s(160), s(24), 0)
-	// 按钮宽度先算出来再定位，否则会像之前那样从右边溢出
+	// 按钮宽度先算出来，输入框再按"剩下的宽度"排，
+	// 否则两者会互相压住（布局体检的重叠检测会报出来）。
 	_, wParse := d.l.buttonAuto("解析并填入", dgParse, 0, by+s(18), s(96), s(28))
-	moveCtrl(getCtrlByID(d.hwnd, dgParse), cw-s(pad+12)-wParse, by+s(18), wParse, s(28))
+	xParse := cw - s(pad+12) - wParse
+	moveCtrl(getCtrlByID(d.hwnd, dgParse), xParse, by+s(18), wParse, s(28))
+	d.cQuick = d.l.edit(dgQuick, s(pad+12), by+s(20), xParse-s(pad+12)-s(12), s(24), 0)
 
 	// ---- 本地端口 ----
 	cy := s(114)

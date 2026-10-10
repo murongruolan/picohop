@@ -57,6 +57,7 @@ type layoutReport struct {
 	ClientW, ClientH int32
 	OverflowControls []string // 超出客户区的控件
 	OverflowText     []string // 文字比控件宽的控件
+	Overlaps         []string // 互相压住的控件
 }
 
 // checkLayout 遍历主窗口所有子控件，产出布局体检报告。
@@ -139,7 +140,101 @@ func checkLayout(hwnd uintptr) layoutReport {
 	}
 	sort.Strings(rep.OverflowControls)
 	sort.Strings(rep.OverflowText)
+	rep.Overlaps = findOverlaps(hwnd, offX, offY)
 	return rep
+}
+
+// box 是一个用于重叠检测的控件矩形。
+type box struct {
+	id    int32
+	class string
+	text  string
+	x, y  int32
+	w, h  int32
+}
+
+// findOverlaps 找出"互相压住"的控件。
+//
+// 为什么要单独做这件事：分组框（BS_GROUPBOX）**本来就应该**盖住里面的控件、
+// 大面板里也本来就放着别的控件，所以不能无脑两两判重叠。
+// 这里的做法是：先把"完全包含住另一个控件"的控件标记为容器并排除，
+// 剩下的叶子控件之间才做两两相交检测。
+// 之前"状态文字被右上角按钮盖住"就是这么发现的。
+func findOverlaps(hwnd uintptr, offX, offY int32) []string {
+	var boxes []box
+	for _, e := range collectChildWindows(hwnd) {
+		if !e.vis || e.w <= 0 || e.h <= 0 {
+			continue
+		}
+		switch e.class {
+		case "Button", "Static", "Edit", "ComboBox":
+		default:
+			continue
+		}
+		if e.class == "Button" && isGroupBox(e.hwnd) {
+			continue // 分组框是容器，天然与子控件重叠
+		}
+		boxes = append(boxes, box{
+			id: e.id, class: e.class, text: e.text,
+			x: e.x - offX, y: e.y - offY, w: e.w, h: e.h,
+		})
+	}
+
+	// 标记容器：完全包含另一个控件的，视为容器，本身不参与重叠判定
+	isContainer := make([]bool, len(boxes))
+	for i := range boxes {
+		for j := range boxes {
+			if i == j {
+				continue
+			}
+			if contains(boxes[i], boxes[j]) {
+				isContainer[i] = true
+				break
+			}
+		}
+	}
+
+	var out []string
+	for i := range boxes {
+		if isContainer[i] {
+			continue
+		}
+		for j := i + 1; j < len(boxes); j++ {
+			if isContainer[j] {
+				continue
+			}
+			if !intersects(boxes[i], boxes[j]) {
+				continue
+			}
+			out = append(out, fmt.Sprintf("%s id=%d %q 与 %s id=%d %q 互相重叠（%d,%d %dx%d vs %d,%d %dx%d）",
+				boxes[i].class, boxes[i].id, truncForReport(boxes[i].text),
+				boxes[j].class, boxes[j].id, truncForReport(boxes[j].text),
+				boxes[i].x, boxes[i].y, boxes[i].w, boxes[i].h,
+				boxes[j].x, boxes[j].y, boxes[j].w, boxes[j].h))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func contains(a, b box) bool {
+	return b.x >= a.x && b.y >= a.y && b.x+b.w <= a.x+a.w && b.y+b.h <= a.y+a.h
+}
+
+func intersects(a, b box) bool {
+	if a.x+a.w <= b.x || b.x+b.w <= a.x {
+		return false
+	}
+	if a.y+a.h <= b.y || b.y+b.h <= a.y {
+		return false
+	}
+	return true
+}
+
+// isGroupBox 判断按钮是不是 BS_GROUPBOX（风格位 0x0007，高 4 位为 7）。
+func isGroupBox(h uintptr) bool {
+	style := getWindowLongPtr(h, gwlStyle)
+	return uint32(style)&0x0F == bsGroupBox
 }
 
 // controlTextPad 是控件文字之外必须预留的边框/内边距。
@@ -174,7 +269,12 @@ func (r layoutReport) render() string {
 		sb.WriteString("  " + s + "\n")
 	}
 
-	if len(r.OverflowControls) == 0 && len(r.OverflowText) == 0 {
+	sb.WriteString(fmt.Sprintf("\n互相重叠的控件：%d 对\n", len(r.Overlaps)))
+	for _, s := range r.Overlaps {
+		sb.WriteString("  " + s + "\n")
+	}
+
+	if len(r.OverflowControls) == 0 && len(r.OverflowText) == 0 && len(r.Overlaps) == 0 {
 		sb.WriteString("  ✅ 没有发现布局问题\n")
 	}
 	return sb.String()

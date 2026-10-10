@@ -60,6 +60,11 @@ for ($i = 1; $i -le $Repeat; $i++) {
     if ($s -match '文字宽度超过控件宽度：(\d+) 个') { $overflowText = [int]$Matches[1] }
     Check "第 $i 次：没有文字被控件截断" ($overflowText -eq 0) "(截断 $overflowText 个)"
 
+    # 重叠检测：控件不能互相压住（例如状态文字被按钮盖住）
+    $overlap = 0
+    if ($s -match '互相重叠的控件：(\d+) 对') { $overlap = [int]$Matches[1] }
+    Check "第 $i 次：没有控件互相重叠" ($overlap -eq 0) "(重叠 $overlap 对)"
+
     # 点击模拟：按钮必须真的产生可观测效果（防止"点了没反应"复发）
     $clickFail = ([regex]::Matches($s, '\[FAIL\]|❌')).Count
     $clickWarn = ([regex]::Matches($s, '⚠️')).Count
@@ -85,6 +90,9 @@ if (Test-Path $dump) {
     $dText = 0
     if ($s -match '对话框[\s\S]*?文字宽度超过控件宽度：(\d+) 个') { $dText = [int]$Matches[1] }
     Check "对话框没有文字被截断" ($dText -eq 0) "(截断 $dText 个)"
+    $dOverlap = 0
+    if ($s -match '对话框[\s\S]*?互相重叠的控件：(\d+) 对') { $dOverlap = [int]$Matches[1] }
+    Check "对话框没有控件互相重叠" ($dOverlap -eq 0) "(重叠 $dOverlap 对)"
 } else {
     Check "对话框自检报告已生成" $false ""
 }

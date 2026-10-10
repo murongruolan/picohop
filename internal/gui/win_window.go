@@ -262,20 +262,26 @@ func (w *winMain) layoutControls() {
 	title.font(w.fonts.title)
 	w.l.make(control{
 		Class: "STATIC",
-		Text:  "本地主流客户端作前置 → 你的住宅 IP 作出口，按需走住宅流量",
+		Text:  "本地主流客户端作前置 → 住宅 IP 作出口",
 		Style: wsChild | wsVisible | ssLeft, ID: groupID(gHeader) + 4,
-	}, s(pad), s(40), s(760), s(20)).font(w.fonts.tiny)
+	}, s(pad), s(40), s(470), s(20)).font(w.fonts.tiny)
 
-	w.headerDot = w.l.make(control{Class: "STATIC", Text: "○", Style: wsChild | wsVisible | ssCenter, ID: idHeaderDot}, cw-s(250), s(18), s(34), s(24))
-	w.headerState = w.l.make(control{Class: "STATIC", Text: "已停止", Style: wsChild | wsVisible | ssLeft, ID: idHeaderState}, cw-s(210), s(20), s(190), s(22))
-
-	// 右上角按钮：宽度按文字实测，再从右往左摆
+	// 右上角按钮：宽度按文字实测，先从右往左摆好
 	bTest, wTest := w.l.buttonAuto("一键测试", idBtnTestAll, 0, s(18), s(76), s(32))
 	bToggle, wToggle := w.l.buttonAuto("启动", idBtnToggle, 0, s(18), s(76), s(32))
 	xToggle := cw - pad - wToggle
+	xTest := xToggle - s(10) - wTest
 	moveCtrl(bToggle, xToggle, s(18), wToggle, s(32))
-	moveCtrl(bTest, xToggle-s(10)-wTest, s(18), wTest, s(32))
+	moveCtrl(bTest, xTest, s(18), wTest, s(32))
 	w.btnToggle = bToggle
+
+	// 状态点 + 状态文字必须排在按钮**左边**，否则会被按钮盖住看不见
+	stateW := s(200)
+	xState := xTest - s(16) - stateW
+	w.headerDot = w.l.make(control{Class: "STATIC", Text: "○", Style: wsChild | wsVisible | ssCenter, ID: idHeaderDot},
+		xState-s(38), s(18), s(32), s(24))
+	w.headerState = w.l.make(control{Class: "STATIC", Text: "已停止", Style: wsChild | wsVisible | ssLeft, ID: idHeaderState},
+		xState, s(20), stateW, s(22))
 
 	// ---- ① 前置代理 ----
 	fy := s(70)
