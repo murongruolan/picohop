@@ -16,6 +16,7 @@ import FilterBar from './components/FilterBar.vue'
 import NodeTable from './components/NodeTable.vue'
 import ContextMenu from './components/ContextMenu.vue'
 import LogDrawer from './components/LogDrawer.vue'
+import Notifications from './components/Notifications.vue'
 import NodeDialog from './components/dialogs/NodeDialog.vue'
 import PortOnlyDialog from './components/dialogs/PortOnlyDialog.vue'
 import ShareDialog from './components/dialogs/ShareDialog.vue'
@@ -111,6 +112,22 @@ function handleDevOpen(name) {
         ui.openContextMenu(170, 150, first)
       }
       break
+    // 一次把 5 种通知都弹出来，用来检查类型映射、位置与层级。
+    // duration 传 0 = 不自动关闭：截图工具需要几秒才就绪，默认 4 秒会先关掉。
+    case 'notify':
+      notify('primary', 'primary · 主色通知', '一般性的成功/中性提示', 0)
+      notify('success', 'success · 成功', '节点已激活', 0)
+      notify('warning', 'warning · 警告', '端口被占用，已自动改到 10813', 0)
+      notify('info', 'info · 信息', '将连带激活前置节点', 0)
+      notify('error', 'error · 错误', '握手失败：连接超时', 0)
+      break
+    // 换一套自定义列 + 打开状态筛选 + 输入搜索词，用来检查这三项筛选是否真的生效
+    case 'columns':
+      store.setVisibleColumns(['protocol', 'name', 'listenPort', 'state', 'today', 'lastUsed', 'remark'])
+      store.setStatusFilter('active')
+      store.searchText = '2'
+      store.applySearch()
+      break
   }
 }
 
@@ -173,6 +190,7 @@ function onKeydown(e) {
 
     <ContextMenu />
     <LogDrawer />
+    <Notifications />
 
     <NodeDialog />
     <PortOnlyDialog />

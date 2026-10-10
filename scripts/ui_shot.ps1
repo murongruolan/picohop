@@ -74,4 +74,4 @@ if ($LASTEXITCODE -ne 0) { throw "截图失败" }
 
 Write-Host ""
 Write-Host "[ui_shot] 完成：$Out"
-Write-Host "          可用的 -Open 取值：addnode / edit / settings / import / logs / share / portonly / contextmenu"
+Write-Host "          可用的 -Open 取值：addnode / edit / settings / import / logs / share / portonly / contextmenu / notify / columns"

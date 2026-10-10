@@ -6,8 +6,6 @@
  *  - 后端未就绪 / 不在 Wails 里运行时，能给出明确错误而不是 undefined 崩一片
  *  - 通知、事件订阅这类"通用行为"集中在一处
  */
-import { ElNotification } from 'element-plus'
-
 /** 后端绑定的命名空间（Wails 自动生成在 window.go.main.API）。 */
 function bridge() {
   return window?.go?.main?.API
@@ -33,39 +31,13 @@ async function call(name, ...args) {
 
 /* -------------------------------------------------------------------------
  * 通知
- * ---------------------------------------------------------------------- */
-
-const NOTIFY_OFFSET = 64 // 顶端控制栏(52) 下面一点
-const NOTIFY_ZINDEX = 3000
-
-/**
- * 弹一条通知。
  *
- * level 支持 5 种：primary / success / warning / info / error。
- * element-plus 自带的 type 没有 primary，所以 primary 借用 info 的图标
- * 再用自定义 class 把颜色换成品牌色。
- */
-export function notify(level = 'info', title = '', message = '', duration) {
-  const map = {
-    primary: 'info',
-    success: 'success',
-    warning: 'warning',
-    info: 'info',
-    error: 'error',
-  }
-  const type = map[level] || 'info'
-  ElNotification({
-    title: title || undefined,
-    message: message || undefined,
-    type,
-    offset: NOTIFY_OFFSET,
-    zIndex: NOTIFY_ZINDEX,
-    customClass: `cp-notify cp-notify-${level}`,
-    duration: duration === undefined ? 4000 : duration,
-    position: 'top-right',
-    showClose: true,
-  })
-}
+ * 实现搬到了 ./notify.js 与 components/Notifications.vue —— 为什么不用
+ * element-plus 的 ElNotification，理由写在 notify.js 顶部（同一 tick 连发多条
+ * 会重叠）。这里只做转发，保持 notify(level, title, message, duration)
+ * 这个签名不变，调用方一行都不用改。
+ * ---------------------------------------------------------------------- */
+export { notify } from './notify'
 
 /* -------------------------------------------------------------------------
  * 事件订阅

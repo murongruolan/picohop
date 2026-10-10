@@ -158,7 +158,7 @@ async function confirm() {
       <div class="cp-port-row">
         <el-input
           v-model="r.port"
-          style="width: 150px"
+          style="width: 178px"
           type="number"
           @blur="checkRow(r)"
         >

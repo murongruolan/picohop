@@ -171,26 +171,34 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 切到前台只是为了"确保窗口完整可见"，不注入任何输入
-	procShowWindow.Call(target.hwnd, swRestore)
-	procSetForegroundWin.Call(target.hwnd)
-	time.Sleep(700 * time.Millisecond)
-
-	r, ok := clientRectScreen(target.hwnd)
-	if !ok {
-		fmt.Fprintln(os.Stderr, "取客户区失败")
-		os.Exit(1)
+	// 【不抢焦点】用 PrintWindow 让窗口自己渲染，因此不需要 SetForegroundWindow。
+	// 抢焦点会打断正在用电脑的人，而且一旦抢不到，截到的就是压在它上面的别的程序
+	// （实测踩过：截出来是用户正在看的浏览器页面）。
+	img, err := qrscan.CaptureWindow(target.hwnd)
+	if err != nil || qrscan.LooksBlank(img) {
+		if err == nil {
+			err = fmt.Errorf("PrintWindow 返回的画面基本是同一片颜色（多半是硬件叠加层导致的空白）")
+		}
+		fmt.Fprintf(os.Stderr, "  窗口截图不可用（%v），退回截屏幕区域\n", err)
+		procShowWindow.Call(target.hwnd, swRestore)
+		procSetForegroundWin.Call(target.hwnd)
+		time.Sleep(700 * time.Millisecond)
+		r, ok := clientRectScreen(target.hwnd)
+		if !ok {
+			fmt.Fprintln(os.Stderr, "取客户区失败")
+			os.Exit(1)
+		}
+		area := image.Rect(
+			int(r.Left)-*pad, int(r.Top)-*pad,
+			int(r.Right)+*pad, int(r.Bottom)+*pad,
+		)
+		img, err = qrscan.CaptureRect(area)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "截图失败: %v\n", err)
+			os.Exit(1)
+		}
 	}
-	area := image.Rect(
-		int(r.Left)-*pad, int(r.Top)-*pad,
-		int(r.Right)+*pad, int(r.Bottom)+*pad,
-	)
 
-	img, err := qrscan.CaptureRect(area)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "截图失败: %v\n", err)
-		os.Exit(1)
-	}
 	if err := os.MkdirAll(filepath.Dir(*out), 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "创建输出目录失败: %v\n", err)
 		os.Exit(1)
@@ -206,5 +214,5 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("已截图：%s\n  窗口：%s\n  客户区：%dx%d\n", *out, target.title, area.Dx()-2*(*pad), area.Dy()-2*(*pad))
+	fmt.Printf("已截图：%s\n  窗口：%s\n  尺寸：%dx%d\n", *out, target.title, img.Bounds().Dx(), img.Bounds().Dy())
 }

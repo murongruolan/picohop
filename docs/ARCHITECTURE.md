@@ -214,6 +214,15 @@ PlanActivation(["C"])  ──►  Order = [A, B, C], Auto = [A, B]
   不会因为事件风暴把 IPC 打满。
 - **主题**：以配置文件里的 `settings.theme` 为准（localStorage 只是缓存），
   切换时同步 Windows 标题栏的明暗。
+- **通知是自己实现的**（`src/notify.js` + `components/Notifications.vue`），
+  没有用 Element Plus 的 `ElNotification`。原因：它的垂直位置由**每条通知自己的
+  `offset`** 决定，而同一个 tick 里连发多条时它们互相看不到对方，
+  于是拿到同一个 offset 直接叠在一起 —— 实测一次弹 5 条只看得见最后一条。
+  自己用 flex 列布局就同时拿到了"固定在控制栏下方"和"多条正确堆叠"。
+- **WebView2 的浏览器配置目录被显式指到 `data\webview\`**。
+  默认它在 `%APPDATA%\<程序名>`，那是项目目录之外；本项目的规矩是
+  "一切都在 F:\chain_proxy 内"，所以用 `WebviewUserDataPath` 改掉。
+  顺带的好处：清数据只要删 `data\`，不会在用户漫游配置里留残留。
 - **`-open <面板名>` 开发参数**：让界面启动后直接打开某个面板。
   这是给"界面自测"用的：桌面程序的排版必须真的看一眼，
   而模拟鼠标点击会去动用户的鼠标（甚至点到别的程序上），不可接受。
@@ -225,6 +234,20 @@ Wails v2 **没有多窗口 API**（`options.App` 描述的是唯一那个窗口�
 `WS_POPUP + WS_EX_TOPMOST`，先截图再建窗口（避免把自己拍进去），
 红色十字准星由自己画（`ShowCursor(FALSE)` + 在 `WM_PAINT` 里画十字线，
 比构造自定义光标位图可靠得多）。
+
+### 界面自测怎么截图（怎么不打扰用户）
+
+`cmd/uishot` 前期用"截屏幕上窗口所在的那块区域"，这有两个问题：
+
+1. 窗口被别的程序挡住时，截到的是**挡住它的那个程序**（实测截出过
+   用户正在看的浏览器页面）；
+2. 为了让窗口露出来就得 `SetForegroundWindow` 抢前台焦点 ——
+   那会打断正在用电脑的人。
+
+现在改成 `PrintWindow(hwnd, memDC, PW_RENDERFULLCONTENT)`：
+让**窗口自己**把画面渲染进我们提供的 DC，因此既不依赖它是否可见、
+也不需要抢焦点。万一某个窗口因为硬件叠加层返回一片黑，
+`qrscan.LooksBlank` 会识别出来并退回"截屏幕区域"的老办法（那时才抢焦点）。
 
 ---
 

@@ -389,42 +389,9 @@ html.dark .cp-tag {
 }
 
 /* --------------------------------------------------------------------------
- * 通知：5 种类型，位置在控制栏下方（见 api.js 里的 offset）
+ * 通知的样式在 components/Notifications.vue 里（自己实现的，没用
+ * element-plus 的 ElNotification —— 同一 tick 连发多条时它会重叠）。
  * ------------------------------------------------------------------------ */
-.el-notification.cp-notify {
-  border-radius: var(--cp-radius);
-  border: 1px solid var(--cp-border);
-  background: var(--cp-panel);
-  box-shadow: var(--cp-shadow);
-}
-.el-notification.cp-notify .el-notification__title {
-  font-weight: 600;
-  font-size: 13.5px;
-  color: var(--cp-text);
-}
-.el-notification.cp-notify .el-notification__content {
-  color: var(--cp-text-2);
-  font-size: 12.5px;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-/* primary 是 element-plus 没有的类型，用品牌色补上 */
-.el-notification.cp-notify-primary .el-notification__icon,
-.el-notification.cp-notify-primary .el-notification__title {
-  color: var(--cp-brand);
-}
-.el-notification.cp-notify-error .el-notification__icon,
-.el-notification.cp-notify-error .el-notification__title {
-  color: var(--cp-danger);
-}
-.el-notification.cp-notify-warning .el-notification__icon,
-.el-notification.cp-notify-warning .el-notification__title {
-  color: var(--cp-warning);
-}
-.el-notification.cp-notify-success .el-notification__icon,
-.el-notification.cp-notify-success .el-notification__title {
-  color: var(--cp-success);
-}
 
 /* --------------------------------------------------------------------------
  * 对话框：表单紧凑一点，标签右对齐
