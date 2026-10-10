@@ -1,0 +1,31 @@
+# ---------------------------------------------------------------------------
+# ChainProxy (.gitignore)
+# 所有构建产物、依赖缓存、运行时数据都留在本仓库目录内，不污染外部环境。
+# ---------------------------------------------------------------------------
+
+# Go 构建缓存与模块缓存（被强制重定向到 .cache/ 内，见 scripts/env.ps1）
+.cache/
+
+# 编译产物
+/dist/
+*.exe
+*.exe~
+*.test
+*.out
+
+# 运行时数据（配置、日志、pid）
+/data/
+*.log
+*.pid
+
+# 参考项目本体（体积大，仅在 refs/README.md 中登记来源与 commit）
+/refs/local-refs/
+/refs/local-refs/
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+desktop.ini
+.DS_Store
