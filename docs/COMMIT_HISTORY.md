@@ -20,6 +20,7 @@
 | 003 | `feat(gui): Win32 原生界面、UI 自检体系与四个关键 Bug 修复` | 2026-10-10 | 主窗口 + 编辑对话框 + 状态/开关/一键测试；修掉 SetTextColor 跨 DLL、ListView 消息号、启动 fork 子进程、**goroutine 未绑定 OS 线程**四个坑 | [详情](#003) |
 | 004 | `feat(wireguard): 纯用户态 WireGuard 上游 + 使用手册` | 2026-10-10 | wireguard-go + gvisor netstack + 自研 SOCKS5-UDP Bind；外层实测通过，隧道握手待完善；新增 USER_GUIDE | [详情](#004) |
 | 005 | `fix(gui): 修复"点任何按钮都没反应"与界面布局错位` | 2026-10-10 | 根因是控件 ID 超过 16 位被 MAKEWPARAM 截断；另修标签负坐标、CreateFontW 参数错位、EM_* 消息号错误、客户区估算、阻塞式消息泵；新增布局体检与点击模拟两道自动化防线 | [详情](#005) |
+| 006 | `fix(wireguard): 打通 WireGuard 隧道 + 支持预共享密钥 + 修下拉框读值` | 2026-10-10 | 用对照组定位并修掉 5 个 WireGuard bug（allowed_ip 逗号列表/读超时杀掉收包循环/替换设备缓冲区/双重关闭 tun/Send 空指针）；新增 PresharedKey；修 comboText 永远返回第一项导致 wireguard 存不进去 | [详情](#006) |
 
 ---
 
@@ -579,3 +580,110 @@ $ .\scripts\test_ui.ps1 -Repeat 2
 
 `scripts\test_ui.ps1` 现在把**越界数 / 截断数 / 重叠数 / 点击失败数**四项全部作为断言，
 任何一项不为 0 都会让自检失败——"界面错位"和"点了没反应"这两类问题从此不会再静默复发。
+
+---
+
+## 006
+
+**commit**: `fix(wireguard): 打通 WireGuard 隧道 + 支持预共享密钥 + 修下拉框读值`
+
+**起因**：用户给了一份真实的 WireGuard 客户端配置要求测试支持度。这份配置立刻暴露出三件事：
+缺 `PresharedKey` 字段、端点在自己的局域网内（192.168.31.94）、以及一个**与 WireGuard 无关但影响极大的 GUI bug**。
+
+---
+
+### 一、WireGuard 隧道终于打通了（此前一直是"握手超时"）
+
+之前几轮我一直卡在"握手包发出去了、对端就是不回"，只能标注为实验性。
+这次拿到真实服务端后，用**对照组**的办法把问题切开了：
+
+1. **先验证传输层**（`TestPlainUDPTransport`）：用一个最朴素的 `net.ListenUDP` 当接收方，
+   确认 `plainUDPChannel` 的收发都没问题 → 通过。
+2. **再验证标准 bind**（`TestVanillaLoopback`）：两端都用 wireguard-go 自带的
+   `conn.NewDefaultBind()`，完全不经过我的 `socksBind` → **0.32 秒握手成功**。
+   这就证明"API 用法 + 服务端配置 + 本机回环 UDP"全都没问题，
+   故障一定在我自己的 bind 层。
+3. 有了这个边界，问题很快定位到具体几行。
+
+一共修掉 **5 个 bug**：
+
+| # | 问题 | 现象 |
+|---|---|---|
+| 1 | **`allowed_ip` 写成逗号列表** | UAPI 要求**一行一个前缀**。`allowed_ip=a/24, b/24` 会被当成单个地址解析，报 `unexpected character`，配置直接应用失败 |
+| 2 | **`ReceiveFromUDP` 设了 20 秒读超时** | 超时返回的错误被上层当成"通道坏了"，**把收包循环整个干掉** —— 表现为"发出的包有记录、回包永远收不到" |
+| 3 | **`receive` 里替换了设备给的缓冲区** | 写了 `if len(bufs[0]) < 2048 { bufs[0] = make([]byte, 2048) }`，想当然"帮设备扩容"。wireguard-go 是按自己分配的缓冲数组管理生命周期的，换掉它会导致**收到的包无法交给解密队列** —— 最迷惑的现象：`receive 收到 92 字节`（握手响应明明到了），但握手永远不完成 |
+| 4 | **`device.Close()` 之后又 `tunDev.Close()`** | `device.Close()` **内部已经关了 tun**，netstack 的 `netTun.Close` 不是幂等的，第二次会 `close of closed channel` panic |
+| 5 | **`shutdown()` 置空 `b.ch` 后设备还可能再调 `Send`** | nil 解引用 panic（"隧道明明建好了，退出时却崩一下"）。已改为先关设备再关 bind，并在 `Send` 里加空值保护 |
+
+另外把 `plainUDPChannel` 重写为**按地址族分套接字**：原来只建一个
+`net.ListenUDP("udp", 0.0.0.0:0)`，实测在 Windows 上 Go 会把它建成**双栈 `[::]` 套接字**，
+而从这个套接字往 `127.0.0.1` 发 IPv4 包**不报错也不送达**（`err=nil`，对端收不到）。
+现在 IPv4 目标用纯 `udp4`、IPv6 目标用 `udp6`，不再依赖双栈映射行为。
+
+**修复后的实测结果（对用户提供的真实服务端 192.168.31.94:51820）：**
+
+```
+第 1 步通过：隧道握手成功，耗时 301 ms
+✅ 第 2 步通过：10.8.0.1:80 返回 connection refused ——
+   说明 SYN 已穿过隧道且对端回了 RST，隧道双向可用（该端口只是没有服务）
+```
+
+> 这里特意说明判定口径：**`connection refused` 是"隧道通了"的正面证据**，
+> 不是失败。只有超时才算真的不通。测试代码里也按这个口径断言，
+> 免得以后把好消息误报成坏消息。
+
+**经前置代理 前置也通过了**（同样 301 ms 握手）——说明
+`自研 socksBind →主流客户端的 SOCKS5 UDP relay → WireGuard 服务端` 这条完整链路是通的，
+WireGuard-over-前置代理 这个最初的目标**现在是经过验证的**。
+（本例中主流客户端会把 192.168.31.94 这个私有地址按默认规则直连出去，所以能通。）
+
+### 二、新增 `PresharedKey` 支持
+
+用户的配置里带 `PresharedKey`，而我原来的模型根本没有这个字段 —— 这种情况会**永远握手失败**，
+且 WireGuard 协议不会告诉你原因（不同密钥的包被静默丢弃）。
+现在：配置模型、UAPI（`preshared_key=`）、GUI 对话框字段全部补齐。
+对话框里那一行放在 MTU 右边，命名为「预共享密钥」。
+
+### 三、又修出一个 GUI 严重 bug：下拉框永远读回第一项
+
+`comboText()` 里 `CB_GETLBTEXT` 的 wParam 传了死下标 **0**，而它需要的是**当前选中项的下标**。
+后果：
+
+- 前置代理类型永远被读成 `socks5` —— **选「直连」完全不生效**；
+- 住宅代理类型也永远被存成 `socks5` —— **用户选 http 或 wireguard，保存下去都变成 socks5**。
+
+等于说 WireGuard 类型在界面上**根本存不进去**，这也解释了为什么之前"看起来配好了却没用"。
+修复：先 `CB_GETCURSEL` 取当前下标，再 `CB_GETLBTEXT` 读文字。
+并给 UI 自检加了断言：对话框自检报告里必须出现 `类型="wireguard"`。
+
+### 四、新增的诊断能力
+
+- `PublicKeyFromPrivate()`：由私钥推导**本端公钥**并在日志里打出来。
+  WireGuard 最常见的配置错误就是双方公钥对不上，而协议只会静默丢包；
+  把本端公钥直接显示出来，用户就能一眼比对服务端 peer 配置。
+- 握手成功/失败都打印设备 UAPI 状态（含 `last_handshake_time_sec`、`tx_bytes`、`rx_bytes`、
+  `allowed_ip`、`preshared_key`），一眼就能分清"配置没生效"和"对端不回包"。
+- 三个可复现的测试：`TestPlainUDPTransport`（传输层）、`TestVanillaLoopback`（对照组）、
+  `TestWireGuardRealServer`（对真实服务端，含直连与经前置两种模式）。
+
+### 验证结果
+
+```
+go test ./...
+ok  chainproxy/internal/config
+ok  chainproxy/internal/proxy
+ok  chainproxy/internal/wgproxy
+
+TestWireGuardEndToEnd   ✅ 握手 301ms + 隧道内 TCP 往返正常
+TestPlainUDPTransport   ✅ 收发双向正常
+TestVanillaLoopback     ✅ 标准 bind 对照通过
+TestWireGuardRealServer ✅ 直连 与 经前置代理 前置 均通过
+test_ui.ps1             ✅ 全部通过（含预共享密钥字段与下拉框读值断言）
+```
+
+### 遗留
+
+- WireGuard 上游仍不支持客户端侧 UDP 转发（`SupportsUDP()` 返回 false）。
+  浏览器走 TCP，不影响使用。
+- 隧道内域名解析目前是"本地解析后再送进隧道"。若要访问本地被污染的域名，
+  需要把 DNS 也指向隧道内（后续可加）。

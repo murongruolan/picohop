@@ -82,6 +82,16 @@ if (Test-Path $dump) {
     Check "对话框自检报告已生成" ($s -match '编辑对话框自检报告') ""
     Check "对话框含名称/类型/本地端口字段" ($s -match '名称' -and $s -match '类型' -and $s -match '本地端口') ""
     Check "对话框含 WireGuard 分组" ($s -match 'WireGuard') ""
+    Check "对话框含预共享密钥字段" ($s -match '预共享密钥') ""
+
+    # 下拉框必须真的返回"当前选中项"。
+    # 曾经 CB_GETLBTEXT 传死下标 0，导致无论选什么都读回第一项，
+    # 界面会把 http / wireguard 全部静默存成 socks5。
+    Check "下拉框能正确读回 wireguard 选项" ($s -match '类型="wireguard"') ""
+
+    # 两种形态都要过布局体检（只测 socks5 的话 WireGuard 那组控件是隐藏的，等于没测）
+    $dReports = ([regex]::Matches($s, '编辑对话框自检报告')).Count
+    Check "socks5 与 wireguard 两种对话框都做了自检" ($dReports -ge 2) "(共 $dReports 份)"
 
     # 对话框同样要过布局体检
     $dCtrl = 0

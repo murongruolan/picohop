@@ -219,7 +219,7 @@ func maybeDumpDialog(d *dlgState) {
 	pumpMessagesFor(400 * time.Millisecond)
 
 	var sb strings.Builder
-	sb.WriteString("ChainProxy 编辑对话框自检报告\n")
+	sb.WriteString(fmt.Sprintf("ChainProxy 编辑对话框自检报告（类型=%s）\n", d.cType.comboText()))
 	sb.WriteString(fmt.Sprintf("生成时间: %s\n", time.Now().Format("2006-01-02 15:04:05")))
 	sb.WriteString(fmt.Sprintf("对话框 hwnd=%d  标题=%q  类型=%q  名称=%q\n\n",
 		d.hwnd, crossGetText(d.hwnd), d.cType.comboText(), d.cName.text()))

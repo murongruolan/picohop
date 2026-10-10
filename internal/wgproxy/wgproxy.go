@@ -170,19 +170,32 @@ func (u *Upstream) Start(ctx context.Context, front proxy.Front) error {
 	fmt.Fprintf(&sb, "private_key=%s\n", privHex)
 	fmt.Fprintf(&sb, "listen_port=0\n")
 	fmt.Fprintf(&sb, "public_key=%s\n", pubHex)
-	fmt.Fprintf(&sb, "allowed_ip=%s\n", allowed)
+	// ⚠️ UAPI 要求 allowed_ip **一行一个前缀**。
+	// 写成 "allowed_ip=a/24, b/24" 会被解析成单个地址而报
+	// "unexpected character"，这是很容易踩的一脚。
+	for _, p := range splitAllowedIPs(allowed) {
+		fmt.Fprintf(&sb, "allowed_ip=%s\n", p)
+	}
 	fmt.Fprintf(&sb, "endpoint=%s\n", bind.peer.String())
 	fmt.Fprintf(&sb, "persistent_keepalive_interval=%d\n", keepalive)
 
+	// PresharedKey 是可选的；有就必须发，否则对端会静默丢弃握手包。
+	if ps := strings.TrimSpace(w.PresharedKey); ps != "" {
+		psHex, perr := keyToHex(ps)
+		if perr != nil {
+			dev.Close()
+			return fmt.Errorf("预共享密钥无效：%w", perr)
+		}
+		fmt.Fprintf(&sb, "preshared_key=%s\n", psHex)
+	}
+
 	if err := dev.IpcSet(sb.String()); err != nil {
 		dev.Close()
-		_ = tunDev.Close()
 		udpCh.Close()
 		return fmt.Errorf("应用 WireGuard 配置失败：%w", err)
 	}
 	if err := dev.Up(); err != nil {
 		dev.Close()
-		_ = tunDev.Close()
 		return fmt.Errorf("启动 WireGuard 失败：%w", err)
 	}
 
@@ -190,11 +203,28 @@ func (u *Upstream) Start(ctx context.Context, front proxy.Front) error {
 
 	// --- 6. 等待握手完成 ---
 	if err := u.waitHandshake(ctx, 12*time.Second); err != nil {
+		// 握手失败时把设备状态打出来，便于区分"配置没生效"和"对端不回包"：
+		// 看得到 public_key / endpoint / allowed_ip / preshared_key 就说明配置进去了，
+		// 再看 tx_bytes / rx_bytes 就能判断包到底有没有发出去、有没有收到。
+		u.log("握手失败，设备状态：\n%s", u.dumpDeviceState())
 		_ = u.stopLocked()
 		return err
 	}
 	u.log("隧道已建立，出口经 %s:%d", w.EndpointHost, w.EndpointPort)
+	u.log("设备状态：\n%s", u.dumpDeviceState())
 	return nil
+}
+
+// dumpDeviceState 返回 wireguard-go 的 UAPI 状态（含握手指纹、收发字节数）。
+func (u *Upstream) dumpDeviceState() string {
+	if u.dev == nil {
+		return "(设备未创建)"
+	}
+	out, err := u.dev.IpcGet()
+	if err != nil {
+		return fmt.Sprintf("(读取设备状态失败: %v)", err)
+	}
+	return out
 }
 
 // waitHandshake 轮询 WireGuard 的 last_handshake，确认真的握手上了。
@@ -303,17 +333,19 @@ func (u *Upstream) stopLocked() error {
 	u.closed = true
 
 	var firstErr error
+	// 【顺序很重要】先关设备再关 bind。
+	// 反过来的话，设备在 closeBind 之后仍可能再调一次 Send，
+	// 而那时 b.ch 已被置空 —— 会 panic（"退出时莫名崩一下"）。
+	if u.dev != nil {
+		u.dev.Close()
+		u.dev = nil
+	} else if u.tunDev != nil {
+		_ = u.tunDev.Close()
+	}
 	if u.bind != nil {
 		if err := u.bind.shutdown(); err != nil {
 			firstErr = err
 		}
-	}
-	if u.dev != nil {
-		u.dev.Close()
-		u.dev = nil
-	}
-	if u.tunDev != nil {
-		_ = u.tunDev.Close()
 	}
 	u.tunDev = nil
 	u.tnet = nil
@@ -369,6 +401,22 @@ func parseDNSServers(list []string) []netip.Addr {
 		if a, err := netip.ParseAddr(s); err == nil {
 			out = append(out, a)
 		}
+	}
+	return out
+}
+
+// splitAllowedIPs 把 "a/24, b/24" 这种写法拆成一个个前缀。
+// UAPI 的 allowed_ip 必须是单值，逗号列表会解析失败。
+func splitAllowedIPs(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		p := strings.TrimSpace(part)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		out = []string{"0.0.0.0/0"}
 	}
 	return out
 }

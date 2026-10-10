@@ -42,6 +42,7 @@ const (
 	dgWGAllow = 0x7046
 	dgWGKeep  = 0x7047
 	dgWGMTU   = 0x7048
+	dgWGPSK   = 0x7049
 )
 
 // dgParse 属于"住宅代理"控件组，不能写成 const（groupID 是函数）。
@@ -73,6 +74,7 @@ type dlgState struct {
 	cWGPriv, cWGAddr, cWGPub              ctrl
 	cWGEHost, cWGEPort, cWGAllow          ctrl
 	cWGKeep, cWGMTU                       ctrl
+	cWGPSK                                ctrl
 	wgCtrls, wgLbls                       []ctrl
 }
 
@@ -276,8 +278,15 @@ func (d *dlgState) build() {
 	d.cWGKeep = d.l.edit(dgWGKeep, allowRight+s(16)+s(76), wy+s(142), s(70), s(24), esNumber)
 	d.wgCtrls = append(d.wgCtrls, d.cWGKeep)
 	mtuRight := wgRow("MTU", dgWGMTU, wy+s(176), s(90))
+	// 预共享密钥（wg-quick 的 PresharedKey）。不少服务商与家用路由器默认开启，
+	// 缺了它会一直握手失败，而 WireGuard 不会告诉你原因，所以必须能填。
+	psLw := d.l.measure(d.l.fRegular, "预共享密钥") + 10
+	d.wgLbls = append(d.wgLbls, d.l.label("预共享密钥", groupID(gUpstream)+53, mtuRight+s(20), wy+s(180), psLw, s(18)))
+	d.cWGPSK = d.l.edit(dgWGPSK, mtuRight+s(20)+psLw+s(8), wy+s(172),
+		cw-s(pad+14)-s(8)-(mtuRight+s(20)+psLw+s(8)), s(24), 0)
+	d.wgCtrls = append(d.wgCtrls, d.cWGPSK)
 	d.wgLbls = append(d.wgLbls,
-		hint("隧道地址示例 10.7.0.2/32；域名先本地解析再送入隧道", groupID(gUpstream)+52, mtuRight+s(20), cw-s(pad+14), wy+s(180)))
+		d.l.make(control{Class: "STATIC", Text: "", Style: wsChild | wsVisible | ssLeft, ID: groupID(gUpstream) + 52}, 0, 0, 0, 0))
 
 	// 记住具名句柄
 	d.cWGPriv = getCtrlByID(d.hwnd, dgWGPriv)
@@ -363,6 +372,8 @@ func (d *dlgState) load() {
 		mtu = 1420
 	}
 	d.cWGMTU.setIntValue(mtu)
+
+	d.cWGPSK.setText(w.PresharedKey)
 }
 
 // typeOnChange 按类型切换"住宅服务器"与"WireGuard"两组的可见性。
@@ -494,6 +505,7 @@ func (d *dlgState) accept() {
 			EndpointPort:        d.cWGEPort.intValue(51820),
 			AllowedIPs:          strings.TrimSpace(d.cWGAllow.text()),
 			PersistentKeepalive: d.cWGKeep.intValue(25),
+			PresharedKey:        strings.TrimSpace(d.cWGPSK.text()),
 			MTU:                 d.cWGMTU.intValue(1420),
 		}
 	} else {

@@ -232,12 +232,22 @@ func (c ctrl) comboSelect(i int32) {
 	sendMessage(uintptr(c), 0x014E /* CB_SETCURSEL */, uintptr(i), 0)
 }
 
+// comboText 返回下拉框**当前选中项**的文字。
+//
+// ⚠️ CB_GETLBTEXT 的 wParam 是"项下标"，不是"从哪个位置开始读"。
+// 早先这里硬编码了下标 0，于是无论用户选了什么，取回来的永远是第一项 ——
+// 后果非常严重：前置类型永远被读成 socks5（选"直连"不生效），
+// 住宅代理类型也永远被存成 socks5（选 http 或 wireguard 全都会变成 socks5）。
 func (c ctrl) comboText() string {
 	if c == 0 {
 		return ""
 	}
+	idx := sendMessage(uintptr(c), cbGetCurSel, 0, 0)
+	if int32(idx) < 0 {
+		return "" // 没有选中任何一项
+	}
 	buf := make([]uint16, 512)
-	n := sendMessage(uintptr(c), 0x0148 /* CB_GETLBTEXT */, 0, uintptr(unsafe.Pointer(&buf[0])))
+	n := sendMessage(uintptr(c), cbGetLbText, idx, uintptr(unsafe.Pointer(&buf[0])))
 	if n == 0 {
 		return ""
 	}

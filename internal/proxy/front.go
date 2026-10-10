@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -185,38 +186,142 @@ func (f *directFront) DialTCP(ctx context.Context, addr string) (net.Conn, error
 }
 
 func (f *directFront) DialUDP(context.Context) (UDPChannel, error) {
-	pc, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
-	if err != nil {
-		return nil, fmt.Errorf("建立本地 UDP 通道失败: %w", err)
-	}
-	return &plainUDPChannel{pc: pc}, nil
+	return &plainUDPChannel{pkts: make(chan udpPacket, 256), done: make(chan struct{})}, nil
 }
 
 // plainUDPChannel 是不经前置代理、直接收发 UDP 的通道。
-// 主要给"WireGuard 直连"和自动化测试使用。
+// 主要给"WireGuard 直连"与自动化测试使用。
+//
+// 【为什么按地址族分开建 socket】
+// 早先这里只建一个 `net.ListenUDP("udp", 0.0.0.0:0)`。实测在 Windows 上
+// Go 会把它建成**双栈的 [::] 套接字**，而从这个套接字往 127.0.0.1 发 IPv4 包
+// **不会报错、也不会送达**（err=nil，对端收不到），
+// 表现为 WireGuard "一直在发握手包、永远收不到回包"。
+//
+// 现在改成按目标地址族惰性创建 udp4 / udp6 套接字：
+// IPv4 目标用纯粹的 AF_INET 套接字，IPv6 目标用 AF_INET6，
+// 不再依赖双栈映射行为。
 type plainUDPChannel struct {
-	pc *net.UDPConn
+	mu       sync.Mutex
+	pc4      *net.UDPConn
+	pc6      *net.UDPConn
+	pkts     chan udpPacket
+	done     chan struct{}
+	closed   bool
+	doneOnce sync.Once
+}
+
+// signalDone 关闭"结束信号"，用 once 保护。
+// 收协程和 Close() 都会走到这里，各自的 select/default 判断是有竞态的，
+// 直接 close 会 panic（"close of closed channel"）。
+func (c *plainUDPChannel) signalDone() { c.doneOnce.Do(func() { close(c.done) }) }
+
+// sockFor 返回（必要时创建）适合目标地址的套接字，并保证它有读协程在跑。
+func (c *plainUDPChannel) sockFor(ip net.IP) (*net.UDPConn, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return nil, net.ErrClosed
+	}
+	if ip.To4() != nil {
+		if c.pc4 == nil {
+			pc, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+			if err != nil {
+				return nil, err
+			}
+			c.pc4 = pc
+			go c.readLoop(pc)
+		}
+		return c.pc4, nil
+	}
+	if c.pc6 == nil {
+		pc, err := net.ListenUDP("udp6", &net.UDPAddr{IP: net.IPv6unspecified, Port: 0})
+		if err != nil {
+			return nil, err
+		}
+		c.pc6 = pc
+		go c.readLoop(pc)
+	}
+	return c.pc6, nil
+}
+
+func (c *plainUDPChannel) readLoop(pc *net.UDPConn) {
+	buf := make([]byte, 64*1024)
+	for {
+		n, from, err := pc.ReadFromUDP(buf)
+		if err != nil {
+			c.signalDone()
+			return
+		}
+		cp := make([]byte, n)
+		copy(cp, buf[:n])
+		p := udpPacket{payload: cp, host: from.IP.String(), port: from.Port}
+		select {
+		case c.pkts <- p:
+		case <-c.done:
+			return
+		default:
+			// 队列满：丢最旧的，保证实时性
+			select {
+			case <-c.pkts:
+			default:
+			}
+			select {
+			case c.pkts <- p:
+			case <-c.done:
+				return
+			}
+		}
+	}
 }
 
 func (c *plainUDPChannel) SendToUDP(payload []byte, host string, port int) error {
-	addr := &net.UDPAddr{IP: net.ParseIP(host), Port: port}
-	if addr.IP == nil {
-		addr.IP = net.IPv4zero
+	ip := net.ParseIP(host)
+	if ip == nil {
+		ip = net.IPv4zero
 	}
-	_, err := c.pc.WriteToUDP(payload, addr)
-	return err
+	pc, err := c.sockFor(ip)
+	if err != nil {
+		return err
+	}
+	addr := &net.UDPAddr{IP: ip, Port: port}
+	n, werr := pc.WriteToUDP(payload, addr)
+	if os.Getenv("CHAINPROXY_UDP_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "[udp-send] local=%v -> %v  %d 字节 err=%v\n",
+			pc.LocalAddr(), addr, n, werr)
+	}
+	return werr
 }
 
 func (c *plainUDPChannel) ReceiveFromUDP(buf []byte) (int, string, int, error) {
-	_ = c.pc.SetReadDeadline(time.Now().Add(20 * time.Second))
-	n, from, err := c.pc.ReadFromUDP(buf)
-	if err != nil {
-		return 0, "", 0, err
+	// 刻意**不设读超时**：超时会被上层当成"通道坏了"而干掉整个收包循环。
+	// 阻塞等待，由 Close() 关闭所有套接字来解除阻塞。
+	select {
+	case p := <-c.pkts:
+		n := copy(buf, p.payload)
+		return n, p.host, p.port, nil
+	case <-c.done:
+		return 0, "", 0, net.ErrClosed
 	}
-	return n, from.IP.String(), from.Port, nil
 }
 
-func (c *plainUDPChannel) Close() error { return c.pc.Close() }
+func (c *plainUDPChannel) Close() error {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return nil
+	}
+	c.closed = true
+	if c.pc4 != nil {
+		_ = c.pc4.Close()
+	}
+	if c.pc6 != nil {
+		_ = c.pc6.Close()
+	}
+	c.mu.Unlock()
+	c.signalDone()
+	return nil
+}
 
 // ------------------------------------------------------------------
 // SOCKS5 UDP 通道
@@ -232,10 +337,14 @@ type socks5UDPChannel struct {
 	ctrl  net.Conn
 	relay *net.UDPConn
 
-	pkts chan udpPacket
-	done chan struct{}
-	once sync.Once
+	pkts     chan udpPacket
+	done     chan struct{}
+	once     sync.Once
+	doneOnce sync.Once
 }
+
+// signalDone 关闭"结束信号"（once 保护，避免收协程与 Close 抢着关）。
+func (c *socks5UDPChannel) signalDone() { c.doneOnce.Do(func() { close(c.done) }) }
 
 func newSocks5UDPChannel(ctrl net.Conn, relay *net.UDPConn) *socks5UDPChannel {
 	c := &socks5UDPChannel{
@@ -253,11 +362,7 @@ func (c *socks5UDPChannel) readLoop() {
 	for {
 		n, err := c.relay.Read(buf)
 		if err != nil {
-			select {
-			case <-c.done:
-			default:
-				close(c.done)
-			}
+			c.signalDone()
 			return
 		}
 		host, port, payload, perr := parseUDPHeader(buf[:n])
@@ -309,7 +414,7 @@ func (c *socks5UDPChannel) ReceiveFromUDP(buf []byte) (int, string, int, error) 
 
 func (c *socks5UDPChannel) Close() error {
 	c.once.Do(func() {
-		close(c.done)
+		c.signalDone()
 		_ = c.relay.Close()
 		_ = c.ctrl.Close()
 	})

@@ -44,9 +44,13 @@ type Front struct {
 // WireGuardConfig 描述一个纯用户态 WireGuard 隧道。
 // 隧道本身不改动系统路由表；外层 UDP 通过前置代理的 SOCKS5 UDP ASSOCIATE 送出。
 type WireGuardConfig struct {
-	PrivateKey          string `json:"privateKey"`
-	Address             string `json:"address"` // 隧道内地址，如 "10.7.0.2/32"
-	PeerPublicKey       string `json:"peerPublicKey"`
+	PrivateKey    string `json:"privateKey"`
+	Address       string `json:"address"` // 隧道内地址，如 "10.7.0.2/32"
+	PeerPublicKey string `json:"peerPublicKey"`
+	// PresharedKey 是可选的预共享密钥（wg-quick 配置里的 PresharedKey）。
+	// 不少服务商和家用路由器默认开启；缺了它会一直握手失败，
+	// 而 WireGuard 协议本身**不会告诉你**是密钥不对还是网络不通，所以必须显式支持。
+	PresharedKey        string `json:"presharedKey"`
 	EndpointHost        string `json:"endpointHost"`
 	EndpointPort        int    `json:"endpointPort"`
 	AllowedIPs          string `json:"allowedIPs"` // 默认 "0.0.0.0/0, ::/0"

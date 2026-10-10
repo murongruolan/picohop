@@ -48,6 +48,7 @@ var _ conn.Bind = (*socksBind)(nil)
 // Open 启动本次会话的接收循环。WireGuard 客户端一般 listen_port=0（随机端口），
 // 真实端口由前置代理那一侧决定，这里无需也不能绑定本地端口。
 func (b *socksBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
+	dbg("Open(port=%d) 被调用", port)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -99,17 +100,26 @@ func (b *socksBind) receive(bufs [][]byte, sizes []int, eps []conn.Endpoint) (in
 		if len(bufs) == 0 {
 			return 0, errors.New("socksBind: 设备没有提供接收缓冲")
 		}
-		if len(bufs[0]) < 2048 {
-			// WireGuard 的包最大 1500 字节，这里按需扩容一次
-			bufs[0] = make([]byte, 2048)
-		}
-
+		// 【不要替换设备给的缓冲区】
+		// 早先这里写了 `if len(bufs[0]) < 2048 { bufs[0] = make([]byte, 2048) }`，
+		// 想当然地"帮设备扩容"。结果 wireguard-go 的 RoutineReceiveIncoming
+		// 是按它自己分配的缓冲数组来管理生命周期的，
+		// 中途把它换掉会让收到的包无法被正确交给解密队列 ——
+		// 现象是"握手响应明明收到了 92 字节，但握手永远不完成"。
+		// 设备给的缓冲一定够大，直接用即可。
 		n, srcHost, srcPort, err := b.ch.ReceiveFromUDP(bufs[0])
 		if err != nil {
 			if b.down() {
 				return 0, net.ErrClosed
 			}
-			return 0, err
+			if errors.Is(err, net.ErrClosed) {
+				return 0, net.ErrClosed
+			}
+			// 临时性错误（例如偶发读超时）**绝不能终结接收循环**：
+			// 一旦 return，wireguard-go 就再也收不到包，握手会永久卡住，
+			// 而且外层只会看到一句"握手超时"，完全指不到这里。
+			// 因此除了"通道已关闭"以外，一律继续重试。
+			continue
 		}
 
 		// 只接受来自对端的包
@@ -121,6 +131,7 @@ func (b *socksBind) receive(bufs [][]byte, sizes []int, eps []conn.Endpoint) (in
 			continue
 		}
 
+		dbg("receive 收到 %d 字节，来自 %s:%d", n, srcHost, srcPort)
 		sizes[0] = n
 		eps[0] = &socksEndpoint{dst: addr}
 		return 1, nil
@@ -131,6 +142,15 @@ func (b *socksBind) receive(bufs [][]byte, sizes []int, eps []conn.Endpoint) (in
 func (b *socksBind) Send(bufs [][]byte, ep conn.Endpoint) error {
 	if ep == nil {
 		return errors.New("socksBind: 目标端点为空")
+	}
+	b.mu.Lock()
+	ch := b.ch
+	down := b.isDown
+	b.mu.Unlock()
+	// 关闭过程中设备可能还会再调一次 Send，必须防住：
+	// 直接解引用已被 shutdown 置空的 b.ch 会 panic。
+	if down || ch == nil {
+		return net.ErrClosed
 	}
 	dst := ep.DstIP()
 	if !dst.IsValid() {
@@ -145,7 +165,8 @@ func (b *socksBind) Send(bufs [][]byte, ep conn.Endpoint) error {
 		if len(buf) == 0 {
 			continue
 		}
-		if err := b.ch.SendToUDP(buf, dst.String(), int(port)); err != nil {
+		dbg("Send %d 字节 -> %s:%d", len(buf), dst, port)
+		if err := ch.SendToUDP(buf, dst.String(), int(port)); err != nil {
 			return err
 		}
 	}
@@ -179,6 +200,7 @@ func (b *socksBind) BatchSize() int { return 1 }
 
 // Close 只结束"本次会话"，SOCKS5 通道留到 shutdown 再关。
 func (b *socksBind) Close() error {
+	dbg("Close() 被调用")
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.endSessionLocked()
@@ -187,6 +209,7 @@ func (b *socksBind) Close() error {
 
 // shutdown 彻底关闭（隧道/进程退出时调用）。
 func (b *socksBind) shutdown() error {
+	dbg("shutdown() 被调用")
 	b.mu.Lock()
 	b.isDown = true
 	b.endSessionLocked()

@@ -201,15 +201,27 @@ func runWindow(a *app.App) error {
 	go w.pumpTestQueue()
 	dumpStacksOnDemand()
 
-	// 对话框自检：打开一次编辑对话框（maybeDumpDialog 会自动导出并关闭）
+	// 对话框自检：把 socks5 与 wireguard 两种形态都开一遍。
+	// 只测 socket5 的话，WireGuard 那一组控件是隐藏的，布局体检会直接跳过它们，
+	// 等于白测。
 	if os.Getenv("CHAINPROXY_UI_DUMP_DIALOG") != "" {
 		w.editUpstreamDialog(config.Upstream{
-			Name:       "示例住宅代理",
-			Type:       config.UpstreamTypeSocks5,
-			Enabled:    true,
-			ListenHost: "127.0.0.1",
-			ListenPort: 10810,
-			TimeoutMs:  15000,
+			Name: "示例住宅代理", Type: config.UpstreamTypeSocks5, Enabled: true,
+			ListenHost: "127.0.0.1", ListenPort: 10810, TimeoutMs: 15000,
+		}, false)
+
+		w.editUpstreamDialog(config.Upstream{
+			Name: "示例WG", Type: config.UpstreamTypeWireGuard, Enabled: true,
+			ListenHost: "127.0.0.1", ListenPort: 10812, TimeoutMs: 15000,
+			WireGuard: &config.WireGuardConfig{
+				PrivateKey:    "sGZUVwUocDPP+hMyfH0qzuQP2BBOGm0Vqa0mCsH0+ns=",
+				Address:       "10.8.0.2/32",
+				PeerPublicKey: "I3BnQUQZzcgEHwJWoshY0CUg5HkSulsoGfvU//+lohM=",
+				PresharedKey:  "Or1j9nPPna4XIRKKi8Zzt88nWYDjfCzrNA5wjaU2ly8=",
+				EndpointHost:  "192.168.31.94", EndpointPort: 51820,
+				AllowedIPs:          "192.168.31.0/24, 10.8.0.0/24",
+				PersistentKeepalive: 25, MTU: 1420,
+			},
 		}, false)
 	}
 
