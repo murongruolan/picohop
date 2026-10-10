@@ -73,7 +73,7 @@ type socks5Upstream struct {
 	u config.Upstream
 }
 
-func (s *socks5Upstream) Describe() string    { return s.u.Describe() }
+func (s *socks5Upstream) Describe() string                   { return s.u.Describe() }
 func (s *socks5Upstream) Start(context.Context, Front) error { return nil }
 func (s *socks5Upstream) Stop() error                        { return nil }
 func (s *socks5Upstream) SupportsUDP() bool                  { return true }
@@ -137,7 +137,7 @@ type httpUpstream struct {
 	u config.Upstream
 }
 
-func (h *httpUpstream) Describe() string    { return h.u.Describe() }
+func (h *httpUpstream) Describe() string                   { return h.u.Describe() }
 func (h *httpUpstream) Start(context.Context, Front) error { return nil }
 func (h *httpUpstream) Stop() error                        { return nil }
 func (h *httpUpstream) SupportsUDP() bool                  { return false }

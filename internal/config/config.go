@@ -44,14 +44,14 @@ type Front struct {
 // WireGuardConfig 描述一个纯用户态 WireGuard 隧道。
 // 隧道本身不改动系统路由表；外层 UDP 通过前置代理的 SOCKS5 UDP ASSOCIATE 送出。
 type WireGuardConfig struct {
-	PrivateKey        string `json:"privateKey"`
-	Address           string `json:"address"` // 隧道内地址，如 "10.7.0.2/32"
-	PeerPublicKey     string `json:"peerPublicKey"`
-	EndpointHost      string `json:"endpointHost"`
-	EndpointPort      int    `json:"endpointPort"`
-	AllowedIPs        string `json:"allowedIPs"` // 默认 "0.0.0.0/0, ::/0"
-	PersistentKeepalive int  `json:"persistentKeepalive"`
-	MTU               int    `json:"mtu"`
+	PrivateKey          string `json:"privateKey"`
+	Address             string `json:"address"` // 隧道内地址，如 "10.7.0.2/32"
+	PeerPublicKey       string `json:"peerPublicKey"`
+	EndpointHost        string `json:"endpointHost"`
+	EndpointPort        int    `json:"endpointPort"`
+	AllowedIPs          string `json:"allowedIPs"` // 默认 "0.0.0.0/0, ::/0"
+	PersistentKeepalive int    `json:"persistentKeepalive"`
+	MTU                 int    `json:"mtu"`
 	// DNSServers 供未来"隧道内解析"使用；当前版本域名一律本地解析。
 	DNSServers []string `json:"dnsServers"`
 }
@@ -86,7 +86,7 @@ type Upstream struct {
 
 // Config 是完整的应用配置。
 type Config struct {
-	Version int `json:"version"`
+	Version int   `json:"version"`
 	Front   Front `json:"front"`
 
 	Upstreams []Upstream `json:"upstreams"`
@@ -121,12 +121,12 @@ func Default() *Config {
 			Port:      10808,
 			TimeoutMs: 10000,
 		},
-		Upstreams:        []Upstream{},
+		Upstreams:         []Upstream{},
 		DefaultListenHost: "127.0.0.1",
-		IdleTimeoutSec:   300,
-		StartOnLaunch:    true,
-		AutoAllocatePort: true,
-		TestURL:          "https://api.ipify.org?format=json",
+		IdleTimeoutSec:    300,
+		StartOnLaunch:     true,
+		AutoAllocatePort:  true,
+		TestURL:           "https://api.ipify.org?format=json",
 	}
 }
 

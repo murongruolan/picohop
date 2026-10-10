@@ -8,10 +8,10 @@ import "testing"
 // 这个解析错了整条链路都不通，因此单独锁死。
 func TestParseProxySpec(t *testing.T) {
 	cases := []struct {
-		in                 string
-		typ, user, pass    string
-		host               string
-		port               int
+		in              string
+		typ, user, pass string
+		host            string
+		port            int
 	}{
 		{"fuckoai_2026-zone-custom-region-US:HVu78BgQcny7@hk.rrp.bestgo.work:10000",
 			"socks5", "fuckoai_2026-zone-custom-region-US", "HVu78BgQcny7", "hk.rrp.bestgo.work", 10000},

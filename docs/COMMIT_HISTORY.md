@@ -17,6 +17,7 @@
 |---|---|---|---|---|
 | 001 | `chore: 初始化项目骨架与参考项目研究` | 2026-10-10 | 建目录、装 git、拉取主流客户端/主流客户端、产出链式代理研究报告与架构设计 | [详情](#001) |
 | 002 | `feat(core): 实现链式代理核心引擎并通过端到端实测` | 2026-10-10 | Front/Upstream 双接口 + mixed 监听器 + 端口管理 + CLI，真实住宅代理实测通过 | [详情](#002) |
+| 003 | `feat(gui): Win32 原生界面、UI 自检体系与四个关键 Bug 修复` | 2026-10-10 | 主窗口 + 编辑对话框 + 状态/开关/一键测试；修掉 SetTextColor 跨 DLL、ListView 消息号、启动 fork 子进程、**goroutine 未绑定 OS 线程**四个坑 | [详情](#003) |
 
 ---
 
@@ -165,3 +166,120 @@ $ .\scripts\test_e2e.ps1
 - WireGuard 上游未实现，`RegisterWireGuardFactory` 还没有注册者 → 再下一次提交。
 - 明文 HTTP 路径不支持 chunked 请求体（返回 501）——目前没有客户端会这么用。
 - 住宅代理是动态 IP，测试中每次请求出口都不同，属预期现象。
+---
+
+## 003
+
+**commit**: `feat(gui): Win32 原生界面、UI 自检体系与四个关键 Bug 修复`
+
+**目的**：把核心引擎装进一个真正能用的 Windows 窗口里，并建立一套**能在无人值守时
+自动验证界面**的自检机制（纯 Win32 自绘界面最大的风险就是"偶尔卡死"，靠人眼看截图抓不住）。
+
+### 新增文件
+
+| 文件 | 说明 |
+|---|---|
+| `internal/gui/win_syscalls.go` | 全部 Win32 常量与结构体绑定（`WNDCLASSEX` / `MSG` / `PAINTSTRUCT` / `LVITEM` / `NMCUSTOMDRAW` …），UTF-16 编解码 |
+| `internal/gui/win_api.go` | Win32 API 薄封装：窗口、消息、字体、GDI、剪贴板、ListView 辅助 |
+| `internal/gui/win_controls.go` | 控件构造与读写小助手（`label/button/edit/combo/checkbox/group`、文本/勾选/下拉读写、数值读写） |
+| `internal/gui/win_theme.go` | 配色、字体创建与释放、`humanBytes` |
+| `internal/gui/win_window.go` | 主窗口：布局、命令分发、状态刷新、日志、测试编排、住宅代理增删改 |
+| `internal/gui/win_wndproc.go` | 窗口过程、静态控件着色、关闭时释放端口 |
+| `internal/gui/win_dialog.go` | 添加/编辑住宅代理对话框（含 WireGuard 字段组、快速导入、完整校验） |
+| `internal/gui/win_table.go` | 住宅代理表格渲染（等宽字体 + 中文双宽对齐） |
+| `internal/gui/win_uitest.go` | **UI 自检**：导出全部控件的类名/ID/坐标/尺寸/文本/表格内容与链路状态 |
+| `internal/gui/win_debug.go` | 排障看门狗：`CHAINPROXY_STACK_DUMP` 存在时定期写 goroutine 栈 |
+| `scripts/lint.ps1` | gofmt + `go vet -unsafeptr=false` + `go test` 一体化 |
+| `scripts/test_ui.ps1` | GUI 自检套件：重复跑 UI 导出、对话框自检、真实 GUI 启动与链路连通性 |
+| `scripts/inspect_window.ps1`、`scripts/dump_list.ps1` | 跨进程查看窗口/控件的辅助脚本 |
+
+### 界面结构（1060×762，固定尺寸）
+
+```
+┌─ ChainProxy 链式代理 ────────────────────────── ● 运行中 · 2/2 条链路  [启动/停止] [一键测试]
+│
+├─ ① 前置代理 ── 类型[类型] 地址[ ] 端口[ ] 用户名[ ] 密码[ ] 超时ms[ ]
+│               [保存前置设置] [测试前置]   前置出口 IP 与延迟
+│
+├─ ② 住宅代理（出口）── [启用/禁用][测试选中][▲][▼][删除][编辑][+ 添加住宅代理]
+│    状态 名称        类型    本地端口 住宅服务器        流量↑/↓    状态说明
+│    ●  住宅代理1    socks5  10810    SOCKS5 hk…:10000  1.2MB/3.4MB  监听 127.0.0.1:10810
+│    ●  住宅代理2    socks5  10811    SOCKS5 hk…:10000  0B/0B        监听 127.0.0.1:10811
+│
+├─ ③ 运行状态与测试输出 ── [清空][复制全部][打开配置目录]
+│    09:32:32  前置代理：SOCKS5 127.0.0.1:10808
+│    09:32:37  「住宅代理1」已启动，监听 127.0.0.1:10810（…）
+│
+└─ 前置：SOCKS5 127.0.0.1:10808   配置：F:\chain_proxy\data\config.json   程序不注册任何开机自启动项
+```
+
+### 本次修掉的四个 Bug（都写在这里以免以后重犯）
+
+1. **`SetTextColor` / `SetBkMode` 放错了 DLL**
+   它们在 **gdi32.dll**，我最初挂在 `user32.dll` 下。
+   表现：程序启动后立刻 `panic: Failed to find SetTextColor procedure in user32.dll`，退出码 2。
+   修复：移到 gdi32 的 proc 组里，并就地写了注释提醒。
+
+2. **`LVM_SETITEMTEXT` 消息号写成了 `LVM_FIRST+77`**
+   `77` 是 `LVM_INSERTITEM`，`LVM_SETITEMTEXT` 其实是 `LVM_FIRST+109`。
+   表现：每次刷新列表都在疯狂"插入行"，列表越刷越长、CPU 打满。
+
+3. **`LVCOLUMN.mask` 误用 `LVCF_IMAGE(0x0010)` 而不是 `LVCF_SUBITEM(0x0008)`**
+   没有 ImageList 却开了 IMAGE 位，ListView 内部取图失败直接**把控件卡死**（`Responding=False`）。
+   修复：mask 改为 `LVCF_FMT|LVCF_WIDTH|LVCF_TEXT|LVCF_SUBITEM`。
+   顺带发现：`LVM_SETITEMTEXT` 在这套裸 syscall 下依然不落地（返回 0），
+   于是**放弃 ListView，改用等宽只读 EDIT 自己画表格**（见 `win_table.go` 顶部注释），
+   换来确定性：零结构体编组、零自定义绘制。
+
+4. **⚠️ 启动时 fork 子进程探测字体（已删除）**
+   `hasSegoeUI()` 会执行 `exec.Command("cmd","/c","where","segoeui.ttf")`。
+   在被作业对象/管道限制的环境里，这个子进程会**偶发卡死**，导致窗口永远不被显示。
+   修复：直接假定 "Segoe UI"，缺失时由系统静默替换。启动路径上不再有任何子进程。
+
+5. **⚠️⚠️ 根因级：创建窗口的 goroutine 没有 `runtime.LockOSThread()`**
+   Windows 把消息投递到**创建窗口的那个 OS 线程**的消息队列；
+   Go 的 goroutine 默认会在多个 OS 线程之间迁移，一旦迁移，`GetMessage` 就再也
+   收不到这个窗口的消息。
+   表现极具迷惑性：**首次启动正常，界面会整体卡死**、`.NET Responding=False`、
+   控件自检偶发只枚举到 0 个控件、WM_TIMER 一次都不触发。
+   定位手段：`CHAINPROXY_STACK_DUMP` 看门狗把 goroutine 栈写盘，
+   发现 goroutine 1 停在 `GetMessage` 的系统调用里、且窗口消息一个都不来。
+   修复：`runWindow()` 与 `dlgState.run()` 开头都加 `runtime.LockOSThread()`。
+   **这是纯 Win32 + Go 最经典的坑，后面任何人重构 GUI 都不许删掉这两行。**
+
+### 自检体系（`CHAINPROXY_UI_DUMP` / `CHAINPROXY_UI_DUMP_DIALOG`）
+
+因为本会话无法直接看截图，所以界面验证改用**导出 + 断言**：
+程序完成布局后把每个控件的类名、ID、坐标、尺寸、可见性、文本，以及
+表格内容、每条链路的状态，全部写进指定文件，然后退出。
+`scripts\test_ui.ps1` 对这些内容做断言，并**重复运行 4 次**以暴露"偶发卡死"类问题。
+
+### 验证结果
+
+```
+$ .\scripts\test_ui.ps1 -Repeat 4
+[PASS] 第 1~4 次：窗口可见且控件齐全 (36 个)
+[PASS] 第 1~4 次：前置地址已回填 / 住宅代理表格已渲染 / 链路状态已就绪
+[PASS] 对话框自检报告已生成（含名称/类型/本地端口/WireGuard 字段）
+[PASS] GUI 进程存活  (pid=22976)
+[PASS] GUI 响应正常
+[PASS] GUI 启动后自动占用端口 (2 个监听)
+[PASS] 经 10810 的出口 IP 与前置不同  (前置 103.115.108.31 → 住宅 47.230.237.180)
+[PASS] GUI 退出后端口释放
+=== GUI 自检全部通过 ===
+```
+
+`.\scripts\lint.ps1 -Fix`（gofmt + vet + go test）全部通过。
+
+### 设计取舍
+
+- **固定窗口尺寸、去掉 WS_THICKFRAME**：省掉一整套响应式布局，也不会被误拖乱。
+- **表格用等宽 EDIT 而不是 ListView**：见上文 Bug 3，稳定性优先于原生控件的"高级感"。
+- **测试全部丢到 goroutine + 队列**：窗口过程里绝不做耗时动作，避免测试时界面假死。
+- **每条链路的端口互相独立**：某条绑定失败只把该行标红，其余照常工作。
+- **不使用托盘图标**：需求只要求"状态展示与开关"，越简单越好维护。
+
+### 已知遗留
+
+- WireGuard 上游尚未实现（对话框字段已就位，`Upstream.Start()` 会返回明确错误）→ 下一次提交。
+- 明文 HTTP 路径仍不支持 chunked 请求体。
