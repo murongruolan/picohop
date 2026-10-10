@@ -185,8 +185,38 @@ func (f *directFront) DialTCP(ctx context.Context, addr string) (net.Conn, error
 }
 
 func (f *directFront) DialUDP(context.Context) (UDPChannel, error) {
-	return nil, fmt.Errorf("直连模式不支持 UDP: %w", ErrUDPUnsupported)
+	pc, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+	if err != nil {
+		return nil, fmt.Errorf("建立本地 UDP 通道失败: %w", err)
+	}
+	return &plainUDPChannel{pc: pc}, nil
 }
+
+// plainUDPChannel 是不经前置代理、直接收发 UDP 的通道。
+// 主要给"WireGuard 直连"和自动化测试使用。
+type plainUDPChannel struct {
+	pc *net.UDPConn
+}
+
+func (c *plainUDPChannel) SendToUDP(payload []byte, host string, port int) error {
+	addr := &net.UDPAddr{IP: net.ParseIP(host), Port: port}
+	if addr.IP == nil {
+		addr.IP = net.IPv4zero
+	}
+	_, err := c.pc.WriteToUDP(payload, addr)
+	return err
+}
+
+func (c *plainUDPChannel) ReceiveFromUDP(buf []byte) (int, string, int, error) {
+	_ = c.pc.SetReadDeadline(time.Now().Add(20 * time.Second))
+	n, from, err := c.pc.ReadFromUDP(buf)
+	if err != nil {
+		return 0, "", 0, err
+	}
+	return n, from.IP.String(), from.Port, nil
+}
+
+func (c *plainUDPChannel) Close() error { return c.pc.Close() }
 
 // ------------------------------------------------------------------
 // SOCKS5 UDP 通道

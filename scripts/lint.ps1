@@ -27,13 +27,17 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'env.ps1')
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
+# 只格式化本项目自己的源码目录。
+# 绝不能对 "." 跑 gofmt -w：.cache\ 里是 Go 模块缓存与工具链源码，
+# 一旦被 gofmt 改写，模块缓存就与校验和不一致，后面构建会出怪问题。
+$GoSrcDirs = @('cmd', 'internal')
 Write-Host "[ChainProxy] gofmt ..."
-$fmt = & gofmt -l . 2>&1
+$fmt = & gofmt -l @GoSrcDirs 2>&1
 if ($fmt) {
     Write-Host "  以下文件格式不符合 gofmt："
     $fmt | ForEach-Object { Write-Host "    $_" -ForegroundColor Yellow }
     if ($Fix) {
-        & gofmt -w . 2>&1 | Out-Null
+        & gofmt -w @GoSrcDirs 2>&1 | Out-Null
         Write-Host "  已自动格式化。" -ForegroundColor Green
     } else {
         Write-Host "  提示：执行 .\scripts\lint.ps1 -Fix 自动修复" -ForegroundColor DarkGray

@@ -19,6 +19,7 @@ $env:GOTMPDIR        = Join-Path $ChainProxyRoot '.cache\gotmp'
 $env:GOPROXY         = 'https://goproxy.cn,https://proxy.golang.org,direct'
 $env:GOFLAGS         = '-mod=mod'
 $env:CGO_ENABLED     = '0'
+$env:GOTOOLCHAIN        = 'local'   # 不自动下载新工具链，版本完全由本机 go 决定
 $env:CHAINPROXY_ROOT = $ChainProxyRoot
 
 foreach ($d in @($env:GOPATH, $env:GOMODCACHE, $env:GOCACHE, $env:GOTMPDIR)) {

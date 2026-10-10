@@ -226,15 +226,29 @@ func socks5Connect(conn net.Conn, username, password, targetHost string, targetP
 
 // socks5UDPAssociate 完成 greeting + UDP ASSOCIATE，返回 relay 地址。
 // 返回的控制连接必须保持打开，直到 UDP 会话结束。
+//
+// 注意：请求里的 DST.ADDR/DST.PORT 按 RFC 1928 是"客户端期望使用的源地址"，
+// 通常填 0.0.0.0:0。而 appendSocks5Addr 会拒绝端口 0，所以这里手工拼这一段。
 func socks5UDPAssociate(conn net.Conn, username, password string) (string, int, error) {
 	if err := socks5Greeting(conn, username, password); err != nil {
 		return "", 0, err
 	}
-	host, port, err := socks5Command(conn, cmdUDPAssociate, "0.0.0.0", 0)
-	if err != nil {
-		return "", 0, err
+	req := []byte{socks5Version, cmdUDPAssociate, 0x00, atypIPv4, 0, 0, 0, 0, 0, 0}
+	if _, err := conn.Write(req); err != nil {
+		return "", 0, fmt.Errorf("SOCKS5 UDP ASSOCIATE 请求写入失败: %w", err)
 	}
-	return host, port, nil
+
+	head := make([]byte, 3)
+	if _, err := io.ReadFull(conn, head); err != nil {
+		return "", 0, fmt.Errorf("SOCKS5 UDP ASSOCIATE 应答读取失败: %w", err)
+	}
+	if head[0] != socks5Version {
+		return "", 0, fmt.Errorf("SOCKS5 应答版本错误 0x%02x", head[0])
+	}
+	if head[1] != repSuccess {
+		return "", 0, fmt.Errorf("SOCKS5 拒绝了 UDP ASSOCIATE（应答码 0x%02x：%s）", head[1], ReplyText(head[1]))
+	}
+	return readSocks5Addr(conn)
 }
 
 // ------------------------------------------------------------------

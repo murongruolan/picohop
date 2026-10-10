@@ -24,6 +24,9 @@ import (
 	"chainproxy/internal/config"
 	"chainproxy/internal/gui"
 	"chainproxy/internal/tester"
+
+	// 注册 WireGuard 上游（proxy 与 wgproxy 之间用注册函数解耦，避免循环依赖）
+	_ "chainproxy/internal/wgproxy"
 )
 
 // Version 由构建脚本注入。
