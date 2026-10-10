@@ -64,10 +64,10 @@ function Test-FrontUdp([string]$HostName, [int]$Port) {
         $relayPort = $pb[0] * 256 + $pb[1]
         if ($relayIp -eq '0.0.0.0' -or $relayIp -eq '::') { $relayIp = $HostName }
 
-        # 最小 DNS 查询，按 SOCKS5 UDP 头封装
+        # 最小 DNS 查询，按 SOCKS5 UDP 头封装（目标用 1.1.1.1：经实测它在直连与经前置两种情况下都可达；8.8.8.8 在部分线路上被挡，会误判）
         $q = [byte[]]@(0xAB, 0xCD, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                        7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0, 0x00, 0x01, 0x00, 0x01)
-        $pkt = [byte[]]@(0, 0, 0, 1, 8, 8, 8, 8, 0, 53) + $q
+        $pkt = [byte[]]@(0, 0, 0, 1, 1, 1, 1, 1, 0, 53) + $q
 
         $u = New-Object System.Net.Sockets.UdpClient
         $u.Client.ReceiveTimeout = 6000
@@ -75,7 +75,7 @@ function Test-FrontUdp([string]$HostName, [int]$Port) {
         $ep = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0)
         try {
             $resp = $u.Receive([ref]$ep)
-            return @{ Ok = $true; Detail = "向 8.8.8.8:53 收到 $($resp.Length) 字节应答" }
+            return @{ Ok = $true; Detail = "向 1.1.1.1:53 收到 $($resp.Length) 字节应答" }
         } catch {
             return @{ Ok = $false; Detail = '已发出 UDP 但收不到任何回包（节点很可能禁用了 UDP）' }
         }

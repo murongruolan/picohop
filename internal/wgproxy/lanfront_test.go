@@ -55,7 +55,7 @@ func TestWireGuardThroughFrontOnLAN(t *testing.T) {
 		t.Fatalf("服务端网络栈失败：%v", err)
 	}
 	serverDev := device.NewDevice(serverTun, conn.NewDefaultBind(),
-		device.NewLogger(device.LogLevelError, "lan-srv "))
+		device.NewLogger(device.LogLevelVerbose, "lan-srv "))
 	defer serverDev.Close()
 
 	if err := serverDev.IpcSet(fmt.Sprintf(
@@ -113,7 +113,9 @@ func TestWireGuardThroughFrontOnLAN(t *testing.T) {
 			EndpointHost:  lanIP,
 			EndpointPort:  port,
 			AllowedIPs:    serverIP + "/32",
-			MTU:           1420,
+			// 【必须有】keepalive=0 且没有数据要发时，WireGuard 不会主动发起握手，
+			// 于是表现为 tx_bytes=0、一直没有握手包。测试里漏掉这项会得出错误结论。
+			PersistentKeepalive: 25, MTU: 1420,
 		},
 	}
 	up, err := New(cfg, front)
