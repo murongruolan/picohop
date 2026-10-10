@@ -10,6 +10,7 @@ import (
 	"unsafe"
 
 	"chainproxy/internal/config"
+	"chainproxy/internal/wgproxy"
 )
 
 // 住宅代理编辑对话框的控件 ID
@@ -33,16 +34,19 @@ const (
 
 	dgServerGroup = 0x7020
 
-	dgWGGroup = 0x7040
-	dgWGPriv  = 0x7041
-	dgWGAddr  = 0x7042
-	dgWGPub   = 0x7043
-	dgWGEHost = 0x7044
-	dgWGEPort = 0x7045
-	dgWGAllow = 0x7046
-	dgWGKeep  = 0x7047
-	dgWGMTU   = 0x7048
-	dgWGPSK   = 0x7049
+	dgWGGroup   = 0x7040
+	dgWGPriv    = 0x7041
+	dgWGAddr    = 0x7042
+	dgWGPub     = 0x7043
+	dgWGEHost   = 0x7044
+	dgWGEPort   = 0x7045
+	dgWGAllow   = 0x7046
+	dgWGKeep    = 0x7047
+	dgWGMTU     = 0x7048
+	dgWGPSK     = 0x7049
+	dgWGGen     = 0x7050
+	dgWGPubShow = 0x7051
+	dgWGCopyPub = 0x7052
 )
 
 // dgParse 属于"住宅代理"控件组，不能写成 const（groupID 是函数）。
@@ -75,6 +79,7 @@ type dlgState struct {
 	cWGEHost, cWGEPort, cWGAllow          ctrl
 	cWGKeep, cWGMTU                       ctrl
 	cWGPSK                                ctrl
+	cWGPubShow                            ctrl
 	wgCtrls, wgLbls                       []ctrl
 }
 
@@ -107,7 +112,7 @@ func (d *dlgState) run() {
 
 	d.hwnd = createWindowExW(wsExDlgModalFrame, "ChainProxyEditDialog", title,
 		wsPopup|wsCaption|wsBorder|wsSysMenu,
-		0, 0, scaleDPI(620, d.dpi()), scaleDPI(700, d.dpi()), d.parent.hwnd, 0, d.inst)
+		0, 0, scaleDPI(620, d.dpi()), scaleDPI(780, d.dpi()), d.parent.hwnd, 0, d.inst)
 	if d.hwnd == 0 {
 		d.parent.warn(fmt.Sprintf("创建对话框失败（errno=%d）", errno()))
 		return
@@ -255,7 +260,7 @@ func (d *dlgState) build() {
 
 	// ---- WireGuard ----
 	wy := s(330)
-	d.cWGGroup = d.l.group(d.l.fitGroupTitle("WireGuard 隧道 —— 纯用户态，不需要驱动、不改系统路由", inner-s(20)), dgWGGroup, s(pad), wy, inner, s(226))
+	d.cWGGroup = d.l.group(d.l.fitGroupTitle("WireGuard 隧道 —— 纯用户态，不需要驱动、不改系统路由", inner-s(20)), dgWGGroup, s(pad), wy, inner, s(280))
 	// wgRow 造一行"左对齐标签 + 输入框"，返回输入框右边界。
 	// 之前这里同时造了一个右对齐标签和一个左对齐标签，
 	// 右对齐那个被推到 x=-16，体检报告立刻就把问题抓出来了。
@@ -277,14 +282,30 @@ func (d *dlgState) build() {
 	d.wgLbls = append(d.wgLbls, d.l.label("Keepalive", groupID(gUpstream)+51, allowRight+s(16), wy+s(150), s(76), s(18)))
 	d.cWGKeep = d.l.edit(dgWGKeep, allowRight+s(16)+s(76), wy+s(142), s(70), s(24), esNumber)
 	d.wgCtrls = append(d.wgCtrls, d.cWGKeep)
-	mtuRight := wgRow("MTU", dgWGMTU, wy+s(176), s(90))
 	// 预共享密钥（wg-quick 的 PresharedKey）。不少服务商与家用路由器默认开启，
 	// 缺了它会一直握手失败，而 WireGuard 不会告诉你原因，所以必须能填。
 	psLw := d.l.measure(d.l.fRegular, "预共享密钥") + 10
-	d.wgLbls = append(d.wgLbls, d.l.label("预共享密钥", groupID(gUpstream)+53, mtuRight+s(20), wy+s(180), psLw, s(18)))
-	d.cWGPSK = d.l.edit(dgWGPSK, mtuRight+s(20)+psLw+s(8), wy+s(172),
-		cw-s(pad+14)-s(8)-(mtuRight+s(20)+psLw+s(8)), s(24), 0)
+	d.wgLbls = append(d.wgLbls, d.l.label("预共享密钥", groupID(gUpstream)+53, s(pad+14), wy+s(180), psLw, s(18)))
+	d.cWGPSK = d.l.edit(dgWGPSK, s(pad+14)+psLw+s(8), wy+s(172), s(300), s(24), 0)
 	d.wgCtrls = append(d.wgCtrls, d.cWGPSK)
+
+	// MTU 行右侧放"生成密钥 / 复制公钥"两个按钮
+	mtuRight := wgRow("MTU", dgWGMTU, wy+s(206), s(90))
+	bGen, wGen := d.l.buttonAuto("生成密钥", dgWGGen, mtuRight+s(20), wy+s(204), s(120), s(28))
+	bCopy, _ := d.l.buttonAuto("复制公钥", dgWGCopyPub, mtuRight+s(20)+wGen+s(10), wy+s(204), s(110), s(28))
+	d.wgCtrls = append(d.wgCtrls, bGen, bCopy)
+
+	// 最后一行：本端公钥（只读，跟着私钥实时变）
+	// 服务端的 peer 里必须登记这一个公钥，对不上只会静默丢包，所以直接摊在界面上。
+	pubLw := d.l.measure(d.l.fRegular, "本端公钥") + 10
+	d.wgLbls = append(d.wgLbls, d.l.label("本端公钥", groupID(gUpstream)+54, s(pad+14), wy+s(240), pubLw, s(18)))
+	d.cWGPubShow = d.l.make(control{
+		Class: "EDIT",
+		Style: wsChild | wsVisible | wsBorder | wsExClientEdge | esLeft | esReadOnly,
+		Ex:    wsExClientEdge,
+		ID:    dgWGPubShow,
+	}, s(pad+14)+pubLw+s(8), wy+s(236), cw-s(pad+14)-s(8)-(s(pad+14)+pubLw+s(8)), s(24))
+	d.wgCtrls = append(d.wgCtrls, d.cWGPubShow)
 	d.wgLbls = append(d.wgLbls,
 		d.l.make(control{Class: "STATIC", Text: "", Style: wsChild | wsVisible | ssLeft, ID: groupID(gUpstream) + 52}, 0, 0, 0, 0))
 
@@ -298,14 +319,14 @@ func (d *dlgState) build() {
 
 	d.cStatus = d.l.make(control{
 		Class: "STATIC", Text: "", Style: wsChild | wsVisible | ssLeft | ssEndEllipsis, ID: dgStatus,
-	}, s(pad), s(564), inner, s(20))
+	}, s(pad), s(616), inner, s(20))
 
 	// 底部按钮：右对齐，宽度按文字
-	_, wOK := d.l.defButtonAuto("确定", dgOK, 0, s(594), s(76), s(30))
-	_, wCancel := d.l.buttonAuto("取消", dgCancel, 0, s(594), s(76), s(30))
+	_, wOK := d.l.defButtonAuto("确定", dgOK, 0, s(646), s(76), s(30))
+	_, wCancel := d.l.buttonAuto("取消", dgCancel, 0, s(646), s(76), s(30))
 	xOK := cw - s(pad) - wOK
-	moveCtrl(getCtrlByID(d.hwnd, dgOK), xOK, s(594), wOK, s(30))
-	moveCtrl(getCtrlByID(d.hwnd, dgCancel), xOK-s(12)-wCancel, s(594), wCancel, s(30))
+	moveCtrl(getCtrlByID(d.hwnd, dgOK), xOK, s(646), wOK, s(30))
+	moveCtrl(getCtrlByID(d.hwnd, dgCancel), xOK-s(12)-wCancel, s(646), wCancel, s(30))
 
 	d.load()
 	d.typeOnChange()
@@ -583,4 +604,35 @@ func centerOn(child, parent uintptr) {
 	px := (pr.Left + pr.Right) / 2
 	py := (pr.Top + pr.Bottom) / 2
 	setWindowPos(child, px-cw/2, py-ch/2, cw, ch)
+}
+
+// refreshPubKey 由私钥实时推导"本端公钥"并显示。
+//
+// WireGuard 的安全模型是：私钥只在本地、公钥交给服务端。
+// 而公钥对不上时协议只会**静默丢包**，不报任何错，
+// 所以把推导出来的公钥直接摊在界面上，用户一眼就能核对。
+func (d *dlgState) refreshPubKey() {
+	priv := strings.TrimSpace(d.cWGPriv.text())
+	if priv == "" {
+		d.cWGPubShow.setText("")
+		return
+	}
+	pub, err := wgproxy.PublicKeyFromPrivate(priv)
+	if err != nil {
+		d.cWGPubShow.setText("（私钥格式不对）")
+		return
+	}
+	d.cWGPubShow.setText(pub)
+}
+
+// generateKeys 生成一对新密钥，填入私钥并显示公钥。
+func (d *dlgState) generateKeys() {
+	kp, err := wgproxy.GenerateKeyPair()
+	if err != nil {
+		d.setStatus("生成密钥失败：" + err.Error())
+		return
+	}
+	d.cWGPriv.setText(kp.PrivateKey)
+	d.cWGPubShow.setText(kp.PublicKey)
+	d.setStatus("已生成新密钥对。请把「本端公钥」交给服务端登记，私钥不要外发")
 }

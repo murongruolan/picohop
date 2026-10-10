@@ -26,7 +26,7 @@ import (
 	"chainproxy/internal/tester"
 
 	// 注册 WireGuard 上游（proxy 与 wgproxy 之间用注册函数解耦，避免循环依赖）
-	_ "chainproxy/internal/wgproxy"
+	"chainproxy/internal/wgproxy"
 )
 
 // Version 由构建脚本注入。
@@ -51,6 +51,8 @@ func main() {
 		runTest(args)
 	case "validate":
 		runValidate(args)
+	case "wgkey":
+		runWGKey(args)
 	case "version", "-v", "--version":
 		fmt.Printf("ChainProxy %s (%s/%s, %s)\n", Version, runtime.GOOS, runtime.GOARCH, runtime.Version())
 	case "help", "-h", "--help":
@@ -256,6 +258,47 @@ func runValidate(args []string) {
 		fmt.Printf("  - [%s] %s: %s\n", e.Scope, e.Field, e.Message)
 	}
 	os.Exit(1)
+}
+
+// runWGKey 生成 WireGuard 密钥对，或由给定私钥推导公钥。
+//
+// 为什么要有这个命令：WireGuard 的标准流程要求**私钥在本地生成、只把公钥交给服务端**，
+// 但 `wg genkey` / `wg pubkey` 需要额外安装 wireguard-tools。
+// 本程序已经把 Curve25519 打进来了，顺手提供，用户就不用再装东西。
+func runWGKey(args []string) {
+	fs := flag.NewFlagSet("wgkey", flag.ContinueOnError)
+	privIn := fs.String("private", "", "已有一个私钥时，只推导它的公钥（base64 或 hex）")
+	psk := fs.Bool("psk", false, "顺带生成一个预共享密钥")
+	_ = fs.Parse(args)
+
+	if *privIn != "" {
+		pub, err := wgproxy.PublicKeyFromPrivate(*privIn)
+		if err != nil {
+			fatal("推导失败：%v", err)
+		}
+		fmt.Printf("本端公钥 = %s\n", pub)
+		fmt.Println()
+		fmt.Println("把这一行交给服务端，让它登记成 peer 的公钥。私钥不要再发给任何人。")
+		return
+	}
+
+	kp, err := wgproxy.GenerateKeyPair()
+	if err != nil {
+		fatal("生成失败：%v", err)
+	}
+	fmt.Println("=== WireGuard 密钥对（刚生成，请自行保存）===")
+	fmt.Println()
+	fmt.Printf("私钥（只留在本机，不要发给任何人）：\n  %s\n\n", kp.PrivateKey)
+	fmt.Printf("公钥（把这个交给服务端登记为 peer）：\n  %s\n\n", kp.PublicKey)
+	if *psk {
+		p, perr := wgproxy.GeneratePresharedKey()
+		if perr != nil {
+			fatal("生成预共享密钥失败：%v", perr)
+		}
+		fmt.Printf("预共享密钥（双方填同一个值；服务端没要求就不用填）：\n  %s\n\n", p)
+	}
+	fmt.Println("接着服务端应该回给你：它自己的公钥、Endpoint（地址:端口），")
+	fmt.Println("以及分配给你的隧道地址（例如 10.8.0.2/32）。")
 }
 
 func fatal(format string, args ...any) {
