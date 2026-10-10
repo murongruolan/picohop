@@ -1,270 +1,257 @@
 # ChainProxy 架构设计
 
-> 依据：[`RESEARCH_chain_proxy.md`](./RESEARCH_chain_proxy.md) 的研究结论。
-> 语言：**Go 1.24**（选型理由见研究报告第 4.3 节）。
+本文记录 v2（Wails + Vue 3 + 内嵌 sing-box）的模块划分、数据流与关键取舍。
+v1（纯 Win32 界面）的架构说明已随那次重构一起过时，
+对应的代码可以在 git 的 `v0.1-win32-gui` 标签处找回。
 
 ---
 
 ## 1. 一句话架构
 
 ```
-浏览器
-  │  SOCKS5 或 HTTP(明文代理请求) 或 HTTP CONNECT，指向 127.0.0.1:10810
-  ▼
-┌──────────────────────────────────────────────────────────────┐
-│ ChainProxy 进程                                              │
-│                                                              │
-│  [MixedListener :10810]                                      │
-│        │  解析 SOCKS5 / HTTP，二选一（首字节嗅探）             │
-│        ▼                                                     │
-│  target = 目标地址（域名或 IP:Port）                          │
-│        │                                                     │
-│        ├─ Front.Dial(target=住宅代理地址) ─────────────────┐  │
-│        │      · socks5 前置：TCP 连前置 → SOCKS5 CONNECT  │  │
-│        │      · http  前置：TCP 连前置 → CONNECT          │  │
-│        │      · direct 前置：裸 TCP 连                     │  │
-│        │                                                  ▼  │
-│        │      ┌──────────────────────────────────────┐      │
-│        │      │ 住宅代理连接（跑在前置隧道内部）      │      │
-│        │      │ socks5 上游：第二次 SOCKS5 握手       │      │
-│        │      │ http   上游：CONNECT + Proxy-Auth     │      │
-│        │      │ wireguard 上游：gvisor netstack 出栈   │      │
-│        │      └──────────────────────────────────────┘      │
-│        │ 拨号成功后得到 net.Conn（= fd_residential）        │
-│        ▼                                                     │
-│  [Upstream.Connect(住宅代理conn, target)]  ← 第三次握手       │
-│        ▼                                                     │
-│  relay(clientConn ↔ targetConn)  双向搬运 + 半关闭           │
-└──────────────────────────────────────────────────────────────┘
+浏览器 / 任意软件
+      │  SOCKS5 或 HTTP（mixed）
+      ▼
+┌──────────────────────────────────────────────┐
+│ internal/proxy  每个节点一个 mixed 监听端口    │
+│  · SOCKS5 服务端 / HTTP 服务端（含 CONNECT）   │
+│  · 双向中继 + 流量统计 + 空闲超时              │
+└───────────────┬──────────────────────────────┘
+                │ 按节点配置选择出口实现
+      ┌─────────┴──────────┐
+      ▼                    ▼
+┌──────────────┐   ┌───────────────────────────┐
+│ 自研出口      │   │ internal/engine           │
+│ socks5/http  │   │  每个节点一个"只有出口     │
+│ wireguard    │   │  没有入口"的 sing-box 实例 │
+└──────┬───────┘   └──────────┬────────────────┘
+       │                      │
+       └──────────┬───────────┘
+                  ▼
+        internal/proxy.Front
+        （第一跳：直连 / 全局前置 / 另一个节点）
+                  ▼
+               目标网站
 ```
-
-**关键点**：从 `Front.Dial` 返回的那一刻起，Byte 层面已经处于"前置隧道内部"，
-所以后续的 `Upstream.Connect` 只是在这条已经加密/中继过的流上再写一段 SOCKS5/HTTP 报文。
-前置代理对这些字节**完全不透明**。
 
 ---
 
-## 2. 包划分
+## 2. 目录与职责
 
-| 包 | 路径 | 职责 |
+| 目录 | 职责 | 为什么单独拆出来 |
 |---|---|---|
-| `config` | `internal/config` | 配置结构、默认值、加载/保存、校验（端口冲突等） |
-| `proxy` | `internal/proxy` | 协议实现核心：SOCKS5/HTTP 客户端与服务端、双向中继 |
-| `netutil` | `internal/netutil` | 端口探测、地址解析、超时工具 |
-| `app` | `internal/app` | 应用状态机：启停、状态、统计、测试编排 |
-| `wg` | `internal/wg` | WireGuard 上游（wireguard-go + gvisor netstack + SOCKS5 UDP 外层） |
-| `gui` | `internal/gui` | Win32 原生窗口（仅 Windows 构建） |
-| `tester` | `internal/tester` | 一键测试：探测出口 IP / 延迟 / 各跳连通性 |
-| `main` | `cmd/chainproxy` | 入口：CLI 子命令 + GUI 启动 |
+| `internal/config` | 配置模型、默认值、校验、v1→v2 迁移 | 协议元信息（哪些协议、需要哪些字段）只在这里定义一份，界面读它来渲染表单 |
+| `internal/ports` | 端口分配、随机、占用检测 | 界面上的三条端口规则集中在一处，可单测 |
+| `internal/proxy` | mixed 入口、前置代理、自研出口、中继与统计 | 数据面核心，不依赖任何界面代码 |
+| `internal/engine` | 内嵌 sing-box 的五种协议出口 | 把 sing-box 这个重依赖关在一个包里；`internal/proxy` 通过**注册函数**拿到它，不需要 import |
+| `internal/wgproxy` | 纯用户态 WireGuard 出口 | 同上，也是注册进去的 |
+| `internal/app` | 应用状态机：节点生命周期、激活链、今日统计、测试编排 | 界面与命令行共用的唯一业务入口 |
+| `internal/tester` | TCP 延迟 / 真连接延迟 / 测速 / 出口 IP | 纯函数式的测试能力，与状态机解耦 |
+| `internal/share` | 分享链接编解码 + 二维码生成 | 参考主流客户端的格式细节，和主流客户端互通 |
+| `internal/qrscan` | GDI 截图 + 屏幕圈选 + 二维码识别 | 纯 syscall 的 Win32 代码集中隔离 |
+| `desktop/` | Wails 应用（前端 Vue 3 + 绑定层） | 界面层不碰 proxy/engine，只通过 API 与 `internal/app` 交互 |
+| `cmd/chainproxy` | 无界面命令行 | 排障与自动化测试；也是"界面出问题时还能用"的兜底 |
+| `cmd/uishot` | 开发期界面截图工具 | 桌面程序的界面排版必须靠截图验证 |
+
+### 依赖方向
+
+```
+desktop ──► internal/app ──► internal/proxy ──► internal/config
+cmd/chainproxy ─┘                 ▲
+                                  │ 注册（init 时）
+                    internal/engine、internal/wgproxy
+```
+
+`internal/proxy` **不 import** `internal/engine`，而是暴露一个注册点：
+
+```go
+proxy.RegisterSingBoxFactory(func(config.Node, config.Front, func(string, ...any)) (proxy.Upstream, error))
+```
+
+主程序 `import _ "chainproxy/internal/engine"` 即可获得那五种协议。
+这样做的实际收益：`internal/proxy` 的单元测试不需要编译整个 sing-box。
 
 ---
 
-## 3. 核心接口
+## 3. 链式代理怎么表达
 
-### 3.1 前置代理 `proxy.Front`
+### 3.1 「前置」从全局变成了三选一
 
-```go
-// Front 负责"经由前置代理把一条 TCP 连接到某个地址"。
-type Front interface {
-    // DialTCP 通过前置代理连接到 addr（host:port）。
-    DialTCP(ctx context.Context, addr string) (net.Conn, error)
-    // DialUDP 通过前置代理建立 UDP 通道（仅 socks5 前置支持；WireGuard 上游需要）。
-    DialUDP(ctx context.Context, target string) (UDPChannel, error)
-    // Describe 返回可读描述，用于 GUI 状态展示。
-    Describe() string
-    Close() error
-}
-```
-
-实现：
-- `socks5Front` —— RFC 1928/1929，支持用户名密码认证、UDP ASSOCIATE；
-- `httpFront` —— RFC 7230 CONNECT + Proxy-Authorization（无 UDP 能力）；
-- `directFront` —— 不使用前置，直连（用于对照测试与特殊场景）。
-
-### 3.2 上游（住宅出口）`proxy.Upstream`
+v1 的前置是"全局一个 + 每个上游可以覆盖"。v2 改成每个节点三选一：
 
 ```go
-// Upstream 负责在一条"已经连通前置"的连接上，建立到最终目标的连接。
-type Upstream interface {
-    // Connect 在 conn（已由前置隧道打通）之上完成到 addr 的第二次握手。
-    // 返回的 net.Conn 已经"就绪"，可以直接读写目标流量。
-    Connect(ctx context.Context, conn net.Conn, addr string) (net.Conn, error)
-    // Describe 返回可读描述。
-    Describe() string
-}
+const (
+    FrontDirect = ""        // 直连
+    FrontGlobal = "global"  // 用设置里的全局前置
+    // 其余取值 = 项目内另一个节点的 ID
+)
 ```
 
-实现：
-- `socks5Upstream` —— 第二次 SOCKS5 握手（可带用户名密码）；
-- `httpUpstream` —— 第二次 `CONNECT host:port` + `Proxy-Authorization`；
-- `wgUpstream`（`internal/wg`）—— 通过 netstack 直接拨号，不走 SOCKS 握手。
+`internal/app.resolveFront()` 把三种取值翻译成 `config.Front{Type, Host, Port, ...}`：
 
-> 这两个接口的**分离**是整个设计的核心：
-> `Front` 只关心"怎么到达住宅代理的服务器地址"，
-> `Upstream` 只关心"怎么在这条流里抵达最终目标"。
-> 二者正交，因此"换前置"和"换住宅"互不影响，也天然支持多层嵌套。
-
-### 3.3 监听器 `proxy.MixedListener`
-
-对外暴露的本地端口，同时接受 **SOCKS5** 与 **HTTP** 两种客户端协议（"mixed / 混合"模式）：
-
-```
-新连接 → 读首字节
-   0x05           → SOCKS5 服务端流程
-   0x50 'P' ...   → "POST/GET/PUT/CONNECT" 开头 → HTTP 服务端流程
-```
-
-- **SOCKS5 服务端**：greeting(0x05) → 可选 user/pass auth(0x02) → request(CMD_CONNECT) → 双向中继。
-  另外实现 **UDP ASSOCIATE**：客户端从返回的 relay 地址发 UDP，由我们再经住宅 SOCKS5 的 UDP 通道转发（仅 socks5/http 上游；http 上游不支持则明确回 0x07）。
-- **HTTP 服务端**：
-  - `CONNECT host:port` → 回 `HTTP/1.1 200 Connection established` → 双向中继；
-  - 普通绝对 URI 请求（`GET http://host/path`）→ 改写为 origin-form 并加上我们自己的 `Host`，
-    经链路转发，保留 keep-alive（同一 host:port 复用上游连接）。
-
-### 3.4 中继 `proxy.Relay`
-
-```go
-func Relay(client, remote net.Conn, stats *Stats, idle time.Duration) error
-```
-
-- 双向 `io.Copy`；
-- 每个方向单独 goroutine；一侧 EOF 时对另一侧 `CloseWrite()`（TCP 半关闭），
-  让对方知道"我这边发完了"，同时保留另一方向继续传输；
-- 双向都结束后关闭两条连接；
-- 统计上/下行字节数；
-- `idle` 空闲超时（默认 300s，可配置）。
-
----
-
-## 4. 端口生命周期管理（用户明确要求）
-
-### 4.1 三重校验（启动前）
-
-1. **格式校验**：端口 ∈ [1, 65535]，非本项目已占用的端口不能等于前置代理端口；
-2. **重复校验**：任意两条上游的 `listenPort` 不能相同（含监听地址不同的情形也按端口去重，
-   保守起见按端口全局唯一，避免 `0.0.0.0:10810` 与 `127.0.0.1:10810` 之类的语义冲突）；
-3. **可用性校验**：`net.Listen("tcp", host:port)` 试绑定。Windows 上 Go 默认**不开**
-   `SO_EXCLUSIVEADDRUSE` 之外的复用语义，因此试绑定成功即代表可用。
-
-### 4.2 占用与释放
-
-| 时机 | 行为 |
+| 节点配置 | 解析结果 |
 |---|---|
-| 应用启动 | 若 `startOnLaunch` 为真，自动绑定所有 `enabled` 上游的端口并开始服务 |
-| 手动开关 | 主开关切换：开 = 绑定并服务；关 = 停止接受新连接 + 关闭所有活动连接 |
-| 应用退出 | 关闭全部 listener，**等待所有连接结束后进程退出**（最多 3s） |
-| 应用崩溃 | 监听 socket 随进程退出由 OS 自动释放（Windows 上不会有 TIME_WAIT 占用监听端口的问题） |
-| 端口被外部占用 | 启动时明确报错，指明**哪个名字的哪个端口被占用**，该条上游标记为 `error` 而不影响其他条 |
+| `Front = ""` | `{Type: direct}` |
+| `Front = "global"` | 设置里的那一个 |
+| `Front = "<节点ID>"` | `{Type: socks5, Host: 127.0.0.1, Port: <那个节点的本地端口>}` |
 
-### 4.3 单实例保护
+**为什么"以另一个节点为前置"能成立**：每个节点本来就在本地开着一个
+mixed 端口，它天然就是一个可用的 SOCKS5 代理。所以不需要任何额外机制，
+只要把前置指向 `127.0.0.1:<端口>` 即可 —— 这也解释了为什么前置永远走回环，
+即使那个节点监听着 `0.0.0.0`。
 
-- PID 文件 `<data>/chainproxy.pid`，记录 PID 与启动时间；
-- 启动时若发现 PID 文件且进程仍存在 → 提示"程序已在运行"并退出；
-- 正常退出时删除；发现是陈旧 PID 文件则直接覆盖。
+### 3.2 数据面里的两条实现路径
 
-### 4.4 不做自启动
-
-程序**不注册** Windows 启动项、不写 Run 键、不写计划任务、不安装服务。
-代码里没有任何自启动相关调用，文档中也显式声明。
-
----
-
-## 5. WireGuard 上游设计
-
-### 5.1 为什么能做到"WireGuard 跑在前置代理里面"
-
-WireGuard 是**外层 UDP**协议。要让它经过主流客户端，只有两条路：
-
-| 方案 | 说明 | 本项目选择 |
-|---|---|---|
-| A. 改系统路由 | 起 WireGuard 隧道（需 wintun 驱动 + 管理员权限），再用路由规则把 WG 端点导进主流客户端的 TUN | ❌ 侵入系统、需要驱动和权限、依赖主流客户端开 TUN 模式 |
-| **B. 纯用户态套娃** | wireguard-go 在用户态跑整个协议栈，外层 UDP 通过**前置代理的 SOCKS5 UDP ASSOCIATE** 送出，内层用 gvisor netstack 出栈 | ✅ **采用** |
-
-方案 B 的三件套：
+**自研出口（socks5 / http / wireguard）** 是"套娃"式的：
 
 ```
-[ gvisor netstack ]  ← 提供纯用户态 TCP/IP 栈（不需要 TUN 驱动）
-        ▲ 读写 IP 包
-[  wireguard-go device  ]  ← WireGuard 加解密 + 握手 + 会话
-        │  Bind 接口：收发"加密后的 UDP 包"
-[ SocksUDPBind（自研）  ]  ← 把 WG 的 UDP 包封成 SOCKS5 UDP 请求头，
-        │                     发给前置代理的 UDP relay；收到的包解封后回调设备
-[主流客户端:10808 UDP relay ]
+conn := front.DialTCP(出口服务器地址)   // 已经在前置隧道内部
+握手(conn, 目标)                        // 第二次握手
 ```
 
-- **无驱动、无管理员权限、不改动系统路由表、不影响其他程序** —— 和 ChainProxy 其它部分一样的"纯用户态"哲学；
-- 需要前置代理支持 **UDP**（主流客户端/Xray 的 socks 入站默认开启 UDP）；
-- 若前置是 HTTP 或直连、或前置不支持 UDP，WireGuard 上游会**明确报错**而不是静默失败。
+**sing-box 出口（vmess / vless / ss / trojan / hysteria2）** 则把"前置"
+翻译成 sing-box 自己的配置：
 
-### 5.2 `SocksUDPBind` 要实现的接口
-
-`wireguard-go/device.Bind`：
-
-```go
-type Bind interface {
-    io.Closer
-    SetMark(mark uint32) error
-    Send(bufs [][]byte, sizes []int, eps []device.Endpoint) error
-    ParseEndpoint(s string) (device.Endpoint, error)
-    BatchSize() int
+```json
+{
+  "outbounds": [
+    {"type": "socks", "tag": "cp-front", "server": "127.0.0.1", "server_port": 10808},
+    {"type": "vless", "tag": "cp-node", "server": "…", "detour": "cp-front", "…": "…"}
+  ]
 }
 ```
 
-`Send` 把每个加密包按 RFC 1928 §7 封帧：
-`RSV(0x0000) | FRAG(0x00) | ATYP | DST.ADDR | DST.PORT | DATA`，发给 relay；
-接收循环解封后调用 `device.RoutineReceiveIncoming()` 交回设备。
-需要额外实现 `device.ReceiveFunc` 注册与关闭时的解绑。
+`detour` 就是 sing-box 里的链式代理（等价于 Xray 的 `dialerProxy`、mihomo 的
+`dialer-proxy`）。每个节点对应**一个独立实例**，只取它的 `cp-node` 出口来拨号：
 
-### 5.3 DNS 策略差异（重要）
+```go
+inst.Outbound().Outbound("cp-node").DialContext(ctx, "tcp", dest)
+```
 
-| 上游类型 | 域名解析位置 | 原因 |
-|---|---|---|
-| socks5 / http | **交给住宅代理解析**（把域名原样发出去） | 住宅代理服务器在境外，本地 DNS 常常污染/不可用 |
-| wireguard | **本地解析后再连 IP** | gvisor netstack 内不跑完整 DNS 客户端；且 WG 隧道内已可用公网 DNS，但为简单可靠起见先本地解析 |
-
-> 后续若需要，可为 WG 上游增加"隧道内 DNS"选项（把 DNS 指向隧道内的 `1.1.1.1` 等）。
+一个实例一个节点（而不是一个大实例装所有节点）的代价是多几份 router，
+好处是**启停互不影响** —— 这正是"每个节点独立本地端口"所要求的语义。
 
 ---
 
-## 6. 状态模型
+## 4. 关键技术结论（都是实测出来的）
 
-每个上游有一条实时状态（GUI 中每行显示）：
+这些结论在写代码之前用 `.cache/spike-singbox` 验证过，写成测试固化在
+`internal/engine/singbox_test.go` 里：
 
-| 状态 | 含义 | 颜色 |
+| 结论 | 表现 | 处理 |
 |---|---|---|
-| `stopped` | 已配置但未启用，或主开关关闭 | 灰 |
-| `starting` | 正在建隧道 | 黄（闪烁） |
-| `running` | 监听中，端口可用 | 绿 |
-| `error` | 端口被占用 / 配置非法 / 前置不可达 | 红（鼠标悬停或点击显示原因） |
-
-测试（`tester` 包）分三层，逐层定位问题：
-
-1. **前置测试**：直接经前置访问 `https://api.ipify.org` → 拿到前置出口 IP；
-2. **链路测试**：经本项目的 `127.0.0.1:10810` 访问同一地址 → 拿到住宅出口 IP；
-3. **对比判定**：若两个 IP 不同 → ✅ 链式代理生效（这正是我们想要的）；
-   若相同 → ⚠️ 流量没有走住宅代理（多半是住宅代理不支持 TCP 转发或认证失败）。
+| 必须 `include.Context` | 否则反序列化报 `missing outbound options registry in context` | 每个实例用一个**新的** ctx（`box.New` 会往 ctx 里注册本实例的 Manager，共享会互相覆盖） |
+| 必须带构建标签 | 否则运行时报 `uTLS, which is required by reality is not included in this build` | 统一 `-tags "with_utls,with_quic"`；并加 `BuildCheck()` 把运行期错误提前成一句明确的话 |
+| 取出口要用 `inst.Outbound().Outbound(tag)` | `adapter.Router` 上没有 `Outbound` 方法 | 见 `internal/engine/singbox.go` |
+| `direct` 出口不允许 `detour` | 报 `'detour' is not supported in direct context` | 直连模式**完全不生成**前置出口，也不写 detour |
+| `transport.type` 没有 `tcp` | 只能取 http/ws/grpc/quic/httpupgrade | 网络为 tcp 时**整个 transport 字段都不写** |
+| `transport.host` 的类型不统一 | http 传输是数组、httpupgrade 是字符串、ws 走 headers | 分别处理，见 `applyTransport` |
+| sing-box 对未知字段会报错 | 字段名写错不会静默失效 | 因此"能被它解析成功"是有效断言，见 `TestParseStrictnessIsReal` |
 
 ---
 
-## 7. 目录与构建
+## 5. 端口管理
+
+`internal/ports.Allocator` 是一个纯结构体（不依赖 app），界面的三条规则都在它里面：
+
+- `Next()`：`max(本项目内所有 ≥10800 的端口) + 1`，下端不低于 10810，
+  再顺延到真正空闲的端口；
+- `RandomFree()`：在 `[10001, 49151]` 内随机，**抽到先检测占用**，
+  占用就重抽，最多 5 次，仍失败返回 `ErrNoFreePort`（界面据此显示固定文案）；
+- `Check()`：先查本项目占用表（能说出"被哪个节点占了"），
+  再真的 `net.Listen` 一次看系统层面是否被别的程序占用。
+
+两个刻意的细节：
+
+1. **上界取 49151 而不是 65535**：Windows 默认动态端口范围是 49152-65535，
+   系统自己会从那一段发临时端口，随机到那里等于跟操作系统抢端口。
+2. **占用检测用"真的 bind 一次"而不是 netstat**：
+   Windows 上 Go 不会给监听套接字设置 `SO_REUSEADDR`，所以 bind 失败就是权威答案，
+   不需要解析 netstat 输出，也不受权限影响。
+
+---
+
+## 6. 应用状态机（internal/app）
+
+### 6.1 激活链
 
 ```
-F:\chain_proxy\
-├── cmd\chainproxy\          # 入口
-├── internal\
-│   ├── app\                 # 应用状态机
-│   ├── config\              # 配置
-│   ├── gui\                 # Win32 GUI（build tag: windows）
-│   ├── netutil\             # 端口/地址工具
-│   ├── proxy\               # 协议核心
-│   ├── tester\              # 一键测试
-│   └── wg\                  # WireGuard 上游
-├── scripts\                 # env.ps1 / build.ps1 / run.ps1 / test_e2e.ps1
-├── docs\                    # 全部文档
-├── refs\                    # 参考项目（gitignored）
-├── dist\                    # 编译产物（gitignored）
-└── data\                    # 运行时配置与日志（gitignored）
+PlanActivation(["C"])  ──►  Order = [A, B, C], Auto = [A, B]
+        （A 是 B 的前置，B 是 C 的前置）
 ```
 
-所有 Go 缓存通过 `scripts\env.ps1` 重定向到 `F:\chain_proxy\.cache\`，
-**不会在 `C:\Users\...\go` 或任何外部目录写入**。
+- 用 DFS 做拓扑排序，**前置在前**，保证被依赖的先起来；
+- 同时用"灰/黑"着色检测环路（配置校验里还有一道，双重保险）；
+- 被连带启动的节点通过 `Auto` 返回，界面据此提示"将连带激活前置节点"；
+- `Deactivate` 反过来：**会连带停止依赖它的节点**，
+  否则那些节点会指向一个已经没人监听的端口，表现为"静默不通"。
+
+### 6.2 今日统计为什么要"折算增量"
+
+每个节点服务内部的计数（`proxy.Stats`）是**本次运行累计**，
+而服务对象在"停止再启动"后会被重建、计数归零。
+所以 `statsLoop()` 每秒做一次差分：把 `当前值 - 上次基线` 累加进
+`Node.UpBytes/DownBytes`，并在跨天时清零。这样"今日统计"才能跨重启累加。
+
+### 6.3 测试
+
+四种测试都走"临时建一条链路"的路子（`openTestChain`），**不占用本地端口**，
+所以没激活也能测。同一时刻只允许一批测试在跑（避免互相抢带宽导致数据失真）。
+结果写回 `Node.LatencyMs / RealMs / SpeedMBps` 并广播事件，界面顺带刷新。
+
+---
+
+## 7. 界面层（desktop）
+
+- **前端只通过 `desktop/api*.go` 暴露的方法访问后端**，
+  拿到的都是"已经算好、已经格式化"的数据（协议显示名、今日流量的可读文本、
+  前置的描述），协议细节不出后端。
+- **事件**：后端通过 `app.Subscribe` 广播 `log / nodes / stats / notify / testDone`，
+  绑定层转成 Wails 事件推给前端。有一条硬约定写在了 `internal/app` 的注释里：
+  订阅回调必须快速返回，且**不允许再同步调用 App 的方法** ——
+  因为事件可能在持有 App 内部锁时发出。
+- **刷新策略**：stats 事件每秒一次，前端做了 700ms 去抖合并，
+  不会因为事件风暴把 IPC 打满。
+- **主题**：以配置文件里的 `settings.theme` 为准（localStorage 只是缓存），
+  切换时同步 Windows 标题栏的明暗。
+- **`-open <面板名>` 开发参数**：让界面启动后直接打开某个面板。
+  这是给"界面自测"用的：桌面程序的排版必须真的看一眼，
+  而模拟鼠标点击会去动用户的鼠标（甚至点到别的程序上），不可接受。
+
+### 为什么圈选窗口是纯 Win32 而不是第二个 Webview
+
+Wails v2 **没有多窗口 API**（`options.App` 描述的是唯一那个窗口）。
+要在"无边框 + 全屏置顶 + 自定义光标"的前提下做圈选，用纯 Win32 反而更直接：
+`WS_POPUP + WS_EX_TOPMOST`，先截图再建窗口（避免把自己拍进去），
+红色十字准星由自己画（`ShowCursor(FALSE)` + 在 `WM_PAINT` 里画十字线，
+比构造自定义光标位图可靠得多）。
+
+---
+
+## 8. 数据与配置
+
+- 位置：`<有 go.mod 的目录>\data\config.json`（可用 `CHAINPROXY_DATA_DIR` 覆盖）。
+  **向上找 go.mod** 这一条很关键：`go run` 的可执行文件在 Go 构建缓存里，
+  按"exe 同级目录"算会得到一个缓存目录里的 `data\`，
+  于是命令行读到的和界面读到的不是同一份配置（实测踩过）。
+- 明文 JSON，方便手工查看与备份；已被 `.gitignore` 排除。
+- 统计改动每 30 秒落盘一次，退出时强制落盘。
+- **版本迁移**：`Load()` 先探测 `version`，小于 2 就先迁移再反序列化。
+  迁移的第一原则是**行为不变**：v1 里"没有 `frontOverride`"意味着走全局前置，
+  所以迁移后显式写成 `Front = global` —— 否则用户的住宅代理会突然变成直连。
+
+---
+
+## 9. 已知限制
+
+- **UDP**：本地端口的 UDP 能力取决于出口协议与前置能力。
+  `http` 出口与 `wireguard` 出口不支持 UDP；
+  Reality / Hysteria2 等在部分网络下也可能被运营商 QoS，浏览器会回落到 TCP。
+- **单实例内存**：每个 sing-box 出口是一个独立实例（带自己的 router），
+  节点很多时（几十个）会有一点固定开销。
+- **没有托盘图标**：Wails v2 不做托盘，本项目也不为此引入 cgo 依赖。
+- **无障碍未适配**：界面是自用的桌面工具，没有做完整的键盘导航与读屏支持。
+- **端到端验证的边界**：本机对"真实 Reality / Hysteria2 服务器"只验证到
+  「生成的配置能被 sing-box 接受、实例能启动、拨号能发出去」这一层；
+  真链式端到端是用**自研 SOCKS5 出口**打通的（前置 204.197.163.238 →
+  住宅 24.40.126.216 / 76.46.0.200）。

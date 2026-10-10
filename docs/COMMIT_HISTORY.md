@@ -21,6 +21,35 @@
 | 004 | `feat(wireguard): 纯用户态 WireGuard 上游 + 使用手册` | 2026-10-10 | wireguard-go + gvisor netstack + 自研 SOCKS5-UDP Bind；外层实测通过，隧道握手待完善；新增 USER_GUIDE | [详情](#004) |
 | 005 | `fix(gui): 修复"点任何按钮都没反应"与界面布局错位` | 2026-10-10 | 根因是控件 ID 超过 16 位被 MAKEWPARAM 截断；另修标签负坐标、CreateFontW 参数错位、EM_* 消息号错误、客户区估算、阻塞式消息泵；新增布局体检与点击模拟两道自动化防线 | [详情](#005) |
 | 006 | `fix(wireguard): 打通 WireGuard 隧道 + 支持预共享密钥 + 修下拉框读值` | 2026-10-10 | 用对照组定位并修掉 5 个 WireGuard bug（allowed_ip 逗号列表/读超时杀掉收包循环/替换设备缓冲区/双重关闭 tun/Send 空指针）；新增 PresharedKey；修 comboText 永远返回第一项导致 wireguard 存不进去 | [详情](#006) |
+| 006a | `fix(wireguard): 修复 Stop 死锁（点停止会卡死）+ 补充局域网/出口的判定说明` | 2026-10-10 | `9769d09` —— v1 阶段的历史提交，详见文末[合并说明](#006a-u) | [详情](#006a-u) |
+| 006b | `feat(wireguard): 内置密钥生成与「本端公钥」实时显示` | 2026-10-10 | `dd7242d` —— v1 阶段的历史提交，详见文末[合并说明](#006a-u) | [详情](#006a-u) |
+| 006c | `fix(gui): 修复「生成密钥 / 复制公钥」点了没反应（对话框窗口类重复注册）` | 2026-10-10 | `4934bbf` —— v1 阶段的历史提交，详见文末[合并说明](#006a-u) | [详情](#006a-u) |
+| 006d | `fix(gui): 修复切换类型后输入框不跟随显隐（通知码被一刀切过滤）` | 2026-10-10 | `65d7fff` —— v1 阶段的历史提交，详见文末[合并说明](#006a-u) | [详情](#006a-u) |
+| 006e | `fix(wireguard): 修复 bind.Close 无法唤醒收包协程导致的死锁 + 支持链路专属前置` | 2026-10-10 | `deed598` —— v1 阶段的历史提交，详见文末[合并说明](#006a-u) | [详情](#006a-u) |
+| 006f | `feat(wireguard): 全隧道 AllowedIPs 校验 + 一键出口验证脚本 + 修正测试 URL` | 2026-10-10 | `3eaf3ea` —— v1 阶段的历史提交，详见文末[合并说明](#006a-u) | [详情](#006a-u) |
+| 006g | `feat(scripts): test_wg.ps1 增加前置 UDP 能力预检 + 私钥完整性校验` | 2026-10-10 | `94f74f7` —— v1 阶段的历史提交，详见文末[合并说明](#006a-u) | [详情](#006a-u) |
+| 006h | `fix(wireguard): 修正"前置->WG 不通"的错误结论（实为测试自身缺 keepalive）` | 2026-10-10 | `1a2fe40` —— v1 阶段的历史提交，详见文末[合并说明](#006a-u) | [详情](#006a-u) |
+| 006i | `fix(scripts): PowerShell 脚本改为带 UTF-8 BOM，兼容 Windows PowerShell 5.1` | 2026-10-10 | `61de5fd` —— v1 阶段的历史提交，详见文末[合并说明](#006a-u) | [详情](#006a-u) |
+| 006j | `chore(cleanup): 清除代码里残留的真实 WireGuard 密钥，重置本地配置` | 2026-10-11 | `5d1ed05` —— v1 阶段的历史提交，详见文末[合并说明](#006a-u) | [详情](#006a-u) |
+| 006k | `fix(gui): 加宽 WireGuard 密钥框并给每个密钥加一键复制` | 2026-10-11 | `424109d` —— v1 阶段的历史提交，详见文末[合并说明](#006a-u) | [详情](#006a-u) |
+| 006l | `fix(gui): 【根因】对话框里填的参数从来没被保存过（返回值被丢弃）` | 2026-10-11 | `574535f` —— v1 阶段的历史提交，详见文末[合并说明](#006a-u) | [详情](#006a-u) |
+| 006m | `fix(wireguard): 去掉收包时的源地址过滤（会静默丢包的隐患）+ 新增通道探测脚本` | 2026-10-11 | `d5b4f16` —— v1 阶段的历史提交，详见文末[合并说明](#006a-u) | [详情](#006a-u) |
+| 006n | `chore(scripts): 新增云服务器 WireGuard 搭建脚本（用于在可控服务端上定位问题）` | 2026-10-11 | `47ae714` —— v1 阶段的历史提交，详见文末[合并说明](#006a-u) | [详情](#006a-u) |
+| 006o | `docs: 记录对外部真实 WireGuard 出口节点的端到端验收结果` | 2026-10-11 | `fe20bdf` —— v1 阶段的历史提交，详见文末[合并说明](#006a-u) | [详情](#006a-u) |
+| 006p | `docs: 定位到之前那台服务器 WG 连不通的根因（端口映射协议选成了 TCP）` | 2026-10-11 | `6e7eec5` —— v1 阶段的历史提交，详见文末[合并说明](#006a-u) | [详情](#006a-u) |
+| 006q | `docs: 更正那台服务器的结论（面板写 TCP/UDP，但 UDP 实际不生效）` | 2026-10-11 | `3757600` —— v1 阶段的历史提交，详见文末[合并说明](#006a-u) | [详情](#006a-u) |
+| 006r | `docs: 记录在 NAT 服务器上部署 VLESS+Reality+xHTTP 的完整过程与验证结果` | 2026-10-11 | `d9802b3` —— v1 阶段的历史提交，详见文末[合并说明](#006a-u) | [详情](#006a-u) |
+| 006s | `feat(reality): 增加 WARP 出口入站，实现 direct + WARP 双出口` | 2026-10-11 | `da1f990` —— v1 阶段的历史提交，详见文末[合并说明](#006a-u) | [详情](#006a-u) |
+| 006t | `chore(reality): WARP 入站改为独立端口 51822（公网 30023），与 WireGuard 端口解耦` | 2026-10-11 | `baa8609` —— v1 阶段的历史提交，详见文末[合并说明](#006a-u) | [详情](#006a-u) |
+| 006u | `chore(build): 允许 Go 自动切换工具链，并把工具链下载也约束在项目目录内` | 2026-10-11 | `529c6e9` —— v1 阶段的历史提交，详见文末[合并说明](#006a-u) | [详情](#006a-u) |
+| 007 | `refactor(config): 配置模型升级为 v2（Node + Settings + 前置节点引用）` | 2026-10-11 | `upstreams`→`nodes`、新增 `settings`、前置改三选一、协议元信息一处定义、新增 `internal/ports`；**这是多提交协同重构的第一步，在 011 之前整棵树编译不过**，属于有意为之 | [详情](#007) |
+| 008 | `feat(engine): 内嵌 sing-box 提供 VMess/VLESS/SS/Trojan/Hysteria2 出口` | 2026-10-11 | 每节点一个"只有出口没有入口"的 sing-box 实例、`detour` 表达前置、构建标签 `with_utls,with_quic`、UDP 通道两种形态适配 | [详情](#008) |
+| 009 | `feat(app): 节点状态机（激活链、今日统计、测试编排）` | 2026-10-11 | `PlanActivation` 拓扑排序 + 环路检测（顺手修掉 `Auto` 漏算首节点的 bug）、今日统计增量折算、测试并发控制 | [详情](#009) |
+| 010 | `feat(import): 分享链接编解码 + 二维码 + 屏幕圈选识别` | 2026-10-11 | 新增 `internal/share` 与 `internal/qrscan`：SIP002/legacy ss、vmess base64 JSON、Reality 参数；GDI 截图 + DPI 感知 + 自画十字准星 | [详情](#010) |
+| 011 | `refactor(cli): cmd/chainproxy 改为无界面命令行，移除纯 Win32 界面` | 2026-10-11 | 删除 `internal/gui` 全部 18 个文件与 3 个只服务旧界面的脚本，重写命令行；旧界面代码保留在 tag `v0.1-win32-gui` | [详情](#011) |
+| 012 | `feat(desktop): 用 Wails + Vue 3 重写界面` | 2026-10-11 | 默认 8 列 + 19 列可选、右键菜单 13 项、5 种通知、设置 4 个标签页、添加节点对话框把端口排在协议参数之前；新增 `cmd/uishot` 截图工具 | [详情](#012) |
+| 013 | `chore(scripts): 构建脚本带上 sing-box 构建标签，新增界面截图与端到端脚本` | 2026-10-11 | `build.ps1` 固化 `-tags with_utls,with_quic`；`lint.ps1` 加"引擎自检"；新增 `ui_shot.ps1`；`test_e2e.ps1` 跟上新配置模型 | [详情](#013) |
+| 014 | `docs: 更新项目介绍、架构、使用说明、开发进度与提交说明` | 2026-10-11 | README / ARCHITECTURE / USER_GUIDE 全面改写为 v2；PROJECT_PROGRESS 追加 v2 专节；本文件追加 007-014 | [详情](#014) |
 
 ---
 
@@ -404,7 +433,7 @@ go test ./internal/wgproxy -run TestWireGuardEndToEnd -v
 
 **commit**: `fix(gui): 修复"点任何按钮都没反应"与界面布局错位`
 
-**现象**（用户实测）：双击 `dist\chainproxy.exe` 后，**点任何功能都没有任何反应**；
+**现象**（用户实测）：双击 `dist\chainproxy-cli.exe` 后，**点任何功能都没有任何反应**；
 界面布局错位、按钮文字超出控件。
 
 **结论**：不是一个 bug，而是**六个叠加的 bug**。其中第一个是"点了没反应"的根因。
@@ -687,3 +716,805 @@ test_ui.ps1             ✅ 全部通过（含预共享密钥字段与下拉框�
   浏览器走 TCP，不影响使用。
 - 隧道内域名解析目前是"本地解析后再送进隧道"。若要访问本地被污染的域名，
   需要把 DNS 也指向隧道内（后续可加）。
+
+---
+---
+
+## 007
+
+**commit**: `refactor(config): 配置模型升级为 v2（Node + Settings + 前置节点引用）`
+**日期**: 2026-10-11
+**范围**: `internal/config`、`internal/ports`
+
+### ⚠️ 先读这一条：这是多提交协同重构的第一步
+
+这次重构（**007 → 014**）拆成 8 个提交，其中 **007 到 011 是"跨提交才成立"的**：
+
+> **在 011 落地之前，整棵代码树是编译不过的。**
+
+这是**有意为之**，不是失误：
+
+- 改动互相咬合（配置模型 → 引擎 → 状态机 → 界面），硬拆成"每一步都编译得过"就必须
+  写一堆只为过渡而存在的兼容层，反而更难读、更容易掩盖真正的设计；
+- 中间态不对外发布，只存在于本地 git 历史里；
+- 每一步都能独立读懂"它负责哪一层"，这比"每一步都能 build"更重要。
+
+所以做 `git bisect` 或 checkout 到 007-010 之间时看到编译失败，**那是预期行为**。
+
+### 改了什么
+
+| 文件 | 说明 |
+|---|---|
+| `internal/config/model.go` | **新增**（301 行）：`Front` / `TLSOptions` / `TransportOptions` / `WireGuardConfig` / `Node` |
+| `internal/config/protocol.go` | **新增**（168 行）：8 种协议的元信息 + `ProtocolInfo` 表单开关 + 各下拉框取值 |
+| `internal/config/config.go` | 重写：`upstreams` → `nodes`，新增 `Settings`，`CurrentVersion = 2`，v1→v2 迁移 |
+| `internal/config/util.go` | 微调（+2 行） |
+| `internal/ports/ports.go` | **新增**（242 行）：端口分配、随机、占用检测 |
+| `internal/config/config_test.go` | 16 个测试 |
+| `internal/ports/ports_test.go` | 8 个测试 |
+
+### 为什么这么改
+
+**1）`upstreams` → `nodes`。** v1 的 `upstreams` 只装"住宅代理"，语义上就是"上游服务器"；
+v2 要装的是 8 种协议的任意出口，而且**它自己也能当别人的前置**。
+叫 `Node`（节点）才配得上这个语义。
+
+**2）前置从"全局 / 链路专属"改成三选一。** v1 的问题是链路专属前置只能填一个**临时地址**，
+于是"用项目里的另一个节点当前置"这件事无法表达。v2 定义成：
+
+```go
+const (
+    FrontDirect = ""        // 直连
+    FrontGlobal = "global"  // 用设置里的全局前置
+    // 其余取值 = 本项目内另一个节点的 ID，用它的本地端口（mixed）当前置
+)
+```
+
+`FrontDirect` 刻意取**空字符串**：它是 `Node` 结构体的零值，于是"没选前置"天然等于"直连"，
+不需要任何额外初始化。
+
+这个设计能成立的原因在 `ARCHITECTURE.md` 里写清楚了：**每个节点本来就在本地开着
+一个 mixed 端口**，所以"以另一个节点为前置"只要把前置指向 `127.0.0.1:<它的端口>` 即可 ——
+这也是为什么前置永远走回环。
+
+**3）协议元信息只在后端定义一份。** `Protocols()` 返回每个协议的
+`Label / DefaultPort / ShowUUID / ShowAlterID / ShowSecurity / ShowFlow / ShowMethod /
+ShowPassword / ShowUsername / ShowTransport / ShowTLS / ShowReality / ShowHysteria2 /
+ShowWireGuard / TLSDefault / TLSRequired / SupportsUDP`。
+前端**读它来决定表单显示哪些字段**，不在前端再写一遍。少一处重复就少一处漂移。
+
+**4）新增 `Settings`，但刻意精简。** 只保留我们**切实会用到**的项：
+监听地址/允许局域网、起始端口、空闲超时、启动时自动激活上次激活的节点、
+测试相关（TCP 超时 / 并发数 / 真连接地址 / 测速地址 / 测速时长）、界面相关（主题 / 通知时长 / 日志行数）。
+不照搬主流客户端/主流客户端臃肿的设置面板。
+
+`AutoActivateOnLaunch` 的注释里特意写明：**这与"注册开机自启动"完全无关，本程序任何情况下都不注册自启动。**
+
+**5）新增 `internal/ports`，把界面上的三条端口规则收进一处：**
+
+- `Next()`：`max(本项目内所有 ≥10800 的端口) + 1`，下端不低于 10810，再顺延到真正空闲的端口。
+  为什么要设 `BaselineFloor = 10800`：低于它的端口（比如 1080、8080）不参与取最大值，
+  否则一个 `8080` 会把起始值拉低。
+- `RandomFree()`：在 `[10001, 49151]` 内随机，**抽到先检测占用**，占用就重抽，最多 5 次，
+  失败返回 `ErrNoFreePort`。上界取 49151 而不是 65535，是因为 Windows 默认动态端口范围是
+  49152-65535，系统自己会从那一段发临时端口，随机到那段等于在跟操作系统抢端口。
+- `Check()`：先查本项目占用表（能说出"被哪个节点占了"），再真的 `net.Listen` 一次
+  看系统层面是否被别的程序占用。用"真的 bind 一次"而不是解析 netstat，是因为
+  Windows 上 Go 不会给监听套接字设 `SO_REUSEADDR`，bind 失败就是权威答案。
+
+**6）v1 → v2 迁移的第一原则是"行为不变"。** `Load()` 先探测 `version`，小于 2 就先迁移：
+
+- v1 里**没有** `frontOverride` 意味着"走全局前置"，所以迁移后**显式写成 `Front = global`**
+  —— 否则用户的住宅代理会突然变成直连，这是最危险的静默行为变化；
+- v1 里 `frontOverride.Type == "direct"` 才迁移成直连；
+- v1 允许为单条链路指定一个**任意临时** socks5/http 前置，而 v2 的前置只能指向"项目内的节点"，
+  无法表达任意地址，于是**退回全局前置**（语义最接近），并把原前置的描述追加进**备注**，
+  让用户看得见这次迁移做了什么。
+
+### 怎么验证的
+
+```bash
+go test -tags "with_utls,with_quic" ./internal/config/... ./internal/ports/...
+```
+
+- `TestMigrateV1ToV2` —— 用真实的 v1 配置（两条住宅 socks5，本地端口 10810/10811）跑迁移，
+  断言迁移后两条都变成 `Front = global`（即行为不变）、协议/端口/密钥全部保留；
+- `TestValidateRejectsSelfFront` / `TestValidateDetectsFrontCycle` / `TestValidateMissingFrontNode`
+  —— 前置指向自己、形成环路、指向不存在的节点，三种都要被校验拦下；
+- `TestDataDirIsRepoRoot` / `TestFindRepoRoot` —— 见 012 里那次数
+  据目录解析缺陷的修复；
+- `TestProtocolMetadata` —— 8 种协议的元信息自洽（该显示 UUID 的必须显示、trojan/hysteria2 必须强制 TLS 等）；
+- `TestNextFollowsMaxPlusOne` / `TestRandomRetryCountIsFive` / `TestCheckDetectsProjectAndSystem`
+  —— 端口三条规则各自的边界。
+
+### 遗留
+
+- **本提交之后整棵树编译不过**（调用方还是旧的 `cfg.Upstreams`），到 011 才恢复。
+- 每节点独立超时还没有（`Node.Timeout()` 目前统一返回 15000，保留方法是为将来）。
+
+---
+
+## 008
+
+**commit**: `feat(engine): 内嵌 sing-box 提供 VMess/VLESS/SS/Trojan/Hysteria2 出口`
+**日期**: 2026-10-11
+**范围**: `internal/engine`（新增）、`internal/proxy/upstream.go`、`internal/wgproxy`、`go.mod`/`go.sum`、`scripts/build.ps1`
+
+### 改了什么
+
+| 文件 | 说明 |
+|---|---|
+| `internal/engine/singbox.go` | **新增**（693 行）：配置生成 + 实例生命周期 + 拨号 |
+| `internal/engine/register.go` | **新增**：`init` 里把构造器注册给 `proxy` |
+| `internal/engine/tags_ok.go` / `tags_missing.go` | **新增**：靠构建标签决定 `buildTagsOK` 与 `missingBuildTags()` |
+| `internal/engine/singbox_test.go` | **新增**：10 个测试 |
+| `internal/proxy/upstream.go` | 改：出口从"只有 3 种"扩展成"注册表 + 5 种走 sing-box" |
+| `internal/proxy/server.go` | 改：随接口调整 |
+| `internal/wgproxy/*` | 改：接口签名跟上（38 行级别的调整） |
+| `go.mod` / `go.sum` | 引入 `sagernet/sing-box`、`sagernet/sing` |
+| `scripts/build.ps1` | 加构建标签 |
+
+### 为什么这么改
+
+**1）每节点一个"只有出口没有入口"的 sing-box 实例。**
+不是一个大实例装所有节点。代价是多几份 router，好处是**启停互不影响** ——
+这正是"每个节点独立本地端口"所要求的语义。实例里只有 `outbounds`，
+没有 `inbounds`（入口由我们自研的 mixed 监听器负责）。
+
+**2）去掉 `inbounds` 还有个直接收益：不需要"本地再开一个 socks 入口再连它"。**
+`Upstream.Dial` 直接拿 `adapter.Outbound` 调 `DialContext`，`DialUDP` 直接调 `ListenPacket`
+—— 少一个端口、少一次转发。
+
+**3）用 `detour` 表达前置。** 生成两份 outbound：
+
+```
+outbounds[0] = 前置出口，           tag = cp-front
+outbounds[1] = 本节点出口，detour = cp-front, tag = cp-node
+```
+
+`detour` 就是 sing-box 里的链式代理（等价于 Xray 的 `dialerProxy`、mihomo 的 `dialer-proxy`）。
+**当节点选择"直连"时，完全不生成 `cp-front`、也不写 `detour`** —— 因为
+sing-box 明确不允许 `direct` 出口带 detour（会报 `'detour' is not supported in direct context`）。
+
+**4）注册而不是直接依赖。** `internal/proxy` **不 import** sing-box：
+
+```go
+// internal/engine/register.go
+func init() { proxy.RegisterSingBoxFactory(New) }
+```
+
+和 `wgproxy` 用同一套套路：`proxy` 定义接口，实现方在 `init` 里注册。
+这样 `internal/proxy` 的单测不需要编译整个 sing-box，依赖也更干净。
+
+**5）构建标签。** sing-box 把 Reality(uTLS) 与 Hysteria2(QUIC) 放在构建标签后面，
+**漏掉标签的后果是编译一切正常、但运行时才报**
+`uTLS, which is required by reality is not included in this build`。
+这种报错很难联想到编译参数，所以额外加了 `BuildCheck()`：用 `tags_ok.go` / `tags_missing.go`
+两个互斥的构建约束把"缺标签"变成编译期的一个常量，运行前就能给出一句明确的话：
+
+```
+请用 -tags "with_utls,with_quic" 重新编译（scripts/build.ps1 已内置）
+```
+
+**6）UDP 通道适配有两种形态。** sing-box 返回的 `net.PacketConn` 可能是
+它自己的 `N.PacketConn`（有 `ReadPacket/WritePacket`），也可能只实现了
+`ReadFrom/WriteTo`。所以优先断言 `N.PacketConn`，不行再退到 `nPacketConn` 兜底接口。
+
+另一个关键点：**收包必须开后台协程**。因为 `sing` 的 `ReadPacket` 与
+`net.PacketConn.ReadFrom` 都是阻塞且不可取消的，而我们的 `ReceiveFromUDP` 需要能被
+`quit` **立刻叫醒**（WireGuard 的 Bind 关闭流程强依赖这一点，否则会死锁）。
+队列长度取 128，满了**丢最旧的一条**而不是阻塞 —— UDP 是实时流量，宁可丢旧包也不要堆积。
+
+### 怎么验证的
+
+```bash
+go test -tags "with_utls,with_quic" ./internal/engine/...   # 10 个测试
+go test -tags "with_utls,with_quic" ./...                   # 全绿
+```
+
+- `TestBuildConfigVLESSReality` —— Reality 的字段名/取值（`pbk`/`sid`/`spx` 对应的服务端字段）；
+- `TestBuildConfigDirectFrontHasNoDetour` —— 直连时**必须没有** `cp-front` 也没有 `detour`
+  （这条是把上面那个报错固化成断言）；
+- `TestTransportMapping` —— tcp 时**整个 transport 字段都不写**；ws/http/grpc/httpupgrade 各写各的；
+- `TestParseStrictnessIsReal` —— **这条很关键**：它故意塞一个未知字段进去，
+  断言 sing-box **真的会报错**。有了它，"我们的配置能被 sing-box 解析成功"这个断言才有约束力
+  —— 否则一个静默忽略未知字段的库会让所有配置测试都变成空转；
+- `TestHysteria2Options` / `TestVMessOptions` / `TestTrojanOptions` / `TestHTTPFrontUsesHTTPOutbound`
+  / `TestNewRejectsUnsupportedProtocol` / `TestBuildCheck`。
+
+**真链式仍然成立**（用自研 socks5 出口复验，因为 sing-box 那 5 种当时没有可控服务端）：
+
+| 环节 | 出口 IP |
+|---|---|
+| 全局前置（本机前置代理） | `204.197.163.238` |
+| 住宅代理 1 | `24.40.126.216` |
+| 住宅代理 2 | `76.46.0.200` |
+
+三个 IP 互不相同，说明链式确实生效；探测出口 IP 这一步的耗时对比是
+**本地前置 1.5 ms → 经完整链路 201 ms**，两个数量级的差距也说明流量确实绕到了远端。
+
+### 遗留
+
+- **本机没有对真实 Reality / Hysteria2 服务器做端到端连通验证**，
+  只验证到「配置能被 sing-box 接受 + 实例能启动 + 拨号能发出去」这一层。
+  要做真正的端到端需要一台可控服务端，后续补。
+- 单个 sing-box 实例带自己的 router，节点很多时会有固定内存开销。
+- `go.mod` 一行涨了 205 行依赖，`go.sum` 涨了 631 行 —— 这是内嵌 sing-box 的必然代价。
+
+---
+
+## 009
+
+**commit**: `feat(app): 节点状态机（激活链、今日统计、测试编排）`
+**日期**: 2026-10-11
+**范围**: `internal/app`、`internal/tester`
+
+### 改了什么
+
+| 文件 | 说明 |
+|---|---|
+| `internal/app/nodes.go` | **新增**（645 行）：节点 CRUD、前置解析、`PlanActivation`、激活/停止 |
+| `internal/app/stats.go` | **新增**（379 行）：今日统计 |
+| `internal/app/ports.go` | **新增**（73 行）：把 `internal/ports` 接到状态机上 |
+| `internal/app/app.go` | 重写（674 行改动）：只剩事件、订阅与生命周期骨架 |
+| `internal/app/test.go` | 改（341 行）：测试编排 |
+| `internal/tester/tester.go` | 改（267 行） |
+| `internal/app/nodes_test.go` | **新增**：8 个测试 |
+
+### 为什么这么改
+
+**1）`PlanActivation` 用 DFS 做拓扑排序 + 灰黑着色检测环路。**
+
+```
+PlanActivation(["C"])  ──►  Order = [A, B, C], Auto = [A, B]
+        （A 是 B 的前置，B 是 C 的前置）
+```
+
+"前置在前"保证被依赖的先起来。环路用"灰/黑"两色检测（配置校验里还有一道，双重保险）。
+`Deactivate` 反过来：**会连带停止依赖它的节点** —— 否则那些节点会指向一个已经没人监听的
+端口，表现为"静默不通"，这种故障最难查。
+
+**2）`Auto` 列表的缺陷（测试抓到的）。**
+早先的实现是在递归过程中就地记录 `auto`，写成这样：
+
+```go
+if fid := n.FrontNodeID(); fid != "" {
+    if !explicit[id] { auto = append(auto, id) }   // ← 错：写在 if fid != "" 里面
+    ...
+}
+```
+
+后果是：**链路最前面那个节点（自己没有前置的）永远不会被计入"将连带启动"的列表** ——
+而它恰恰是必须最先启动的那个。用户看到的提示会少一个节点，与实际的 `Order` 不一致。
+
+修法不是"把 if 挪出来"，而是**改成从最终的启动顺序里筛**：
+
+```go
+// auto 从最终的启动顺序里筛出来，而不是在递归途中记录 ——
+// 这样它和 Order 的顺序一致（都是"实际启动顺序"），界面可以直接照着念
+// "将按 A → B → C 的顺序启动"。
+for _, id := range order {
+    if !explicit[id] { auto = append(auto, id) }
+}
+```
+
+顺序一致这一点很重要：`Auto` 会被界面直接念给用户听。
+
+**3）今日统计必须"折算增量"。** 每个节点服务内部的计数（`proxy.Stats`）是
+**本次运行累计**，而服务对象在"停止再启动"后会被重建、计数归零。
+所以 `statsLoop()` 每秒做一次差分：把 `当前值 - 上次基线` 累加进 `Node.UpBytes/DownBytes`，
+并在跨天时清零。**不这么做，"今日统计"每次重启都会归零。**
+
+**4）测试编排。** 四种测试（TCP 延迟 / 真连接延迟 / 测速 / 出口 IP）都走
+"临时建一条链路"（`openTestChain`），**不占用本地端口**，所以节点没激活也能测。
+同一时刻只允许一批测试在跑 —— 否则互相抢带宽会让数据失真。结果写回
+`Node.LatencyMs / RealMs / SpeedMBps` 并广播事件。
+
+**5）一条硬约定写进了注释：** 订阅回调必须快速返回，且**不允许再同步调用 App 的方法**
+—— 因为事件可能在持有 App 内部锁时发出。
+
+### 怎么验证的
+
+```bash
+go test -tags "with_utls,with_quic" ./internal/app/...   # 8 个测试
+```
+
+- `TestPlanActivationOrdersFrontFirst` —— 前置一定排在依赖它的节点之前；
+- `TestPlanActivationDetectsCycle` —— A→B→A 必须报错而不是死循环；
+- `TestDeleteNodesFixesDanglingFront` —— 删掉被当作前置的节点后，
+  依赖它的节点前置要被修正，不能留下悬空引用；
+- `TestResolveFront` —— 三种前置取值各自解析出正确的 `config.Front`；
+- `TestPortAllocationFollowsRules` / `TestNodeCRUD` / `TestAutoActivateDisabled`
+  / `TestSaveAndReloadConfig`。
+
+真链路复验（v2 状态机下重新跑一遍两跳链路）：
+
+```
+真链路对比（探测出口 IP 耗时）:
+  本地前置         1.5 ms   -> 204.197.163.238
+  经完整链式       201 ms   -> 24.40.126.216 / 76.46.0.200
+```
+
+### 遗留
+
+- 今日统计每 30 秒落盘一次、退出时强制落盘，所以**进程被强杀会丢最多 30 秒的统计**。
+- 测试并发数是全局设置，没有做"按节点"的细粒度控制。
+
+---
+
+## 010
+
+**commit**: `feat(import): 分享链接编解码 + 二维码生成/识别 + 屏幕圈选`
+**日期**: 2026-10-11
+**范围**: `internal/share`、`internal/qrscan`（均为新增）
+
+### 改了什么
+
+| 文件 | 说明 |
+|---|---|
+| `internal/share/link.go` | **新增**（1086 行）：链接编解码 |
+| `internal/share/qr.go` | **新增**（76 行）：二维码 PNG / DataURL |
+| `internal/share/link_test.go` / `scan_roundtrip_test.go` | **新增**：12 个测试函数 |
+| `internal/qrscan/screen_windows.go` | **新增**（272 行）：GDI 截图 |
+| `internal/qrscan/overlay_windows.go` | **新增**（1142 行）：圈选窗口 |
+| `internal/qrscan/decode.go` | **新增**（243 行）：二维码识别 |
+| `internal/qrscan/screen_other.go` / `overlay_other.go` | **新增**：非 Windows 的空实现 |
+| `internal/qrscan/*_test.go` | **新增**：19 个测试函数 |
+
+### 为什么这么改（share）
+
+**1）为什么单独成包。** 分享链接是一份**对外契约**，要和主流客户端/ sing-box /主流客户端互通。
+格式细节多到离谱：**base64 的四种变体**（标准/URL 安全 × 有无 padding）、参数名拼写、
+vmess JSON 里野生的大小写与"字符串还是数字"。混进配置包只会让一处改动崩掉一片。
+所以这里**只做纯函数**：不读文件、不碰本地端口、不打日志，可以被单独测到底。
+
+**2）编解码只覆盖"描述远端服务器"的字段。** `ListenHost / ListenPort / Front / Active /
+CreatedAt / StatsDay` 属于**本机状态，导入时必须由调用方自己决定**
+（尤其是本地端口要弹窗让用户设）。从别人的链接里把这些带进来只会覆盖用户的本地设置。
+
+覆盖的格式：
+
+- `vless://` / `trojan://` / `vmess://` / `ss://`（SIP002 与 legacy 两种）/ `hysteria2://`（别名 `hy2://`）
+- base64 解码做了**宽松处理**：四种编码变体依次尝试（`主流客户端` 用标准表+padding，
+  但实践里四种组合都出现过）；
+- `decodeBase64Body` 先按原样解，失败且内容里有 `%` 时再做一次百分号解码 ——
+  因为有些客户端会把整段 base64 再 URL 编码一次（`=` 变 `%3D`）；
+  **但不能无脑先做 `QueryUnescape`**，因为 base64 自身含 `+`，那个会被变成空格；
+- 解析顺序上，**先去引号再去 BOM/空白** —— 反过来的话 `" ss://..."` 前面的空格会挡住引号处理；
+- 承认一个现实：**密码里带 `@` 的 trojan 链接**会被对端拆成两个 `@`，所以要按最后一个 `@` 切。
+
+### 为什么这么改（qrscan）
+
+**1）GDI 截图 + DPI 感知。** `ensureDPIAware()` 尝试把进程设成 per-monitor DPI aware v2
+（`DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2` 是个句柄值 `-4`），且用 `sync.Once` 只设一次
+—— 因为这个包可能被命令行/测试单独调用，那时进程默认是 DPI unaware 的。
+
+**2）alpha 一律写死 `0xFF`。** GDI 不保证填这个字节，**实测不少驱动给的是 0**。
+原样抄过去会得到一张"全透明黑图"，而 `gozxing` 取色时按 alpha 预乘处理，于是什么都识别不出来。
+这是个只有真跑起来才会暴露的坑。
+
+**3）`GetWindowRect` 包含 Windows 的隐形缩放边框。** 按它截图会**把后面的窗口也截进来**
+—— 看起来像"多了两条滚动条"。这个缺陷是用**像素分析**定位到的，改成按客户区取图。
+
+**4）圈选窗口：先截图、再建窗口。** 反过来的话，那张"点按钮那一刻的屏幕"就已经
+包含圈选窗口自己了，变成套娃。
+
+**5）红色十字准星由自己画，不做自定义光标位图。**
+`CreateCursor` 那套 API 在 DPI 缩放 / 多屏下很脆。改成 `ShowCursor(FALSE)` 隐藏系统光标，
+然后 `HCursor` 留空、在 `WM_PAINT` 里画 1 像素贯穿客户区的红线。
+
+**6）WM_PAINT 用双缓冲。** 一帧里要"贴整屏原图 + 画边框 + 画准星"三步，
+直接画会闪。全部画在内存位图上再一次性 `BitBlt` 过去就干净了。
+
+**7）光标恢复必须走所有退出路径** —— 正常结束、报错、panic 都要 `ShowCursor` 推回 `>= 0`，
+否则用户会发现系统光标不见了。
+
+### 怎么验证的
+
+```bash
+go test -tags "with_utls,with_quic" -v ./internal/share/... ./internal/qrscan/...
+```
+
+| 包 | 顶层测试函数 | 含子测试的 PASS 数 |
+|---|---|---|
+| `internal/share` | 12 | **84** |
+| `internal/qrscan` | 19 | **34** |
+
+- share：`TestDecodeRealSamples`（真实客户端导出的样本）、`TestDecodeTolerance`（缺参数/多余空格/大小写乱写）、
+  `TestEncodeDecodeRoundTrip`、`TestDecodeDoesNotSetLocalFields`（**断言导入不会覆盖本地字段**）、
+  `TestQRScanToNodeRoundTrip`（分享 → 生成二维码 → 截图 → 识别 → 还原成节点，整条闭环）；
+- qrscan：`TestDecodeGeneratedQR` / `TestDecodeResizedQR` / `TestDecodeQRInLargerScene`
+  （二维码只占画面一小块也要能识别）、`TestToGrayOpaque`（alpha 那条断言）、
+  `TestOverlayReverseDragNormalizesRect`、`TestOverlayCancelByTinyDrag`、`TestOverlayLParamSignExtension`。
+
+> **一个真实修掉的 bug**：反向拖拽圈选时，返回的是 10x10 的碎片，
+> 根因是锚点漂移 —— 起止点没有归一化就参与计算。`TestOverlayReverseDragNormalizesRect` 固化了这个行为。
+
+### 遗留
+
+- 二维码识别用的是 `makiuchi-d/gozxing`，对超大截图会先跳过过大的缩放档（`TestBuildAttemptsSkipsHugeScales`），
+  代价是极端情况下识别率下降。
+- `overlay_other.go` / `screen_other.go` 是非 Windows 的空实现，**圈选与截图目前只在 Windows 上可用**。
+
+---
+
+## 011
+
+**commit**: `refactor(cli): cmd/chainproxy 改为无界面命令行，移除纯 Win32 界面`
+**日期**: 2026-10-11
+**范围**: `cmd/chainproxy`、`internal/gui`（整体删除）、`scripts`（删 3 个）
+
+### 改了什么
+
+**删除**（18 个文件，约 4900 行）：
+
+```
+internal/gui/gui.go            internal/gui/win_api.go       internal/gui/win_syscalls.go
+internal/gui/gui_other.go      internal/gui/win_autosize.go  internal/gui/win_table.go
+internal/gui/gui_windows.go    internal/gui/win_clicksim.go  internal/gui/win_theme.go
+internal/gui/win_controls.go   internal/gui/win_debug.go     internal/gui/win_uitest.go
+internal/gui/win_dialog.go     internal/gui/win_layout.go    internal/gui/win_window.go
+internal/gui/win_platform.go   internal/gui/win_wndproc.go
+```
+
+**同时删除**三个只服务于旧界面的脚本：
+
+```
+scripts/dump_list.ps1        （枚举旧界面的控件）
+scripts/inspect_window.ps1   （检查旧界面的窗口/控件布局）
+scripts/test_ui.ps1          （旧界面的越界/截断/重叠/点击自检）
+```
+
+**重写** `cmd/chainproxy/main.go`（544 行改动）为纯无界面工具：
+
+```
+ls / list        列出节点
+run              启动全部（或指定）节点
+test             一键测试
+validate         配置校验
+fetch            取出口 IP
+import           导入分享链接
+express          生成分享链接
+wgkey            生成 WireGuard 密钥对
+engines          检查内嵌引擎的构建标签是否齐全
+version / help
+```
+
+### 为什么这么删
+
+1. **两套界面不能共存。** 保持 Win32 界面"能用"意味着每次改配置模型都要同步改两处，
+   而新界面（012）才是要长期维护的那个。
+2. **旧界面代码不丢。** 删除前先打了 tag：
+
+   ```
+   git tag v0.1-win32-gui
+   ```
+
+   该 tag 指向重构前的最后一个提交，`internal/gui` 的 18 个文件都在里面：
+   `git show v0.1-win32-gui:internal/gui/win_dialog.go` 随时能翻出来。
+3. **命令行必须留下。** 它是"界面出问题时还能用"的兜底，也是 `lint.ps1` 里
+   `validate` / `engines` 两道检查的执行者。所以不是"顺手删掉 gui"，而是
+   **把命令行从"兼做界面入口"提升为独立的排障工具**。
+
+### 怎么验证的
+
+```bash
+go build -tags "with_utls,with_quic" ./...      # 011 之后整棵树恢复可编译
+go run -tags "with_utls,with_quic" ./cmd/chainproxy ls
+go run -tags "with_utls,with_quic" ./cmd/chainproxy validate
+go run -tags "with_utls,with_quic" ./cmd/chainproxy engines
+```
+
+`engines` 会调用 `engine.BuildCheck()`，缺标签时直接给出那句明确的提示。
+
+### 遗留
+
+- 旧界面里的"布局体检 / 点击模拟"那两道自动化防线**随代码一起消失了**，
+  取而代之的是 012 的截图验证（人工看 + 像素分析），**自动化程度不如从前**。
+  这是这次重构在测试覆盖上唯一明确的退步，记录在此以备后查。
+
+---
+
+## 012
+
+**commit**: `feat(desktop): 用 Wails + Vue 3 重写界面`
+**日期**: 2026-10-11
+**范围**: `desktop/`（新增）、`cmd/uishot`（新增）、`.gitignore`
+
+### 改了什么
+
+| 部分 | 内容 |
+|---|---|
+| 后端绑定层 | `desktop/api.go`（556 行）、`desktop/api_import.go`（346 行）、`desktop/main.go`（87 行）、`wails.json` |
+| 前端 | `desktop/frontend/src/` 下 6 个组件 + 5 个对话框 + `store.js` / `ui.js` / `actions.js` / `api.js` / `columns.js` / `styles.css` |
+| 截图工具 | `cmd/uishot/main.go`（210 行） |
+| 图标/清单 | `desktop/build/appicon.png`、`windows/icon.ico`、`info.json`、`wails.exe.manifest` |
+
+### 界面设计与交互（都写在这里，免得以后翻代码）
+
+**表格**
+
+- **默认 8 列**：类型、别名、本地端口、地址、远程端口、传输协议、延迟、速度；
+- **「列显示」多选**，共 **19 列**可选，另外 11 列是：今日统计、最近使用、创建时间、备注、
+  出口 IP、前置、TLS、活动连接、累计连接（以及真连接、状态）；
+- 列显示用 **popover 而不是 multiple select** —— 后者的标签堆在一起很乱；
+- **别名列带状态点**（运行/停止/错误）；
+- **单击选中 / Ctrl 多选 / Shift 连选，回车激活，双击编辑**；
+- **右键菜单 13 项，分四组**：基础 4 项（激活/停止、编辑、克隆、复制本地代理地址）、
+  测试 5 项（TCP 延迟、真连接延迟、速度、出口 IP、停止当前测试）、
+  分享 2 项（分享、清零今日统计）、危险 2 项（移除所选、移除测试无效项）。
+
+**通知**
+
+- **5 种类型**：`primary / success / warning / info / error`。
+  element-plus 自带的 type 没有 `primary`，所以借用 `info` 的图标再用自定义 class 换品牌色；
+- **位置刻意放在控制栏下方**（`offset: 64`，顶端控制栏高 52），而不是默认的贴顶 ——
+  否则会盖住工具栏按钮；
+- 后端事件里的 notify 用 `NUL` 分隔成 `level\0title\0text`，在 `api.js` 一处解析，
+  业务侧不用关心编码格式。
+
+**设置面板**
+
+- **4 个标签页**：前置与网络 / 测试 / 运行与界面 / 关于；
+- **刻意精简**，只放真正会用到的项；**不注册开机自启**（界面上也没有这个开关）。
+
+**对话框**
+
+- **添加/编辑节点**：布局上有一条刻意的顺序 —— **「本地代理端口」排在协议参数之前**
+  （紧跟别名）。理由是绝大多数节点的协议参数一次填好就再也不动了，
+  而端口是天天要看的，改端口时不该先滚过一整屏协议配置；
+- 协议字段由**后端给的元信息**决定显示哪些，前端不写死；
+- **导入后只弹「只有端口」的小窗**：导入进来的链接只描述远端，
+  本地端口必须由用户决定，所以单独做一个小对话框只问端口，而不是把整个编辑表单弹出来；
+- **分享**：上方正方形二维码、中间协议文本、下方「下载图片 / 复制文本」。
+
+**窗口**
+
+- 默认 1180x740，最小 920x580；
+- 主题以配置文件里的 `settings.theme` 为准（`localStorage` 只是缓存），
+  切换时同步 Windows 标题栏的明暗；
+- stats 事件每秒一次，前端做 700ms 去抖合并，避免事件风暴打满 IPC。
+
+### 截图验证：这一轮实际抓出并修掉的问题
+
+桌面程序的排版读代码是看不出来的，所以新增了 `cmd/uishot` + `scripts/ui_shot.ps1`
+真的截图看。这一轮一共揪出：
+
+| # | 现象 | 根因 |
+|---|---|---|
+| 1 | 端口输入框太窄，`10810` 显示成 **"11"** | 输入框宽度不够，超出部分被直接裁掉 |
+| 2 | 「前置节点」选**直连**时显示成占位符 **"请选择"** | 直连用空字符串 `""`，而 el-select 把空字符串当成"没选"，于是显示 placeholder |
+| 3 | 远程端口显示 **"0"** | 没有值的数字字段被直接渲染成 0，而不是留空 |
+| 4 | socks5 / http 出现**两个密码框** | 字段显示条件重叠，开关组合没排干净 |
+| 5 | 工具栏超宽，右侧图标按钮被挤出窗口 | 宽度估算不足；改成超出的分组标题自动截断加省略号 |
+| 6 | 截图里"多了两条滚动条" | **`GetWindowRect` 包含 Windows 隐形缩放边框**，按它截图会把后面的窗口也截进来；用**像素分析**定位到，改成按客户区取图 |
+| 7 | 设置对话框底部按钮换行 | `.cp-spacer` 在非 flex 容器里不生效 |
+
+### 为什么截图不用"模拟点击"
+
+早期版本用真实鼠标注入（`SetCursorPos` + `mouse_event`）去点开对话框再截图。
+**一旦被测窗口失去前台焦点，这些点击会落到用户当时正在用的别的程序上** —— 实测确实发生过。
+
+现在改成 `-open <面板名>` 启动参数（`desktop/main.go` 的 `parseBootFlag("open")`），
+让界面**主动**打开某个面板，纯只读、零副作用。`cmd/uishot` 与 `scripts/ui_shot.ps1`
+的头部注释里都写了这段缘由，避免以后有人"顺手加回来"。
+
+### 怎么验证的
+
+```bash
+cd desktop/frontend && npm run build     # vite build，约 4 秒
+wails build -tags with_utls,with_quic -platform windows/amd64   # 约 7-8 秒
+```
+
+- 产物 `desktop/build/bin/chainproxy-cli.exe` 被 `scripts/build.ps1` 复制为 `dist\chainproxy-cli.exe`；
+- **Vite 每次构建会清空 `dist`**，所以 `desktop/frontend/dist/.keep` 占位文件要在构建后补回来
+  —— 否则下次 `go build ./...` / `go test ./...` 会因为 `//go:embed` 找不到文件而失败。
+  这一步已经写进 `build.ps1`；
+- 截图验证：`.\scripts\ui_shot.ps1`、`.\scripts\ui_shot.ps1 -Open settings`。
+
+### 遗留
+
+- **没有托盘图标**（Wails v2 不做托盘，本项目也不为此引入 cgo 依赖）；
+- **无障碍未适配**：没有做完整的键盘导航与读屏支持；
+- 界面缩放只验证了 100% 与系统推荐的缩放，**没有在 125%/150% 多屏组合下逐项核对**。
+
+---
+
+## 013
+
+**commit**: `chore(scripts): 构建脚本带上 sing-box 构建标签，新增界面截图与端到端脚本`
+**日期**: 2026-10-11
+**范围**: `scripts/*`
+
+### 改了什么
+
+| 文件 | 说明 |
+|---|---|
+| `scripts/build.ps1` | +95 行：固化 `-tags "with_utls,with_quic"`，加 `-Cli` / `-Gui` / `-SkipFrontend` / `-Version` 开关，产物统一到 `dist\` |
+| `scripts/lint.ps1` | 改 98 行：从 3 步变 4 步，新增"引擎自检" |
+| `scripts/test_e2e.ps1` | 改 217 行：跟上 v2 的配置模型与命令行 |
+| `scripts/ui_shot.ps1` | **新增**（77 行）：界面截图 |
+| `scripts/env.ps1` | 微调 1 行 |
+
+### 为什么这么改
+
+**1）构建标签写死在脚本里。** 漏带标签的后果是"编译成功、运行时才炸"，
+而且报错信息（`uTLS, which is required by reality is not included in this build`）
+很难联想到是编译参数。写死在 `build.ps1` 里，人就不需要记住它。
+
+**2）`lint.ps1` 加"引擎自检"这一步。** 现在是四件事：
+
+```
+1. gofmt：所有 Go 代码必须格式化过（cmd / internal / desktop）
+2. go vet -tags "with_utls,with_quic" -unsafeptr=false ./...
+3. 配置校验：go run ./cmd/chainproxy validate
+4. 引擎自检：go run ./cmd/chainproxy engines    ← 新增
+```
+
+关于 `-unsafeptr=false`：`cmd/uishot` 需要用 syscall 把 Windows 传进来的 `uintptr`
+还原成结构体指针（`GetWindowRect` / `GetClientRect` 这类 API 直接填结构体），
+这是纯 syscall 直调 Win32 的固有写法，vet 的 unsafeptr 检查**必然误报**，
+所以关掉它 —— 但**只关这一项**，其它 vet 检查一律保留。
+
+**3）`ui_shot.ps1` 的意义**：桌面程序的排版必须真的看一眼。
+它构建（可用 `-NoBuild` 跳过）、按 `-Open` 打开指定面板、等 `-WaitSeconds` 秒后截图，
+结果默认放 `.cache\shots\`。
+
+### 怎么验证的
+
+```powershell
+.\scripts\lint.ps1                  # 4 步全过
+.\scripts\build.ps1                 # 两个产物都出来
+.\scripts\ui_shot.ps1 -NoBuild      # 截图
+.\scripts\test_e2e.ps1              # 端到端
+```
+
+### 遗留
+
+- `lint.ps1` 只对 `cmd` / `internal` / `desktop` 做 gofmt，脚本本身（`.ps1`）没有格式检查；
+- Windows PowerShell 5.1 与 PowerShell 7 行为有差异，脚本按 5.1 兼容写，
+  但只在本地这一种环境验证过。
+
+---
+
+## 014
+
+**commit**: `docs: 更新项目介绍、架构、使用说明、开发进度与提交说明`
+**日期**: 2026-10-11
+**范围**: `README.md`、`docs/ARCHITECTURE.md`、`docs/USER_GUIDE.md`、`docs/PROJECT_PROGRESS.md`、`docs/COMMIT_HISTORY.md`
+
+### 改了什么
+
+- `README.md` —— 全面改写为 v2：8 种协议一览表、界面说明（默认 8 列 / 列显示 / 通知 / 设置 4 页）、
+  产物说明、脚本用法；
+- `docs/ARCHITECTURE.md` —— 重写为 v2 架构：模块职责与拆分理由、依赖方向、
+  注册模式、关键技术结论、端口管理、状态机、界面层、数据与配置、已知限制。
+  **明确写明 v1（纯 Win32）的架构说明已过时，对应代码在 `v0.1-win32-gui` 标签处**；
+- `docs/USER_GUIDE.md` —— 使用说明跟上新界面；
+- `docs/PROJECT_PROGRESS.md` —— **追加** v2 专节（目标与最终形态、技术选型的为什么、
+  关键技术验证结论、实测数据、截图验证发现的缺陷、已知限制、checklist）；
+- `docs/COMMIT_HISTORY.md` —— 索引补 007-014，并追加 007-014 的详细说明（即本节）。
+
+### 为什么这么改
+
+这一轮改了配置模型、出口实现、界面框架与命令行入口，**旧文档里几乎没有一句话还对**。
+文档比代码更容易腐烂，所以宁可一次改到位，也不留下"看起来还有效"的旧描述。
+
+### 怎么验证的
+
+- `ARCHITECTURE.md` 里的每一条技术结论都能在代码里指到出处
+  （`include.Context` → `internal/engine/singbox.go` 的 `Start`；
+  `transport.type` → `applyTransport`；端口三条规则 → `internal/ports`）；
+- `PROJECT_PROGRESS.md` 的测试数字来自实际执行
+  `go test -tags "with_utls,with_quic" -v ./internal/share/... ./internal/qrscan/...`
+  的 PASS 行统计（share 84、qrscan 34）；
+- 提交索引里的每一行都对应 `git log --oneline` 里真实存在的 commit。
+
+### 遗留
+
+- 旧文档里**没有删除** v1 的历史记录（本次采用"追加 + 明确分区"的方式），
+  所以 `PROJECT_PROGRESS.md` 里"最后更新：2026-10-10"与页尾的 v2 专节（2026-10-11）
+  在时间上不一致 —— 这是刻意保留历史的结果，不是笔误。
+
+---
+
+## 006a-u
+
+**这一节是一次补齐，不是新提交。**
+
+### 为什么会有这个缺口
+
+`COMMIT_HISTORY.md` 原本的索引在 006（`50a8fcf`，2026-10-10）之后直接跳到了
+007（2026-10-11 的 v2 重构）。中间其实还有 **21 个真实提交**，它们记录的是
+v1 阶段的收尾工作，但当时没有写进索引 —— 也就是说：
+文档与 `git log` 之间有 21 条"有提交、没说明"的空白。
+
+本次把索引补齐（编号 006a–006u，刻意不复用 007 之后的号，
+免得动到已经写好的 007–014 及其锚点），并在下面给出合并说明。
+
+**为什么不逐条展开**：这 21 条是 v1 收尾期的密集修复，彼此高度相关
+（同一个问题往往跨好几个提交才收敛），逐条展开会得到 21 段内容相似、
+重复度很高的文字。这里按主题合并，同时保留每条的真实 hash 与提交信息，
+需要细节时用 `git show <hash>` 直接看代码。
+
+### 主题一：WireGuard 从"能跑"做到"可靠"（9 条）
+
+`1a2fe40` `94f74f7` `3eaf3ea` `deed598` `d5b4f16` `9769d09` `dd7242d` `61de5fd`（脚本）`5d1ed05`（清理）
+
+这一段是 v1 里最长的一条战线，几个关键结论：
+
+- **`1a2fe40`**：推翻了自己先前的错误结论 —— "前置 → WG 不通"其实是
+  **测试脚本自己漏了 `PersistentKeepalive`**，导致 `tx_bytes=0`、设备根本不发握手包。
+  这是整个 v1 最值得记的一课：*现象指向网络，根因在测试*。
+- **`deed598`**：`bind.Close()` 无法唤醒阻塞在收包上的协程，
+  `device.Close()` 因此永远等不到它退出 —— 表现是"点停止卡死"。
+  修法是给 `ReceiveFromUDP` 加 `quit` 通道。
+- **`9769d09`**：同类死锁的另一处（UAPI 的 `ipcMutex` 被长时间持有）——
+  最后改成把 `IpcGet` 放进 goroutine 并加超时。
+- **`d5b4f16`**：去掉收包时的源地址过滤。它本意是安全加固，实际是个
+  **静默丢包隐患**（服务端换 IP、NAT 重写都会让它误判）。
+- **`3eaf3ea` / `94f74f7` / `61de5fd`**：全隧道 AllowedIPs 的校验、
+  前置 UDP 能力预检脚本、私钥完整性校验，以及 PowerShell 脚本改成带
+  UTF-8 BOM（否则 Windows PowerShell 5.1 按 ANSI 读会把中文读成乱码）。
+- **`dd7242d`**：内置 WireGuard 密钥生成与公钥实时显示 ——
+  用户不该为了生成一个密钥去装 `wireguard-tools`。
+- **`5d1ed05`**：清除代码里残留的**真实** WireGuard 密钥并重置本地配置。
+  这是个必须记住的教训：密钥曾经被写进过被 git 跟踪的文件。
+
+### 主题二：Win32 界面的一批根因修复（3 条）
+
+`574535f` `424109d` `4934bbf`，另有 `65d7fff`
+
+- **`574535f`（最重要）**：`editUpstreamDialog` 的返回值只取了 `bool`、
+  把填好的配置丢掉了 —— **对话框里填的参数从来没被保存过**。
+  这就是当时"配置存不下来""端口 0 非法"的根因。
+- **`4934bbf`**：对话框窗口类被重复注册，导致第二次打开起的对话框
+  全部路由到已销毁的状态，"生成密钥 / 复制公钥"点了没反应。
+- **`65d7fff`**：`if notif != 0 { return }` 一刀切把 `CBN_SELCHANGE` 也吞了，
+  于是切换类型后输入框不跟随显隐。
+- **`424109d`**：加宽密钥输入框并给每个密钥加一键复制（纯体验修复）。
+
+这三条的共同点：**都是"看起来能用、实际悄悄失效"的问题**，
+只有真的手工操作一遍才会发现 —— 这也是后来 v2 坚持给界面做截图自测的原因。
+
+### 主题三：在真实服务器上部署与排障（5 条）
+
+`47ae714` `fe20bdf` `6e7eec5` `3757600` `d9802b3`
+
+- 先在可控的云服务器上搭了一个 WireGuard 服务端，用来把"客户端问题"
+  和"服务端问题"分开（`47ae714`），并做了端到端验收（`fe20bdf`）。
+- 然后在另一台 NAT 服务器上定位了一次真实故障：
+  **面板上写着 TCP/UDP，但 UDP 实际不生效**（`3757600` 先更正结论，
+  `6e7eec5` 才定位到根因是**端口映射的协议类型选成了 TCP**）。
+- `d9802b3` 把 VLESS+Reality+xHTTP 的完整部署过程与验证结果留成了文档，
+  也就是现在的 `docs/DEPLOY_reality_xhttp.md`。
+  选 xHTTP 是因为它只要 TCP，不需要域名和证书，抗主动探测也更强。
+
+### 主题四：Reality 双出口（2 条）
+
+`da1f990` `baa8609`
+
+给那台服务器加了 WARP 出口，实现 `direct + WARP` 双出口，
+随后又把手写的 WARP 入站从 WireGuard 的端口上拆出来
+（`51822`/公网 `30023`）—— 端口耦合会让两个功能互相牵制。
+
+### 主题五：工具链（1 条）
+
+`529c6e9`
+
+允许 Go 自动切换工具链（本机 1.24.0，而 Wails 与 sing-box 都要求 ≥1.25），
+同时靠 `GOMODCACHE` 已被重定向这一点，把自动下载的工具链也**约束在项目目录内**。
+这条是 v2 重构的前置条件。
+
+### 另外两个已知问题（本次没有处理）
+
+1. **这不影响索引的完整性，但值得记一笔**：`scripts/build.ps1` 早期的
+   `-Console` 开关是空操作（if/else 两个分支的 `go build` 命令行完全相同）。
+   v2 重写该脚本时已经删掉这个参数，并顺手修掉了一个更严重的问题 ——
+   **`dist\ChainProxy.exe` 与 `dist\chainproxy.exe` 在 NTFS 上是同一个文件**
+   （文件名不区分大小写），图形界面那一步会把命令行版覆盖掉，
+   表现是"想用命令行却弹出界面、且控制台里既不输出也不退出"。
+   现在命令行版改名为 `dist\chainproxy-cli.exe`。
+2. `docs/PROJECT_PROGRESS.md` 前半部分（v1 段落）里仍有已过时的表述，
+   已在文件顶部加了「阅读提示」说明哪些说法只对当时成立，内容本身按
+   "保留历史"的原则未作删改。

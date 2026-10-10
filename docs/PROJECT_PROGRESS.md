@@ -1,7 +1,14 @@
 # 开发进度
 
-> 最后更新：2026-10-10
+> 最后更新：2026-10-11（v2 重构）
 > 图例：✅ 已完成并验证 ｜ ⚠️ 部分可用 ｜ ⬜ 未开始
+>
+> **阅读提示**：本文按阶段记录，**前半部分是 v1（纯 Win32 界面）当时的记录**，
+> 保留原样不删是为了留下决策与踩坑的痕迹；本次 v2 重构的完整记录在文末
+> [「v2 重构」](#v2-重构wails--vue-3-界面--内嵌-sing-box2026-10-11) 一节。
+> 因此前半部分里出现的 "6 次提交"、"界面自检脚本"、`internal/gui`、
+> "dist\chainproxy.exe 是图形界面" 之类的说法，描述的都是**当时**的状态，
+> 现在已不成立 —— 这是刻意保留历史的结果，不是笔误。
 
 ---
 
@@ -185,7 +192,7 @@ PersistentKeepalive = 25
 
 | # | 标准 | 结果 |
 |---|---|---|
-| 1 | `dist\chainproxy.exe` 双击运行，原生窗口，无控制台残留 | ✅ 10 MB 单文件 |
+| 1 | `dist\chainproxy-cli.exe` 双击运行，原生窗口，无控制台残留 | ✅ 10 MB 单文件 |
 | 2 | 前置 10808 + 住宅 → 本地端口 10810 | ✅ |
 | 3 | SOCKS5 客户端经 10810 得到与前置不同的 IP | ✅ |
 | 4 | HTTP 客户端经 10810 同样可用 | ✅ |
@@ -206,3 +213,177 @@ PersistentKeepalive = 25
 2. WireGuard 的"隧道内 DNS 解析"选项（当前是本地解析后送入隧道）。
 3. 明文 HTTP 路径支持 chunked 请求体（目前返回 501，实际客户端很少用到）。
 4. 可选：托盘图标常驻、链路健康度曲线。
+
+---
+---
+
+# v2 重构：Wails + Vue 3 界面 + 内嵌 sing-box（2026-10-11）
+
+> 上面是 v1（纯 Win32 界面 + 3 种协议）的进度记录，全部保留。
+> v1 的界面代码可以从 git 标签 `v0.1-win32-gui` 找回。
+
+## 目标与最终形态
+
+一句话：**从「纯 Win32 界面 + 3 种协议」变成「Wails + Vue 3 界面 + 8 种协议 + 前置可以指向项目内的另一个节点」。**
+
+| | v1 | v2 |
+|---|---|---|
+| 界面 | 纯 Win32 syscall 自绘（38 个控件、固定尺寸） | Wails v2 + Vue 3 + Element Plus |
+| 出口协议 | socks5 / http / wireguard | 再加 vmess / vless（含 XTLS-Reality）/ shadowsocks / trojan / hysteria2 |
+| 配置模型 | `front` + `upstreams` | `front` + `settings` + `nodes`（`version` 1 → 2） |
+| 前置 | 全局前置 / 链路专属（临时地址） | 直连 / 全局前置 / **另一个节点** 三选一 |
+| 列表 | 等宽自绘表格 | 默认 8 列 + 「列显示」共 19 列可选 |
+| 命令行 | 兼做界面入口 | 纯无界面工具（`ls / run / test / validate / fetch / import / express / wgkey / engines`） |
+
+界面窗口默认 1180x740、最小 920x580；产物是 `dist\chainproxy-cli.exe`（图形界面）与
+`dist\chainproxy-cli.exe`（命令行）。
+
+## 技术选型的为什么
+
+### 为什么内嵌 sing-box **库**，而不是拉起一个外部 core 进程
+
+- **单文件分发**：产物就是一个 `chainproxy-cli.exe`，不用另外附带 core 的二进制、也不用给它准备配置目录。
+- **生命周期一致**：出口跟着节点启停，进程退出就一起回收，不会留下孤儿 core 进程，也不需要自己写"生成配置 → 启动 → 探活 → 重启"的进程管理。
+- **少一跳**：`internal/engine` 直接拿到 `adapter.Outbound` 调 `DialContext` / `ListenPacket`，
+  不需要"本地再开一个 socks 入口、再连它"——那会多占一个端口、多一次转发。
+- **依赖不扩散**：`internal/proxy` **不 import** sing-box，而是通过
+  `proxy.RegisterSingBoxFactory(...)` 注册（`internal/engine/register.go` 的 `init`）。
+  于是 `internal/proxy` 的单元测试不需要编译整个 sing-box。
+
+### 为什么不自己实现那 5 种协议
+
+那 5 种各自带着一套密码学与帧格式（VMess 的 AEAD 头、VLESS 的 uTLS/Reality、
+Shadowsocks 的 2022 系列、Trojan 的 TLS 伪装、Hysteria2 的 QUIC），自己实现等于重造一个
+sing-box，而且没有任何官方测试向量可依。
+
+自研的 3 种（socks5 / http / wireguard）之所以自研，是因为它们足够简单，
+而且我们要的是"能挂前置、能统计流量、能半关闭中继"这层控制权。
+
+复用 sing-box 还有个额外收益：它**严格解析配置**（未知字段直接报错），
+所以"配置能被它接受"本身就是一条有约束力的断言 —— 见 `TestParseStrictnessIsReal`。
+
+### 为什么圈选窗口是纯 Win32，而不是第二个 Webview
+
+**Wails v2 没有多窗口 API**（`options.App` 描述的是唯一那个窗口）。
+而圈选要求在"无边框 + 全屏置顶 + 隐藏系统光标 + 自画十字准星"的前提下工作，
+直接用 `WS_POPUP + WS_EX_TOPMOST` 反而更省事：
+
+- **先截图、再建窗口** —— 否则会把圈选窗口自己拍进底图，变成"套娃"；
+- **红色十字准星由自己在 `WM_PAINT` 里画**（1 像素、贯穿客户区），
+  不做 `CreateCursor` 自定义光标位图 —— 那套 API 在 DPI 缩放 / 多屏下很脆；
+- 光标用 `ShowCursor(FALSE)` 隐藏，并在任何退出路径（正常结束、报错、panic）都恢复。
+
+## 关键技术验证结论（全部实测得出）
+
+这些结论在写代码之前先用 `.cache/spike-singbox` 验证过，之后固化成
+`internal/engine/singbox_test.go` 里的测试：
+
+| 结论 | 表现 | 处理 |
+|---|---|---|
+| 必须 `include.Context` | 否则反序列化报 `missing outbound options registry in context` | 每个实例用一个**新的** ctx（`box.New` 会往 ctx 里注册本实例的 Manager，共享会互相覆盖） |
+| 必须带构建标签 | 否则运行时报 `uTLS, which is required by reality is not included in this build` | 统一 `-tags "with_utls,with_quic"`；并加 `BuildCheck()` 把运行期错误提前成一句明确的话 |
+| 取出口要用 `inst.Outbound().Outbound(tag)` | `adapter.Router` 上没有 `Outbound` 方法 | 见 `internal/engine/singbox.go` |
+| `direct` 出口不允许 `detour` | 报 `'detour' is not supported in direct context` | 直连模式**完全不生成**前置出口，也不写 detour |
+| `transport.type` 没有 `tcp` | 只能取 http / ws / grpc / quic / httpupgrade | 网络为 tcp 时**整个 transport 字段都不写** |
+| `transport.host` 类型不统一 | http 是数组、httpupgrade 是字符串、ws 走 headers | 分别处理，见 `applyTransport` |
+| sing-box 对未知字段会报错 | 字段名写错不会静默失效 | 因此"能被它解析成功"是有效断言 |
+
+## 实测数据
+
+**真链路三个出口 IP 各不相同，证明链式确实生效**（本地前置 → 住宅代理 → 目标）：
+
+| 环节 | 出口 IP |
+|---|---|
+| 全局前置（本机前置代理） | `204.197.163.238` |
+| 住宅代理 1 | `24.40.126.216` |
+| 住宅代理 2 | `76.46.0.200` |
+
+真链式对比（探测出口 IP 这一步的耗时）：**本地前置 1.5 ms → 经完整链路 201 ms**，
+两个数量级的差距本身就说明流量确实绕到了远端出口，而不是被前置原地代理。
+
+**测试与构建：**
+
+```
+go test -tags "with_utls,with_quic" ./...     全绿，22.5 秒
+  app 0.121s / config 0.074s / engine 0.050s / ports 0.042s
+  proxy 0.036s / qrscan 18.746s / share 0.083s / wgproxy 0.544s
+```
+
+| 包 | 顶层测试函数 | 含子测试的 PASS 数 |
+|---|---|---|
+| `internal/share` | 12 | 84 |
+| `internal/qrscan` | 19 | 34 |
+| `internal/config` | 16 | — |
+| `internal/engine` | 10 | — |
+| `internal/app` | 8 | — |
+| `internal/ports` | 8 | — |
+
+构建耗时：`vite build` 约 4 秒，`wails build` 约 7-8 秒。
+
+## 界面截图验证：发现的 4 个真实缺陷（都已修掉）
+
+桌面程序的排版靠读代码看不出来，所以引入 `cmd/uishot` + `scripts/ui_shot.ps1`
+真的截一张图看。这一轮截图一共揪出这些问题：
+
+| # | 现象 | 根因 |
+|---|---|---|
+| 1 | 端口输入框太窄，10810 显示成 **"11"** | 输入框宽度不够，超出的部分被直接裁掉 |
+| 2 | 「前置节点」选**直连**时显示成占位符 **"请选择"** | 直连用的是空字符串 `""`，而 el-select 把空字符串当作"没选"从而显示 placeholder |
+| 3 | 远程端口显示 **"0"** | 没有值的数字字段被直接渲染成 0，而不是留空 |
+| 4 | socks5 / http 出现**两个密码框** | 字段显示条件重叠（`ShowPassword` 与 `ShowWireGuard` 等开关组合没排干净） |
+
+另外两处是"只有看图才能发现"的问题：
+
+- **工具栏超宽**，右侧的图标按钮被挤出窗口外（不再有任何估算，超出的分组标题会自动截断加省略号）；
+- **`GetWindowRect` 包含 Windows 的隐形缩放边框** —— 按它截图会把后面的窗口也截进来，
+  看起来像"多了两条滚动条"；这个是用**像素分析**定位到的，改成按客户区取图；
+- **设置对话框底部按钮换行** —— `.cp-spacer` 在非 flex 容器里不生效。
+
+### 截图工具的输入注入已经彻底删掉
+
+早期版本用真实鼠标注入（`SetCursorPos` + `mouse_event`）去点开对话框来截图。
+结果是：**一旦被测窗口失去前台焦点，这些点击会落到用户当时正在用的别的程序上** —— 实测确实发生过。
+
+现在改成程序自己的 `-open <面板名>` 启动参数，让界面**主动**打开某个面板再截图，
+属于纯只读操作。`cmd/uishot` 与 `scripts/ui_shot.ps1` 里都写了这段缘由。
+
+## 已知限制与后续可做
+
+- **WARP / Hysteria2 的 UDP 在部分网络下可能回落到 TCP**：本地端口的 UDP 能力取决于出口协议
+  与前置能力；`http` 与 `wireguard` 出口不支持 UDP。浏览器 QUIC 失败会自动回退 TCP，
+  网页浏览不受影响。
+- **单节点一个 sing-box 实例的内存开销**：每个出口是一个独立实例（带自己的 router），
+  好处是启停互不影响、代价是节点很多（几十个）时会有一点固定开销。
+- **没有托盘图标**：Wails v2 不做托盘，本项目也不为此引入 cgo 依赖。
+- **界面未做无障碍适配**：这是自用桌面工具，没有做完整的键盘导航与读屏支持。
+- **端到端验证的边界**：本机**没有对真实 Reality / Hysteria2 服务器**做端到端连通验证，
+  只验证到「生成的配置能被 sing-box 接受 + 实例能启动 + 拨号能发出去」这一层；
+  真链式端到端是用**自研 SOCKS5 出口**打通的。
+
+后续可做：
+
+1. 对真实 Reality / Hysteria2 服务器补一次端到端连通验证（需要一台可控服务端）。
+2. WireGuard 上游的客户端侧 UDP 转发（浏览器 QUIC / DoUDP 走隧道）—— v1 遗留项，仍未做。
+3. 托盘图标常驻、链路健康度曲线。
+
+## 本次做了什么（checklist）
+
+- [x] 配置模型升级 v2：`upstreams` → `nodes`，新增 `settings`，前置改为三选一，`version` 1 → 2
+- [x] v1 → v2 自动迁移，且**行为不变**（v1 无 `frontOverride` = 全局前置；v1 的链路专属临时前置回退为全局并写进备注）
+- [x] 协议元信息只在后端定义一份（`internal/config/protocol.go`），前端读它渲染表单
+- [x] 新增 `internal/ports`：默认端口 `max(≥10800)+1`、随机端口 `>10000` 最多重试 5 次、占用检测
+- [x] 内嵌 sing-box，提供 vmess / vless / ss / trojan / hysteria2 五种出口（每节点一个只有出口的实例）
+- [x] 用 `detour` 表达前置；直连模式不生成前置出口也不写 detour
+- [x] 构建标签固化 `with_utls,with_quic` + `BuildCheck()` 提前报错
+- [x] sing-box 的 UDP 通道适配（`N.PacketConn` 优先、`net.PacketConn` 兜底，带可被 quit 唤醒的收包协程）
+- [x] 节点状态机：`PlanActivation` 拓扑排序 + 灰黑着色检测环路，`Auto` 返回"将连带启动"的节点
+- [x] 跨重启的今日统计（每秒差分折算增量、跨天清零）
+- [x] 测试编排：TCP 延迟 / 真连接延迟 / 测速 / 出口 IP 四种，走临时链路不占本地端口，同一时刻只跑一批
+- [x] 分享链接编解码（SIP002 / legacy ss / vmess base64 JSON / Reality 参数）+ 二维码生成
+- [x] 屏幕圈选识别二维码（GDI 截图 + DPI 感知 + alpha 写死 0xFF + 自画十字准星）
+- [x] 命令行重写为纯无界面工具，删除全部纯 Win32 界面代码（旧代码留在 `v0.1-win32-gui` 标签）
+- [x] 用 Wails v2 + Vue 3 重写界面（默认 8 列 + 19 列可选、右键菜单、通知、设置 4 个标签页）
+- [x] 界面截图验证，修掉 4 个真实缺陷 + 工具栏超宽 + 截图带进后面窗口 + 设置底部按钮换行
+- [x] `-open <面板名>` 开发参数取代鼠标注入
+- [x] 构建脚本带上 sing-box 构建标签；新增界面截图与端到端脚本
+- [x] `go test -tags "with_utls,with_quic" ./...` 全绿
