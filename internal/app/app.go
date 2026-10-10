@@ -1,64 +1,82 @@
 // Package app 是 ChainProxy 的应用状态机：
-// 持有配置、管理所有链路服务的生命周期、向 GUI/CLI 暴露状态与测试能力。
+// 持有配置、管理所有节点服务的生命周期、维护今日统计、对外广播事件。
+//
+// 它是界面层（desktop/）唯一需要打交道的对象 —— 界面不直接碰 proxy 包。
 package app
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
-	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"chainproxy/internal/config"
-	"chainproxy/internal/netutil"
 	"chainproxy/internal/proxy"
 )
 
-// 单条链路的状态。
+// 节点运行状态。
 const (
 	StateRunning = "running"
 	StateStopped = "stopped"
 	StateError   = "error"
-	StateOff     = "off" // 已配置但被禁用
 )
 
-// StatusRow 是 GUI 列表里的一行。
-type StatusRow struct {
-	ID         string
-	Name       string
-	Type       string
-	ListenHost string
-	ListenPort int
-	Server     string
-	State      string
-	Detail     string
-	UpBytes    int64
-	DownBytes  int64
-	ActiveConn int64
-	TotalConn  int64
-}
+// 事件类型（广播给界面）。
+const (
+	EventLog      = "log"      // 一行日志
+	EventNodes    = "nodes"    // 节点列表/状态变化，界面应重新拉取
+	EventStats    = "stats"    // 流量统计刷新（高频，1 秒一次）
+	EventNotify   = "notify"   // 通用通知（右上角弹出）
+	EventTestDone = "testDone" // 某项测试完成
+)
 
 // Event 是应用向外广播的事件。
 type Event struct {
-	Kind string // "log" | "state" | "config"
-	Text string
+	Kind string `json:"kind"`
+	Text string `json:"text"`
 }
 
 // App 是整个应用的运行体。
 type App struct {
-	mu       sync.RWMutex
-	cfg      *config.Config
-	cfgPath  string
-	servers  map[string]*proxy.Server
-	running  bool
-	front    proxy.Front
-	logger   *log.Logger
-	logFile  *os.File
-	subsMu   sync.Mutex
-	subs     []subscriber
-	subSeq   uint64
-	startErr string
+	mu      sync.RWMutex
+	cfg     *config.Config
+	cfgPath string
+
+	// 每个节点一个监听服务，key 是节点 ID。
+	servers map[string]*proxy.Server
+
+	// 最近一次启动失败的原因（按节点 ID）。
+	errs map[string]string
+
+	// 各节点最近一次探测到的出口 IP（按节点 ID，不落盘）。
+	exitIPs map[string]string
+
+	logger  *log.Logger
+	logFile *os.File
+	logs    *ringBuffer
+
+	// 统计基线：服务内部的计数是"本次运行累计"，
+	// 用它的增量去累加"今日"统计，停掉再启动才不会重复计。
+	baseUp   map[string]int64
+	baseDown map[string]int64
+
+	dirty   bool // 统计改动是否需要落盘
+	lastDay string
+
+	subsMu sync.Mutex
+	subs   []subscriber
+	subSeq uint64
+
+	closing  chan struct{}
+	closeOne sync.Once
+
+	// 测试任务的取消函数（同一时刻只允许一批测试在跑）。
+	testMu      sync.Mutex
+	testCancel  context.CancelFunc
+	testRunning bool
 }
 
 // New 创建应用实例；cfg 为 nil 时从磁盘载入。
@@ -68,9 +86,15 @@ func New(cfgPath string) (*App, error) {
 		return nil, err
 	}
 	a := &App{
-		cfg:     cfg,
-		cfgPath: cfgPath,
-		servers: map[string]*proxy.Server{},
+		cfg:      cfg,
+		cfgPath:  cfgPath,
+		servers:  map[string]*proxy.Server{},
+		errs:     map[string]string{},
+		baseUp:   map[string]int64{},
+		baseDown: map[string]int64{},
+		logs:     newRingBuffer(1000),
+		closing:  make(chan struct{}),
+		lastDay:  config.Today(),
 	}
 
 	if f, err := os.OpenFile(config.LogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
@@ -79,19 +103,17 @@ func New(cfgPath string) (*App, error) {
 	} else {
 		a.logger = log.New(os.Stderr, "", log.LstdFlags)
 	}
+
+	a.rollDayLocked()
+	go a.statsLoop()
 	return a, nil
 }
 
 // Close 停止所有服务并释放资源。
 func (a *App) Close() {
-	a.Stop()
-	a.mu.Lock()
-	fe := a.front
-	a.front = nil
-	a.mu.Unlock()
-	if fe != nil {
-		_ = fe.Close()
-	}
+	a.closeOne.Do(func() { close(a.closing) })
+	a.StopAll()
+	a.persistStats(true)
 	if a.logFile != nil {
 		_ = a.logFile.Close()
 	}
@@ -101,13 +123,15 @@ func (a *App) Close() {
 // 事件
 // ------------------------------------------------------------------
 
-// subscriber 是一个带唯一 ID 的回调，便于精确取消。
 type subscriber struct {
 	id uint64
 	fn func(Event)
 }
 
 // Subscribe 注册事件回调，返回取消函数。
+//
+// 【约定】回调必须**快速返回**，并且不允许再同步调用 App 的方法
+// （事件可能在持有 App 内部锁时发出）。界面层只做"转发到前端"这件事。
 func (a *App) Subscribe(fn func(Event)) func() {
 	a.subsMu.Lock()
 	a.subSeq++
@@ -136,148 +160,32 @@ func (a *App) emit(kind, text string) {
 	}
 }
 
-// Logf 写日志并广播到 GUI。
+// Notify 给界面推一条通知。
+//
+// level 取 element-plus 的语义：primary / success / warning / info / error。
+func (a *App) Notify(level, title, text string) {
+	a.emit(EventNotify, encodeNotify(level, title, text))
+}
+
+// Logf 写日志并广播到界面。
 func (a *App) Logf(format string, args ...any) {
 	line := fmt.Sprintf(format, args...)
 	if a.logger != nil {
 		a.logger.Println(line)
 	}
-	a.emit("log", line)
+	a.logs.add(line)
+	a.emit(EventLog, line)
 }
+
+// Logs 返回界面日志面板要显示的最近若干行。
+func (a *App) Logs() []string { return a.logs.snapshot() }
 
 // ------------------------------------------------------------------
 // 配置访问
 // ------------------------------------------------------------------
 
-// Config 返回配置指针（只读使用；修改请走下面的方法）。
-func (a *App) Config() *config.Config {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return a.cfg
-}
-
-// SetFrontConfig 更新前置代理设置（不自动重启，需要调用 Reload 或 Restart）。
-func (a *App) SetFrontConfig(f config.Front) error {
-	a.mu.Lock()
-	a.cfg.Front = f
-	a.mu.Unlock()
-	return a.Save()
-}
-
-// AddUpstream 添加一条住宅代理配置。
-func (a *App) AddUpstream(u config.Upstream) error {
-	a.mu.Lock()
-	if u.ID == "" {
-		u.ID = config.NewID()
-	}
-	if u.ListenHost == "" {
-		u.ListenHost = a.cfg.DefaultListenHost
-	}
-	if u.ListenPort == 0 {
-		u.ListenPort = a.nextFreePortLocked()
-	}
-	a.cfg.Upstreams = append(a.cfg.Upstreams, u)
-	a.mu.Unlock()
-	a.emit("config", "")
-	return a.Save()
-}
-
-// UpdateUpstream 替换一条住宅代理配置（按 ID 匹配）。
-func (a *App) UpdateUpstream(u config.Upstream) error {
-	a.mu.Lock()
-	idx := a.indexOfLocked(u.ID)
-	if idx < 0 {
-		a.mu.Unlock()
-		return fmt.Errorf("未找到要更新的住宅代理：%s", u.Name)
-	}
-	wasRunning := a.running && a.cfg.Upstreams[idx].Enabled
-	a.cfg.Upstreams[idx] = u
-	a.mu.Unlock()
-
-	if wasRunning {
-		// 运行中改配置：重启这一条，使新配置立刻生效
-		if err := a.restartUpstream(u.ID); err != nil {
-			return err
-		}
-	}
-	a.emit("config", "")
-	return a.Save()
-}
-
-// DeleteUpstream 删除一条住宅代理配置，并释放它的端口。
-func (a *App) DeleteUpstream(id string) error {
-	a.mu.Lock()
-	idx := a.indexOfLocked(id)
-	if idx < 0 {
-		a.mu.Unlock()
-		return fmt.Errorf("未找到要删除的住宅代理")
-	}
-	name := a.cfg.Upstreams[idx].Name
-	srv := a.servers[id]
-	delete(a.servers, id)
-	a.cfg.Upstreams = append(a.cfg.Upstreams[:idx], a.cfg.Upstreams[idx+1:]...)
-	a.mu.Unlock()
-
-	if srv != nil {
-		_ = srv.Stop()
-	}
-	a.Logf("已删除住宅代理「%s」并释放其端口", name)
-	a.emit("config", "")
-	return a.Save()
-}
-
-// MoveUpstream 调整顺序（-1 上移，+1 下移）。
-func (a *App) MoveUpstream(id string, delta int) error {
-	a.mu.Lock()
-	idx := a.indexOfLocked(id)
-	if idx < 0 {
-		a.mu.Unlock()
-		return fmt.Errorf("未找到该住宅代理")
-	}
-	j := idx + delta
-	if j < 0 || j >= len(a.cfg.Upstreams) {
-		a.mu.Unlock()
-		return nil
-	}
-	a.cfg.Upstreams[idx], a.cfg.Upstreams[j] = a.cfg.Upstreams[j], a.cfg.Upstreams[idx]
-	a.mu.Unlock()
-	a.emit("config", "")
-	return a.Save()
-}
-
-// SetUpstreamEnabled 启用/停用一条住宅代理。
-func (a *App) SetUpstreamEnabled(id string, enabled bool) error {
-	a.mu.Lock()
-	idx := a.indexOfLocked(id)
-	if idx < 0 {
-		a.mu.Unlock()
-		return fmt.Errorf("未找到该住宅代理")
-	}
-	a.cfg.Upstreams[idx].Enabled = enabled
-	a.mu.Unlock()
-
-	a.mu.RLock()
-	running := a.running
-	a.mu.RUnlock()
-	if running {
-		if enabled {
-			if err := a.startUpstream(id); err != nil {
-				return err
-			}
-		} else {
-			a.mu.Lock()
-			srv := a.servers[id]
-			delete(a.servers, id)
-			a.mu.Unlock()
-			if srv != nil {
-				_ = srv.Stop()
-				a.Logf("已停止「%s」，端口 %d 已释放", srv.Addr(), srv.ListenPort())
-			}
-		}
-	}
-	a.emit("config", "")
-	return a.Save()
-}
+// ConfigPath 返回配置文件路径。
+func (a *App) ConfigPath() string { return a.cfgPath }
 
 // Save 把当前配置落盘。
 func (a *App) Save() error {
@@ -285,327 +193,7 @@ func (a *App) Save() error {
 	cfg := a.cfg
 	path := a.cfgPath
 	a.mu.RUnlock()
-	if err := cfg.Save(path); err != nil {
-		return err
-	}
-	return nil
-}
-
-// ------------------------------------------------------------------
-// 启停
-// ------------------------------------------------------------------
-
-// IsRunning 返回主开关状态。
-func (a *App) IsRunning() bool {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return a.running
-}
-
-// frontFor 返回某条链路应使用的前置代理。
-//
-// 若该链路自己指定了前置（FrontOverride），就为它单独建一个实例；
-// 否则返回 nil，表示"沿用全局前置"。
-//
-// 这里每次调用都新建实例：前置对象持有 UDP 通道等会话状态，
-// 多条链路共用一个实例会互相干扰（尤其是 SOCKS5 UDP ASSOCIATE 的会话）。
-func (a *App) frontFor(u config.Upstream) proxy.Front {
-	if u.FrontOverride == nil {
-		return nil
-	}
-	f := proxy.NewFront(*u.FrontOverride)
-	a.Logf("「%s」使用链路专属前置：%s", u.Name, f.Describe())
-	return f
-}
-
-// Start 启动全部已启用的住宅代理链路。
-// 任何单条链路的失败都不会影响其它链路——这正是"端口不能重复 + 互不影响"的要求。
-func (a *App) Start() error {
-	a.mu.Lock()
-	if a.running {
-		a.mu.Unlock()
-		return nil
-	}
-	cfg := a.cfg
-	front := proxy.NewFront(cfg.Front)
-	a.front = front
-	enabled := make([]config.Upstream, 0, len(cfg.Upstreams))
-	for _, u := range cfg.Upstreams {
-		if u.Enabled {
-			enabled = append(enabled, u)
-		}
-	}
-	a.running = true
-	a.startErr = ""
-	a.mu.Unlock()
-
-	a.Logf("前置代理：%s", front.Describe())
-
-	okCount := 0
-	var firstErr error
-	for _, u := range enabled {
-		// 该链路若有自己的前置设置，就用它（例如局域网 WireGuard 需要直连）
-		upFront := front
-		if fu := a.frontFor(u); fu != nil {
-			upFront = fu
-		}
-		if err := a.startUpstreamWith(upFront, u); err != nil {
-			a.Logf("启动「%s」失败：%v", u.Name, err)
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-		okCount++
-	}
-	a.mu.Lock()
-	a.startErr = ""
-	if okCount == 0 && firstErr != nil {
-		a.running = false
-	}
-	a.mu.Unlock()
-
-	if okCount == 0 && firstErr != nil {
-		return firstErr
-	}
-	a.Logf("已启动 %d 条链路", okCount)
-	a.emit("state", "")
-	return nil
-}
-
-// Stop 停止全部链路，释放全部端口。
-func (a *App) Stop() {
-	a.mu.Lock()
-	if !a.running && len(a.servers) == 0 {
-		a.mu.Unlock()
-		return
-	}
-	servers := a.servers
-	a.servers = map[string]*proxy.Server{}
-	a.running = false
-	a.mu.Unlock()
-
-	var wg sync.WaitGroup
-	for _, s := range servers {
-		wg.Add(1)
-		go func(s *proxy.Server) {
-			defer wg.Done()
-			_ = s.Stop()
-			a.Logf("已停止「%s」，端口 %d 已释放", s.Name(), s.ListenPort())
-		}(s)
-	}
-	wg.Wait()
-	a.emit("state", "")
-}
-
-func (a *App) startUpstream(id string) error {
-	a.mu.RLock()
-	idx := a.indexOfRLocked(id)
-	front := a.front
-	var u config.Upstream
-	if idx >= 0 {
-		u = a.cfg.Upstreams[idx]
-	}
-	a.mu.RUnlock()
-	if idx < 0 {
-		return fmt.Errorf("未找到该住宅代理")
-	}
-	if front == nil {
-		return fmt.Errorf("链路服务尚未启动")
-	}
-	return a.startUpstreamWith(front, u)
-}
-
-func (a *App) startUpstreamWith(front proxy.Front, u config.Upstream) error {
-	// 端口被占用时给出明确提示（GUI 会标红）
-	if err := netutil.PortAvailable(u.ListenHost, u.ListenPort); err != nil {
-		a.setUpstreamError(u.ID, err.Error())
-		return fmt.Errorf("「%s」%w", u.Name, err)
-	}
-
-	srv, err := proxy.NewServer(u, front, a.Logf)
-	if err != nil {
-		return fmt.Errorf("「%s」构造失败: %w", u.Name, err)
-	}
-	if err := srv.Start(); err != nil {
-		a.setUpstreamError(u.ID, err.Error())
-		return fmt.Errorf("「%s」%w", u.Name, err)
-	}
-
-	a.mu.Lock()
-	// 重启前先关掉旧实例，避免端口残留
-	if old := a.servers[u.ID]; old != nil {
-		_ = old.Stop()
-	}
-	a.servers[u.ID] = srv
-	a.mu.Unlock()
-
-	a.clearUpstreamError(u.ID)
-	a.Logf("「%s」已启动，监听 %s（%s）", u.Name, srv.Addr(), u.Describe())
-	a.emit("state", "")
-	return nil
-}
-
-func (a *App) restartUpstream(id string) error {
-	a.mu.Lock()
-	srv := a.servers[id]
-	delete(a.servers, id)
-	a.mu.Unlock()
-	if srv != nil {
-		_ = srv.Stop()
-	}
-	return a.startUpstream(id)
-}
-
-// ------------------------------------------------------------------
-// 错误与状态
-// ------------------------------------------------------------------
-
-var errStore = sync.Map{} // id -> string
-
-func (a *App) setUpstreamError(id, msg string) { errStore.Store(id, msg) }
-
-func (a *App) clearUpstreamError(id string) { errStore.Delete(id) }
-
-func (a *App) upstreamError(id string) string {
-	if v, ok := errStore.Load(id); ok {
-		return v.(string)
-	}
-	return ""
-}
-
-// ClearAllErrors 清空所有错误标记（重新全局启动时调用）。
-func (a *App) ClearAllErrors() {
-	a.mu.RLock()
-	ids := make([]string, 0, len(a.cfg.Upstreams))
-	for _, u := range a.cfg.Upstreams {
-		ids = append(ids, u.ID)
-	}
-	a.mu.RUnlock()
-	for _, id := range ids {
-		a.clearUpstreamError(id)
-	}
-}
-
-// Status 返回所有住宅代理的状态行（顺序与配置一致）。
-func (a *App) Status() []StatusRow {
-	a.mu.RLock()
-	cfg := a.cfg
-	servers := make(map[string]*proxy.Server, len(a.servers))
-	for k, v := range a.servers {
-		servers[k] = v
-	}
-	running := a.running
-	a.mu.RUnlock()
-
-	rows := make([]StatusRow, 0, len(cfg.Upstreams))
-	for _, u := range cfg.Upstreams {
-		row := StatusRow{
-			ID:         u.ID,
-			Name:       u.Name,
-			Type:       u.Type,
-			ListenHost: u.ListenHost,
-			ListenPort: u.ListenPort,
-			Server:     u.Describe(),
-			State:      StateStopped,
-		}
-		if !u.Enabled {
-			row.State = StateOff
-			row.Detail = "已禁用"
-		}
-		if srv, ok := servers[u.ID]; ok && srv.Running() {
-			st := srv.Stats()
-			row.State = StateRunning
-			row.Detail = fmt.Sprintf("监听 %s · %d 个活动连接", srv.Addr(), st.Conns.Load())
-			row.UpBytes = st.Up.Load()
-			row.DownBytes = st.Down.Load()
-			row.ActiveConn = st.Conns.Load()
-			row.TotalConn = st.TotalConn.Load()
-		} else if running && u.Enabled {
-			if msg := a.upstreamError(u.ID); msg != "" {
-				row.State = StateError
-				row.Detail = msg
-			} else {
-				row.State = StateStopped
-				row.Detail = "未启动"
-			}
-		} else if !u.Enabled {
-			if msg := a.upstreamError(u.ID); msg != "" {
-				row.Detail = msg
-			}
-		}
-		rows = append(rows, row)
-	}
-	return rows
-}
-
-// FrontStatus 返回前置代理的可读描述与连通性。
-func (a *App) FrontStatus() (string, bool) {
-	a.mu.RLock()
-	fc := a.cfg.Front
-	running := a.running
-	front := a.front
-	a.mu.RUnlock()
-
-	desc := proxy.NewFront(fc).Describe()
-	if !running && front == nil {
-		return desc, false
-	}
-	if front != nil {
-		return front.Describe(), true
-	}
-	return desc, true
-}
-
-// ------------------------------------------------------------------
-// 内部工具
-// ------------------------------------------------------------------
-
-func (a *App) indexOfLocked(id string) int {
-	for i := range a.cfg.Upstreams {
-		if a.cfg.Upstreams[i].ID == id {
-			return i
-		}
-	}
-	return -1
-}
-
-func (a *App) indexOfRLocked(id string) int {
-	for i := range a.cfg.Upstreams {
-		if a.cfg.Upstreams[i].ID == id {
-			return i
-		}
-	}
-	return -1
-}
-
-// nextFreePortLocked 在配置内找一个不与任何已有上游冲突的端口。
-func (a *App) nextFreePortLocked() int {
-	used := map[int]bool{}
-	for _, u := range a.cfg.Upstreams {
-		used[u.ListenPort] = true
-	}
-	used[a.cfg.Front.Port] = true
-	for p := 10810; p <= 10899; p++ {
-		if !used[p] {
-			return p
-		}
-	}
-	sort.Ints(keysOf(used))
-	for p := 20000; p <= 65535; p++ {
-		if !used[p] {
-			return p
-		}
-	}
-	return 10810
-}
-
-func keysOf(m map[int]bool) []int {
-	out := make([]int, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
+	return cfg.Save(path)
 }
 
 // Validate 返回当前配置的全部问题。
@@ -615,35 +203,143 @@ func (a *App) Validate() []config.Issue {
 	return a.cfg.Validate()
 }
 
-// AutoStart 按配置在启动后自动开启链路。
-func (a *App) AutoStart() {
-	a.mu.RLock()
-	want := a.cfg.StartOnLaunch
-	a.mu.RUnlock()
-	if !want {
-		return
-	}
-	go func() {
-		time.Sleep(300 * time.Millisecond)
-		if err := a.Start(); err != nil {
-			a.Logf("自动启动失败：%v", err)
-		}
-	}()
-}
-
-// GetUpstream 按 ID 取出配置副本。
-func (a *App) GetUpstream(id string) (config.Upstream, bool) {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	if i := a.indexOfRLocked(id); i >= 0 {
-		return a.cfg.Upstreams[i], true
-	}
-	return config.Upstream{}, false
-}
-
-// GetFront 返回前置代理配置副本。
-func (a *App) GetFront() config.Front {
+// Front 返回全局前置代理配置副本。
+func (a *App) Front() config.Front {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.cfg.Front
+}
+
+// Settings 返回全局设置副本。
+func (a *App) Settings() config.Settings {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.cfg.Settings
+}
+
+// SetFront 更新全局前置代理。
+//
+// 前置变了，所有"使用全局前置"的节点都必须重启才能生效，
+// 这里直接全部重启（已在运行的节点重启后仍然是运行状态）。
+func (a *App) SetFront(f config.Front) error {
+	a.mu.Lock()
+	a.cfg.Front = f
+	a.mu.Unlock()
+	a.Logf("全局前置代理已更新：%s", f.Describe())
+	if err := a.Save(); err != nil {
+		return err
+	}
+	a.RestartAll()
+	a.emit(EventNodes, "")
+	return nil
+}
+
+// SetSettings 更新全局设置。
+//
+// 监听地址（AllowLan）与超时都可能影响正在运行的服务，所以同样整体重启。
+func (a *App) SetSettings(s config.Settings) error {
+	a.mu.Lock()
+	a.cfg.Settings = s
+	a.mu.Unlock()
+	if err := a.Save(); err != nil {
+		return err
+	}
+	a.RestartAll()
+	a.emit(EventNodes, "")
+	return nil
+}
+
+// ------------------------------------------------------------------
+// 内部工具
+// ------------------------------------------------------------------
+
+// indexOfLocked 返回节点下标（调用方需持锁）。
+func (a *App) indexOfLocked(id string) int { return a.cfg.Index(id) }
+
+// serverOf 返回正在运行的节点服务。
+func (a *App) serverOf(id string) *proxy.Server {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.servers[id]
+}
+
+// describeFront 返回某节点前置的可读描述。
+func (a *App) describeFrontLocked(n config.Node) string {
+	switch n.FrontKind() {
+	case config.FrontDirect:
+		return "直连"
+	case config.FrontGlobal:
+		return "全局前置 · " + a.cfg.Front.Describe()
+	default:
+		if idx := a.cfg.Index(n.FrontNodeID()); idx >= 0 {
+			p := a.cfg.Nodes[idx]
+			return fmt.Sprintf("节点「%s」· SOCKS5 127.0.0.1:%d", p.Name, p.ListenPort)
+		}
+		return "前置节点缺失"
+	}
+}
+
+// sleepCtx 是可被关闭信号打断的等待。
+func (a *App) sleepCtx(d time.Duration) bool {
+	select {
+	case <-a.closing:
+		return false
+	case <-time.After(d):
+		return true
+	}
+}
+
+// trimAll 去掉所有空白（用于解析用户输入时容错）。
+func trimAll(s string) string {
+	return strings.Join(strings.Fields(s), "")
+}
+
+// ------------------------------------------------------------------
+// 环形日志缓冲
+// ------------------------------------------------------------------
+
+type ringBuffer struct {
+	mu   sync.Mutex
+	data []string
+	next int
+	full bool
+}
+
+func newRingBuffer(capacity int) *ringBuffer {
+	return &ringBuffer{data: make([]string, capacity)}
+}
+
+func (r *ringBuffer) add(line string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.data[r.next] = line
+	r.next = (r.next + 1) % len(r.data)
+	if r.next == 0 {
+		r.full = true
+	}
+}
+
+func (r *ringBuffer) snapshot() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.full {
+		out := make([]string, r.next)
+		copy(out, r.data[:r.next])
+		return out
+	}
+	out := make([]string, 0, len(r.data))
+	out = append(out, r.data[r.next:]...)
+	out = append(out, r.data[:r.next]...)
+	return out
+}
+
+// encodeNotify 把通知编码成一段文本传给前端。
+//
+// 用 NUL 分隔是为了让前端一次 split 就能拿到三段，
+// 避免为了一个通知定义一整个结构体再序列化。
+func encodeNotify(level, title, text string) string {
+	if level == "" {
+		level = "info"
+	}
+	return level + "\x00" + title + "\x00" + text
 }

@@ -4,65 +4,334 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
+	"sync"
+	"time"
 
 	"chainproxy/internal/config"
 	"chainproxy/internal/proxy"
 	"chainproxy/internal/tester"
 )
 
-// TestFront 直接经前置代理访问公网 IP 查询服务，返回前置的出口 IP。
+// 可执行的测试种类（与主流客户端的右键菜单对齐）。
+const (
+	TestTCP   = "tcp"   // TCP 延迟：直连服务器地址做一次握手
+	TestReal  = "real"  // 真连接延迟：走完整链路请求一次 generate_204
+	TestSpeed = "speed" // 速度：走完整链路下载若干秒
+	TestExit  = "exit"  // 出口 IP：走完整链路查一次出口 IP
+)
+
+// TestNodes 对若干节点执行指定测试。
 //
-// 无论链路是否处于运行状态都可以测试——它只用配置，不占用本地端口。
+// 测试全部在后台跑，结果写回节点配置（延迟/速度）并广播事件；
+// 同一时刻只允许一批测试在跑，避免把带宽和 CPU 互相打满导致数据失真。
+func (a *App) TestNodes(ids []string, kind string) error {
+	if len(ids) == 0 {
+		return fmt.Errorf("请先选择要测试的节点")
+	}
+	switch kind {
+	case TestTCP, TestReal, TestSpeed, TestExit:
+	default:
+		return fmt.Errorf("未知的测试类型 %q", kind)
+	}
+
+	a.testMu.Lock()
+	if a.testRunning {
+		a.testMu.Unlock()
+		return fmt.Errorf("已有测试任务正在进行，请等它结束或先停止")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	a.testCancel = cancel
+	a.testRunning = true
+	a.testMu.Unlock()
+
+	// 把节点快照出来，测试期间用户改了配置也不影响本次结果。
+	type job struct {
+		node config.Node
+	}
+	jobs := make([]job, 0, len(ids))
+	for _, id := range ids {
+		if n, ok := a.GetNode(id); ok {
+			jobs = append(jobs, job{node: n})
+		}
+	}
+
+	conc := a.Settings().TestConcurrency
+	if conc < 1 {
+		conc = 8
+	}
+
+	go func() {
+		defer func() {
+			a.testMu.Lock()
+			a.testRunning = false
+			a.testCancel = nil
+			a.testMu.Unlock()
+			a.persistStats(true)
+			a.emit(EventNodes, "")
+		}()
+
+		a.Logf("开始测试：%s（%d 个节点，并发 %d）", testLabel(kind), len(jobs), conc)
+
+		sem := make(chan struct{}, conc)
+		var wg sync.WaitGroup
+		for _, j := range jobs {
+			select {
+			case <-ctx.Done():
+				break
+			default:
+			}
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(n config.Node) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				if r := recover(); r != nil {
+					a.Logf("测试「%s」时发生异常：%v", n.Name, r)
+				}
+				a.runOneTest(ctx, n, kind)
+			}(j.node)
+		}
+		wg.Wait()
+		cancel()
+	}()
+
+	return nil
+}
+
+// CancelTests 停止当前测试任务。
+func (a *App) CancelTests() {
+	a.testMu.Lock()
+	cancel := a.testCancel
+	running := a.testRunning
+	a.testMu.Unlock()
+	if running && cancel != nil {
+		cancel()
+		a.Notify("warning", "已停止测试", "当前测试任务已被取消")
+	}
+}
+
+// Testing 返回是否正在测试。
+func (a *App) Testing() bool {
+	a.testMu.Lock()
+	defer a.testMu.Unlock()
+	return a.testRunning
+}
+
+func testLabel(kind string) string {
+	switch kind {
+	case TestTCP:
+		return "TCP 延迟"
+	case TestReal:
+		return "真连接延迟"
+	case TestSpeed:
+		return "速度"
+	case TestExit:
+		return "出口 IP"
+	default:
+		return kind
+	}
+}
+
+// runOneTest 执行单个节点的一项测试，并把结果写回配置。
+func (a *App) runOneTest(ctx context.Context, n config.Node, kind string) {
+	s := a.Settings()
+
+	switch kind {
+	case TestTCP:
+		timeout := time.Duration(s.TCPTestTimeoutMs) * time.Millisecond
+		start := time.Now()
+		d, err := tester.TCPPing(ctx, n.Server, n.Port, timeout)
+		if err != nil {
+			a.Logf("「%s」TCP 延迟测试失败：%v", n.Name, err)
+			a.updateTest(n.ID, kind, 0, 0, "")
+			return
+		}
+		a.Logf("「%s」TCP 延迟 %d ms（%d ms 内完成）", n.Name, d.Milliseconds(), time.Since(start).Milliseconds())
+		a.updateTest(n.ID, kind, d.Milliseconds(), 0, "")
+		return
+	}
+
+	// 其余三种都要真正把链路建起来
+	chain, err := a.openTestChain(ctx, n)
+	if err != nil {
+		a.Logf("「%s」%s测试失败：无法建立链路：%v", n.Name, testLabel(kind), err)
+		a.updateTest(n.ID, kind, 0, 0, "")
+		return
+	}
+	defer chain.Close()
+
+	dial := func(c context.Context, network, addr string) (net.Conn, error) {
+		return chain.Dial(c, network, addr)
+	}
+
+	switch kind {
+	case TestReal:
+		url := s.RealTestURL
+		if strings.TrimSpace(url) == "" {
+			url = "http://cp.cloudflare.com/generate_204"
+		}
+		d, err := tester.RealPing(ctx, dial, url, 15*time.Second)
+		if err != nil {
+			a.Logf("「%s」真连接延迟测试失败：%v", n.Name, err)
+			a.updateTest(n.ID, kind, 0, 0, "")
+			return
+		}
+		a.Logf("「%s」真连接延迟 %d ms", n.Name, d.Milliseconds())
+		a.updateTest(n.ID, kind, d.Milliseconds(), 0, "")
+
+	case TestSpeed:
+		url := s.SpeedTestURL
+		secs := s.SpeedTestSeconds
+		mbps, total, err := tester.Speed(ctx, dial, url, secs, 15*time.Second)
+		if err != nil {
+			a.Logf("「%s」速度测试失败：%v", n.Name, err)
+			a.updateTest(n.ID, kind, 0, 0, "")
+			return
+		}
+		a.Logf("「%s」速度 %.2f MB/s（%s 用时约 %d 秒）", n.Name, mbps, FormatBytes(total), secs)
+		a.updateTest(n.ID, kind, 0, mbps, "")
+
+	case TestExit:
+		res := tester.FetchIP(ctx, dial, "https://api.ipify.org?format=json", n.Name)
+		if !res.OK {
+			a.Logf("「%s」出口 IP 探测失败：%v", n.Name, res.Err)
+			a.updateTest(n.ID, kind, 0, 0, "")
+			return
+		}
+		a.Logf("「%s」出口 IP = %s（%d ms）", n.Name, res.IP, res.Latency.Milliseconds())
+		a.updateTest(n.ID, kind, 0, 0, res.IP)
+	}
+}
+
+// chain 是一条用于测试的临时链路。
+type chain struct {
+	front proxy.Front
+	up    proxy.Upstream
+}
+
+func (c *chain) Dial(ctx context.Context, network, addr string) (net.Conn, error) {
+	if network == "udp" {
+		return nil, fmt.Errorf("测试链路暂不支持 UDP")
+	}
+	return c.up.Dial(ctx, c.front, addr)
+}
+
+func (c *chain) Close() {
+	if c.up != nil {
+		_ = c.up.Stop()
+	}
+	if c.front != nil {
+		_ = c.front.Close()
+	}
+}
+
+// openTestChain 按节点的前置配置临时建一条链路（不占用本地端口）。
+//
+// 这样"没激活也能测"，用户可以先测完再决定要不要激活。
+func (a *App) openTestChain(ctx context.Context, n config.Node) (*chain, error) {
+	frontCfg, err := a.resolveFront(n)
+	if err != nil {
+		return nil, err
+	}
+	front := proxy.NewFront(frontCfg)
+	up, err := proxy.NewUpstream(n, frontCfg, a.logfFor(n.Name))
+	if err != nil {
+		front.Close()
+		return nil, err
+	}
+	startCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := up.Start(startCtx, front); err != nil {
+		front.Close()
+		return nil, err
+	}
+	return &chain{front: front, up: up}, nil
+}
+
+// updateTest 把测试结果写回节点并广播。
+func (a *App) updateTest(id, kind string, latencyMs int64, speed float64, exitIP string) {
+	a.mu.Lock()
+	idx := a.indexOfLocked(id)
+	if idx >= 0 {
+		switch kind {
+		case TestTCP:
+			a.cfg.Nodes[idx].LatencyMs = latencyMs
+		case TestReal:
+			a.cfg.Nodes[idx].RealMs = latencyMs
+		case TestSpeed:
+			a.cfg.Nodes[idx].SpeedMBps = speed
+		case TestExit:
+			if a.exitIPs == nil {
+				a.exitIPs = map[string]string{}
+			}
+			if exitIP == "" {
+				delete(a.exitIPs, id)
+			} else {
+				a.exitIPs[id] = exitIP
+			}
+		}
+		a.dirty = true
+	}
+	a.mu.Unlock()
+	a.emit(EventTestDone, id+"\x00"+kind)
+}
+
+// TestFront 直接经全局前置代理访问公网 IP 查询服务，返回前置的出口 IP。
 func (a *App) TestFront(ctx context.Context) tester.Result {
 	a.mu.RLock()
 	fc := a.cfg.Front
-	url := a.cfg.TestURL
 	a.mu.RUnlock()
 
 	if fc.Type == config.FrontTypeDirect {
-		return tester.Result{Via: "直连", Err: fmt.Errorf("前置代理类型为「直连」，请先配置主流客户端的 socks5 前置")}
+		return tester.Result{Via: "直连", Err: fmt.Errorf("全局前置代理类型是「直连」，没有可测试的对象")}
 	}
 	front := proxy.NewFront(fc)
 	defer front.Close()
-	return tester.FetchIP(ctx, func(c context.Context, network, addr string) (net.Conn, error) {
+	res := tester.FetchIP(ctx, func(c context.Context, network, addr string) (net.Conn, error) {
 		return front.DialTCP(c, addr)
-	}, url, "前置代理 "+front.Describe())
+	}, "https://api.ipify.org?format=json", "全局前置代理 "+front.Describe())
+
+	if res.OK {
+		a.Logf("全局前置代理出口 IP = %s（%d ms）", res.IP, res.Latency.Milliseconds())
+	} else {
+		a.Logf("全局前置代理测试失败：%v", res.Err)
+	}
+	return res
 }
 
-// TestUpstream 经指定住宅代理链路测试出口 IP。
-// 链路未运行时也可以测试（只创建临时 Front，不占用本地端口）。
-func (a *App) TestUpstream(ctx context.Context, id string) tester.Result {
-	u, ok := a.GetUpstream(id)
-	if !ok {
-		return tester.Result{Err: fmt.Errorf("未找到该住宅代理")}
-	}
+// ExitIPs 返回各节点最近一次探测到的出口 IP。
+func (a *App) ExitIPs() map[string]string {
 	a.mu.RLock()
-	url := a.cfg.TestURL
+	defer a.mu.RUnlock()
+	out := make(map[string]string, len(a.exitIPs))
+	for k, v := range a.exitIPs {
+		out[k] = v
+	}
+	return out
+}
+
+// RemoveInvalidNodes 删除"测试无效"的节点（TCP 延迟测不通的那些）。
+//
+//主流客户端的"移除测试无效项"就是这个语义：删掉连服务器地址都握不上手的节点。
+func (a *App) RemoveInvalidNodes() (int, error) {
+	a.mu.RLock()
+	var bad []string
+	var names []string
+	for _, n := range a.cfg.Nodes {
+		if n.LatencyMs == 0 {
+			bad = append(bad, n.ID)
+			names = append(names, n.Name)
+		}
+	}
 	a.mu.RUnlock()
 
-	up, err := proxy.NewUpstream(u)
-	if err != nil {
-		return tester.Result{Err: err}
+	if len(bad) == 0 {
+		return 0, nil
 	}
-	fc := a.GetFront()
-	// 这条链路若指定了专属前置，测试也必须用它，
-	// 否则会出现"启动能通、测试不通"这种自相矛盾的结果。
-	if u.FrontOverride != nil {
-		fc = *u.FrontOverride
+	if err := a.DeleteNodes(bad); err != nil {
+		return 0, err
 	}
-	front := proxy.NewFront(fc)
-	defer front.Close()
-
-	if err := up.Start(ctx, front); err != nil {
-		return tester.Result{Via: u.Name, Err: err}
-	}
-	defer up.Stop()
-
-	return tester.FetchIP(ctx, func(c context.Context, network, addr string) (net.Conn, error) {
-		conn, derr := up.Dial(c, front, addr)
-		if derr != nil {
-			return nil, fmt.Errorf("经「%s」连接 %s 失败: %w", u.Name, addr, derr)
-		}
-		return conn, nil
-	}, url, u.Name+" · "+u.Describe())
+	a.Notify("success", "已移除测试无效项", strings.Join(names, "、"))
+	return len(bad), nil
 }

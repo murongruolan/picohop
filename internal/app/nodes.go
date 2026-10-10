@@ -1,0 +1,645 @@
+package app
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"chainproxy/internal/config"
+	"chainproxy/internal/proxy"
+)
+
+// ------------------------------------------------------------------
+// 节点增删改查
+// ------------------------------------------------------------------
+
+// AddNode 新增一个节点。
+//
+// 端口为 0 时自动分配一个空闲端口（规则见 internal/ports）。
+func (a *App) AddNode(n config.Node) (config.Node, error) {
+	a.mu.Lock()
+	if n.ID == "" {
+		n.ID = config.NewID()
+	}
+	if n.ListenHost == "" {
+		n.ListenHost = a.cfg.Settings.DefaultListenHost
+	}
+	if n.ListenPort == 0 {
+		n.ListenPort = a.allocatorLocked(n.ID).Next()
+	}
+	if n.CreatedAt.IsZero() {
+		n.CreatedAt = time.Now()
+	}
+	if n.StatsDay == "" {
+		n.StatsDay = config.Today()
+	}
+	if n.Name == "" {
+		n.Name = a.suggestNameLocked(n.Protocol)
+	}
+	a.cfg.Nodes = append(a.cfg.Nodes, n)
+	a.mu.Unlock()
+
+	a.Logf("已新增节点「%s」（%s，本地端口 %d）", n.Name, config.ProtocolLabel(n.Protocol), n.ListenPort)
+	a.emit(EventNodes, "")
+	return n, a.Save()
+}
+
+// UpdateNode 按 ID 替换一个节点。
+//
+// 如果该节点正在运行且关键字段变了，就重启它（保持运行状态）。
+func (a *App) UpdateNode(n config.Node) (config.Node, error) {
+	a.mu.Lock()
+	idx := a.indexOfLocked(n.ID)
+	if idx < 0 {
+		a.mu.Unlock()
+		return config.Node{}, fmt.Errorf("未找到要更新的节点")
+	}
+	old := a.cfg.Nodes[idx]
+	// 保留运行时才知道的字段，避免编辑一次就把统计和最近使用时间清空
+	n.CreatedAt = old.CreatedAt
+	n.StatsDay = old.StatsDay
+	n.UpBytes = old.UpBytes
+	n.DownBytes = old.DownBytes
+	n.LastUsed = old.LastUsed
+	// 测试结果是节点属性，界面会单独更新，这里保留旧值
+	n.Active = old.Active
+	a.cfg.Nodes[idx] = n
+	a.mu.Unlock()
+
+	a.Logf("已更新节点「%s」", n.Name)
+	a.emit(EventNodes, "")
+	if err := a.Save(); err != nil {
+		return n, err
+	}
+
+	// 正在运行就直接重启，让新配置立刻生效
+	if a.serverOf(n.ID) != nil {
+		if err := a.restartNode(n.ID); err != nil {
+			a.Notify("error", "重启节点失败", fmt.Sprintf("「%s」：%v", n.Name, err))
+		}
+	}
+	return n, nil
+}
+
+// CloneNode 克隆一个节点（新 ID、新端口、名字加"副本"）。
+func (a *App) CloneNode(id string) (config.Node, error) {
+	a.mu.Lock()
+	idx := a.indexOfLocked(id)
+	if idx < 0 {
+		a.mu.Unlock()
+		return config.Node{}, fmt.Errorf("未找到要克隆的节点")
+	}
+	src := a.cfg.Nodes[idx]
+	dup := src
+	dup.ID = config.NewID()
+	dup.Name = a.uniqueNameLocked(src.Name + "-副本")
+	dup.ListenPort = a.allocatorLocked("").Next()
+	dup.Active = false
+	dup.CreatedAt = time.Now()
+	dup.LastUsed = time.Time{}
+	dup.LatencyMs, dup.RealMs, dup.SpeedMBps = 0, 0, 0
+	dup.UpBytes, dup.DownBytes, dup.StatsDay = 0, 0, config.Today()
+	a.cfg.Nodes = append(a.cfg.Nodes, dup)
+	a.mu.Unlock()
+
+	a.Logf("已克隆节点「%s」→「%s」（本地端口 %d）", src.Name, dup.Name, dup.ListenPort)
+	a.emit(EventNodes, "")
+	return dup, a.Save()
+}
+
+// DeleteNodes 删除若干节点，并释放它们的端口。
+//
+// 如果有别的节点把这个节点当前置，删除后那些节点的前置会失效，
+// 这里会把它们的前置改回"直连"并明确告知，避免留下一个静默不通的配置。
+func (a *App) DeleteNodes(ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	want := map[string]bool{}
+	for _, id := range ids {
+		want[id] = true
+	}
+
+	// 先停掉正在运行的
+	a.mu.RLock()
+	running := make([]*proxy.Server, 0, len(ids))
+	for _, id := range ids {
+		if s := a.servers[id]; s != nil {
+			running = append(running, s)
+		}
+	}
+	a.mu.RUnlock()
+	for _, s := range running {
+		_ = s.Stop()
+	}
+
+	a.mu.Lock()
+	kept := make([]config.Node, 0, len(a.cfg.Nodes))
+	var names []string
+	for _, n := range a.cfg.Nodes {
+		if want[n.ID] {
+			names = append(names, n.Name)
+			delete(a.servers, n.ID)
+			delete(a.errs, n.ID)
+			delete(a.baseUp, n.ID)
+			delete(a.baseDown, n.ID)
+			continue
+		}
+		kept = append(kept, n)
+	}
+	a.cfg.Nodes = kept
+
+	// 修掉指向已删除节点的前置引用
+	var orphans []string
+	for i := range a.cfg.Nodes {
+		fid := a.cfg.Nodes[i].FrontNodeID()
+		if fid != "" && want[fid] {
+			a.cfg.Nodes[i].Front = config.FrontDirect
+			orphans = append(orphans, a.cfg.Nodes[i].Name)
+		}
+	}
+	a.mu.Unlock()
+
+	a.Logf("已删除 %d 个节点：%s", len(names), strings.Join(names, "、"))
+	if len(orphans) > 0 {
+		a.Notify("warning", "前置已被删除", fmt.Sprintf("这些节点的前置已改回「直连」：%s", strings.Join(orphans, "、")))
+	}
+	a.emit(EventNodes, "")
+	return a.Save()
+}
+
+// GetNode 按 ID 取出节点副本。
+func (a *App) GetNode(id string) (config.Node, bool) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.cfg.Find(id)
+}
+
+// NodeConfigs 返回节点配置副本（顺序与配置一致）。
+//
+// 注意与 stats.go 里的 Nodes() 区分：那个返回的是给界面用的视图。
+func (a *App) NodeConfigs() []config.Node {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	out := make([]config.Node, len(a.cfg.Nodes))
+	copy(out, a.cfg.Nodes)
+	return out
+}
+
+// CountNodes 返回节点总数。
+func (a *App) CountNodes() int {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return len(a.cfg.Nodes)
+}
+
+// ------------------------------------------------------------------
+// 前置解析
+// ------------------------------------------------------------------
+
+// resolveFront 把节点的"前置"取值解析成一个具体的前置代理配置。
+//
+//	直连    → direct
+//	global  → 设置里的全局前置
+//	节点 ID → 用那个节点的本地端口当 SOCKS5 前置
+//
+// 以节点为前置时**永远走 127.0.0.1**：这是本机内部调用，
+// 前置节点就算监听着 0.0.0.0 也没必要绕出去。
+func (a *App) resolveFront(n config.Node) (config.Front, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.resolveFrontLocked(n)
+}
+
+func (a *App) resolveFrontLocked(n config.Node) (config.Front, error) {
+	switch n.FrontKind() {
+	case config.FrontDirect:
+		return config.Front{Type: config.FrontTypeDirect, TimeoutMs: 10000}, nil
+	case config.FrontGlobal:
+		f := a.cfg.Front
+		if f.TimeoutMs == 0 {
+			f.TimeoutMs = 10000
+		}
+		return f, nil
+	default:
+		idx := a.cfg.Index(n.FrontNodeID())
+		if idx < 0 {
+			return config.Front{}, fmt.Errorf("前置节点不存在，请重新选择前置")
+		}
+		p := a.cfg.Nodes[idx]
+		return config.Front{
+			Type:      config.FrontTypeSocks5,
+			Host:      "127.0.0.1",
+			Port:      p.ListenPort,
+			Username:  p.ListenUsername,
+			Password:  p.ListenPassword,
+			TimeoutMs: 10000,
+		}, nil
+	}
+}
+
+// DescribeFront 返回某节点前置的可读描述（给界面用）。
+func (a *App) DescribeFront(n config.Node) string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.describeFrontLocked(n)
+}
+
+// ------------------------------------------------------------------
+// 激活 / 停止
+// ------------------------------------------------------------------
+
+// ActivationPlan 是"激活某个节点"时需要连带激活的节点顺序。
+type ActivationPlan struct {
+	// Order 是从最前面（被依赖的）到最后面的节点 ID 顺序。
+	Order []string
+	// Auto 是因为"作为别人的前置"而被自动带上的节点 ID。
+	Auto []string
+}
+
+// PlanActivation 计算要把这些节点激活，需要按什么顺序启动哪些节点。
+//
+// 规则：如果 A 以前置 B，那么必须先启动 B；顺着前置链一直往前找。
+// 顺带做环路检测（配置校验也会查，但改动频率高，这里再兜一道）。
+func (a *App) PlanActivation(ids []string) (ActivationPlan, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	byID := map[string]config.Node{}
+	for _, n := range a.cfg.Nodes {
+		byID[n.ID] = n
+	}
+
+	const (
+		white = 0
+		gray  = 1
+		black = 2
+	)
+	state := map[string]int{}
+	var order []string
+	var auto []string
+	explicit := map[string]bool{}
+	for _, id := range ids {
+		explicit[id] = true
+		if _, ok := byID[id]; !ok {
+			return ActivationPlan{}, fmt.Errorf("节点不存在")
+		}
+	}
+
+	var visit func(id string, chain []string) error
+	visit = func(id string, chain []string) error {
+		switch state[id] {
+		case black:
+			return nil
+		case gray:
+			return fmt.Errorf("前置链形成了环路：%s", strings.Join(chain, " → "))
+		}
+		state[id] = gray
+		n, ok := byID[id]
+		if !ok {
+			return fmt.Errorf("节点不存在")
+		}
+		if fid := n.FrontNodeID(); fid != "" {
+			if err := visit(fid, append(chain, n.Name)); err != nil {
+				return err
+			}
+		}
+		state[id] = black
+		order = append(order, id)
+		return nil
+	}
+
+	for _, id := range ids {
+		if err := visit(id, []string{byID[id].Name}); err != nil {
+			return ActivationPlan{}, err
+		}
+	}
+
+	// auto 从最终的启动顺序里筛出来，而不是在递归途中记录 ——
+	// 这样它和 Order 的顺序一致（都是"实际启动顺序"），界面可以直接照着念
+	// "将按 A → B → C 的顺序启动"。
+	for _, id := range order {
+		if !explicit[id] {
+			auto = append(auto, id)
+		}
+	}
+	return ActivationPlan{Order: order, Auto: auto}, nil
+}
+
+// Activate 激活若干节点（连同它们所需的前置节点）。
+func (a *App) Activate(ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	plan, err := a.PlanActivation(ids)
+	if err != nil {
+		return err
+	}
+
+	var started, failed []string
+	for _, id := range plan.Order {
+		a.mu.Lock()
+		idx := a.indexOfLocked(id)
+		if idx < 0 {
+			a.mu.Unlock()
+			continue
+		}
+		n := a.cfg.Nodes[idx]
+		a.cfg.Nodes[idx].Active = true
+		already := a.servers[id] != nil && a.servers[id].Running()
+		a.mu.Unlock()
+
+		if already {
+			continue
+		}
+		if err := a.startNode(id); err != nil {
+			failed = append(failed, fmt.Sprintf("「%s」：%v", n.Name, err))
+			continue
+		}
+		started = append(started, n.Name)
+	}
+
+	_ = a.Save()
+	a.emit(EventNodes, "")
+
+	if len(failed) > 0 {
+		a.Notify("error", "部分节点激活失败", strings.Join(failed, "\n"))
+	}
+	if len(started) > 0 && len(failed) == 0 {
+		a.Notify("success", "已激活", strings.Join(started, "、"))
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("%s", strings.Join(failed, "；"))
+	}
+	return nil
+}
+
+// Deactivate 停止若干节点。
+//
+// 如果有别的**运行中的**节点把这个节点当前置，那它也会一起被停掉
+// （否则那些节点会指向一个已经没人监听的端口，变成静默不通）。
+func (a *App) Deactivate(ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	want := map[string]bool{}
+	for _, id := range ids {
+		want[id] = true
+	}
+
+	// 把"依赖这些节点"的节点找出来，连带一起停
+	a.mu.RLock()
+	for changed := true; changed; {
+		changed = false
+		for _, n := range a.cfg.Nodes {
+			if want[n.ID] {
+				continue
+			}
+			fid := n.FrontNodeID()
+			if fid != "" && want[fid] && a.servers[n.ID] != nil {
+				want[n.ID] = true
+				changed = true
+			}
+		}
+	}
+	dependents := make([]string, 0)
+	names := make([]string, 0)
+	for _, n := range a.cfg.Nodes {
+		if want[n.ID] {
+			names = append(names, n.Name)
+			if !containsStr(ids, n.ID) {
+				dependents = append(dependents, n.Name)
+			}
+		}
+	}
+	a.mu.RUnlock()
+
+	for id := range want {
+		_ = a.stopNode(id)
+	}
+
+	a.mu.Lock()
+	for i := range a.cfg.Nodes {
+		if want[a.cfg.Nodes[i].ID] {
+			a.cfg.Nodes[i].Active = false
+		}
+	}
+	a.mu.Unlock()
+
+	a.Logf("已停止：%s", strings.Join(names, "、"))
+	if len(dependents) > 0 {
+		a.Notify("info", "连带停止了依赖节点", strings.Join(dependents, "、"))
+	}
+	a.persistStats(true)
+	a.emit(EventNodes, "")
+	return a.Save()
+}
+
+// ActivateAll 激活全部节点。
+func (a *App) ActivateAll() error {
+	a.mu.RLock()
+	ids := make([]string, 0, len(a.cfg.Nodes))
+	for _, n := range a.cfg.Nodes {
+		ids = append(ids, n.ID)
+	}
+	a.mu.RUnlock()
+	return a.Activate(ids)
+}
+
+// StopAll 停止全部节点。
+func (a *App) StopAll() {
+	a.mu.RLock()
+	servers := make([]*proxy.Server, 0, len(a.servers))
+	for _, s := range a.servers {
+		servers = append(servers, s)
+	}
+	a.mu.RUnlock()
+
+	for _, s := range servers {
+		_ = s.Stop()
+	}
+	a.mu.Lock()
+	a.servers = map[string]*proxy.Server{}
+	a.baseUp = map[string]int64{}
+	a.baseDown = map[string]int64{}
+	a.mu.Unlock()
+
+	a.emit(EventNodes, "")
+}
+
+// RestartAll 重启所有正在运行的节点（前置/设置变化后调用）。
+func (a *App) RestartAll() {
+	a.mu.RLock()
+	ids := make([]string, 0)
+	for id, s := range a.servers {
+		if s.Running() {
+			ids = append(ids, id)
+		}
+	}
+	a.mu.RUnlock()
+	if len(ids) == 0 {
+		return
+	}
+	a.StopAll()
+	if err := a.Activate(ids); err != nil {
+		a.Logf("重启节点时出错：%v", err)
+	}
+}
+
+// AutoActivate 按配置在启动后自动激活上次处于激活状态的节点。
+func (a *App) AutoActivate() {
+	a.mu.RLock()
+	want := a.cfg.Settings.AutoActivateOnLaunch
+	ids := make([]string, 0)
+	for _, n := range a.cfg.Nodes {
+		if n.Active {
+			ids = append(ids, n.ID)
+		}
+	}
+	a.mu.RUnlock()
+	if !want || len(ids) == 0 {
+		return
+	}
+	go func() {
+		if !a.sleepCtx(300 * time.Millisecond) {
+			return
+		}
+		a.Logf("启动时自动激活上次处于激活状态的节点（%d 个）", len(ids))
+		if err := a.Activate(ids); err != nil {
+			a.Logf("自动激活出错：%v", err)
+		}
+	}()
+}
+
+// ------------------------------------------------------------------
+// 单个节点的启停
+// ------------------------------------------------------------------
+
+func (a *App) startNode(id string) error {
+	a.mu.Lock()
+	idx := a.indexOfLocked(id)
+	if idx < 0 {
+		a.mu.Unlock()
+		return fmt.Errorf("节点不存在")
+	}
+	n := a.cfg.Nodes[idx]
+	// 监听地址由 AllowLan 统一决定
+	n.ListenHost = a.cfg.ListenHostEffective(n)
+
+	frontCfg, err := a.resolveFrontLocked(n)
+	if err != nil {
+		a.setErrLocked(id, err.Error())
+		a.mu.Unlock()
+		return err
+	}
+
+	// 端口占用检查：端口是"本地代理端口"，被占了必须明确报出来。
+	// 注意排除节点自己 —— 重启时它自己的端口当然算"自己占着"。
+	if st := a.allocatorLocked(id).Check(n.ListenPort); !st.Free {
+		err := fmt.Errorf("%s", st.Message)
+		a.setErrLocked(id, st.Message)
+		a.mu.Unlock()
+		return err
+	}
+
+	srv, err := proxy.NewServer(n, frontCfg, a.logfFor(n.Name))
+	if err != nil {
+		a.setErrLocked(id, err.Error())
+		a.mu.Unlock()
+		return fmt.Errorf("构造失败: %w", err)
+	}
+	a.mu.Unlock()
+
+	if err := srv.Start(); err != nil {
+		a.mu.Lock()
+		a.setErrLocked(id, err.Error())
+		a.mu.Unlock()
+		return err
+	}
+
+	a.mu.Lock()
+	if old := a.servers[id]; old != nil {
+		_ = old.Stop()
+	}
+	a.servers[id] = srv
+	delete(a.errs, id)
+	a.mu.Unlock()
+
+	a.Logf("「%s」已启动，监听 %s（前置：%s；出口：%s）",
+		n.Name, srv.Addr(), a.DescribeFront(n), n.Describe())
+	a.emit(EventNodes, "")
+	return nil
+}
+
+func (a *App) stopNode(id string) error {
+	a.mu.Lock()
+	srv := a.servers[id]
+	delete(a.servers, id)
+	delete(a.errs, id)
+	a.mu.Unlock()
+	if srv != nil {
+		_ = srv.Stop()
+		a.Logf("「%s」已停止，端口 %d 已释放", srv.Name(), srv.ListenPort())
+	}
+	a.emit(EventNodes, "")
+	return nil
+}
+
+func (a *App) restartNode(id string) error {
+	_ = a.stopNode(id)
+	return a.startNode(id)
+}
+
+// logfFor 给某条链路生成带名字前缀的日志函数。
+func (a *App) logfFor(name string) func(string, ...any) {
+	return func(format string, args ...any) {
+		a.Logf("[%s] "+format, append([]any{name}, args...)...)
+	}
+}
+
+func (a *App) setErrLocked(id, msg string) { a.errs[id] = msg }
+
+// errOf 返回节点最近一次错误。
+func (a *App) errOf(id string) string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.errs[id]
+}
+
+// ------------------------------------------------------------------
+// 命名辅助
+// ------------------------------------------------------------------
+
+func (a *App) suggestNameLocked(protocol string) string {
+	base := config.ProtocolLabel(protocol)
+	return a.uniqueNameLocked(base)
+}
+
+func (a *App) uniqueNameLocked(base string) string {
+	if strings.TrimSpace(base) == "" {
+		base = "节点"
+	}
+	used := map[string]bool{}
+	for _, n := range a.cfg.Nodes {
+		used[n.Name] = true
+	}
+	if !used[base] {
+		return base
+	}
+	for i := 2; i < 10000; i++ {
+		cand := fmt.Sprintf("%s-%d", base, i)
+		if !used[cand] {
+			return cand
+		}
+	}
+	return base + "-" + config.NewID()
+}
+
+func containsStr(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
