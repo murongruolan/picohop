@@ -197,6 +197,12 @@ const (
 	emLineLength   = 0x00BC
 	emReplaceSel   = 0x00C2
 
+	// 通知码（WM_COMMAND 的高 16 位）。**必须按控件类型分开判断**：
+	// 统一写 if notif != 0 { return } 会把下拉框的选中通知一起吃掉。
+	bnClicked    = 0x0000 // 按钮被点击
+	cbnSelChange = 0x0001 // 下拉框选中的项变了
+	enChange     = 0x0300 // 编辑框内容变了
+
 	// 按钮消息
 	bmGetCheck = 0x00F0
 	bmSetCheck = 0x00F1

@@ -74,7 +74,14 @@ func (w *winMain) handleCommand(cid int32, notif int32) {
 	// 只看"最后一条"无法判断某个按钮到底有没有被点到。
 	w.cmdHits[cid]++
 
-	if notif != 0 { // 0 == BN_CLICKED
+	// 前置代理类型下拉框换选项 → 立刻切换那几个输入框的可用状态
+	// （与对话框同理：不能把所有非 0 通知码一刀切掉）
+	if cid == int32(idFrontType) && notif == cbnSelChange {
+		w.frontTypeOnChange()
+		return
+	}
+	// 到这里只处理按钮点击
+	if notif != bnClicked {
 		return
 	}
 	switch id(cid) {

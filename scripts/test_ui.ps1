@@ -104,6 +104,14 @@ if (Test-Path $dump) {
     Check "对话框「本端公钥」随私钥正确更新" $pubOK ""
     Check "对话框「复制公钥」写入剪贴板" $copyOK ""
 
+    # 类型切换：用户在下拉框里换类型时，下面那组输入框必须跟着变。
+    # 这条路径以前从没被测到（自检一直是直接摆好类型），
+    # 所以"切换后界面不变"这个真实 bug 溜了过去。
+    $swWg = $s -match '✅ 切到 wireguard'
+    $swSocks = $s -match '✅ 切回 socks5'
+    Check "对话框切换类型时控件跟随显隐（→ wireguard）" $swWg ""
+    Check "对话框切换类型时控件跟随显隐（→ socks5）" $swSocks ""
+
     # 对话框同样要过布局体检
     $dCtrl = 0
     if ($s -match '对话框[\s\S]*?超出客户区的控件：(\d+) 个') { $dCtrl = [int]$Matches[1] }

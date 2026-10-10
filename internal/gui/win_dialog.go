@@ -477,13 +477,25 @@ func (d *dlgState) handleMsg(hwnd uintptr, msg uint32, wParam, lParam uintptr) u
 		cid := int32(wParam & 0xFFFF)
 		notif := int32((wParam >> 16) & 0xFFFF)
 
+		// ⚠️ 通知码必须**按控件分别判断**，不能一句 `if notif != 0 { return }` 全滤掉：
+		// 按钮的点击码是 BN_CLICKED(0)，但下拉框选中项时发的是 **CBN_SELCHANGE(1)**，
+		// 编辑框内容变化发的是 **EN_CHANGE(0x300)**。
+		// 早先就是被那句统一过滤吃掉了 CBN_SELCHANGE，
+		// 导致"切换类型后下面那组输入框不跟着变"。
+
+		// 类型下拉框换了选项 → 切换「住宅服务器」与「WireGuard」两组的显隐
+		if cid == int32(dgType) && notif == cbnSelChange {
+			d.typeOnChange()
+			return 0
+		}
 		// 私钥一改就实时推导"本端公钥"：
 		// 用户粘贴完私钥，立刻就能拿到该交给服务端的那一串。
-		if cid == dgWGPriv && notif == 0x0300 /* EN_CHANGE */ {
+		if cid == int32(dgWGPriv) && notif == enChange {
 			d.refreshPubKey()
 			return 0
 		}
-		if notif != 0 {
+		// 到这里只处理按钮点击
+		if notif != bnClicked {
 			return 0
 		}
 
@@ -495,8 +507,6 @@ func (d *dlgState) handleMsg(hwnd uintptr, msg uint32, wParam, lParam uintptr) u
 			d.closed = true
 		case dgParse:
 			d.applyQuickImport()
-		case dgType:
-			d.typeOnChange()
 		case dgWGGen:
 			d.generateKeys()
 		case dgWGCopyPub:

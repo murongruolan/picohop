@@ -241,6 +241,43 @@ func maybeDumpDialog(d *dlgState) {
 	sb.WriteString(fmt.Sprintf("\n住宅服务器组可见=%v  WireGuard 组可见=%v\n",
 		d.cServerGroup.enabled() && d.cServerGroup.visible(), d.cWGGroup.visible()))
 
+	// ---- 类型切换体检 ----
+	//
+	// 【为什么必须单独测这一步】
+	// 之前只测"socks5 对话框"和"wireguard 对话框"，而这两次都是 build() 里
+	// 调 load()+typeOnChange() 直接把类型摆好的，**根本没有经过下拉框的通知路径**。
+	// 结果"用户在界面上切换类型"这条最常用的路径从来没被测到，
+	// 真实 bug（切换后下面那组输入框不跟着变）就这么溜过去了。
+	//
+	// 这里手工模拟下拉框的行为：先 CB_SETCURSEL 改选中项，再发一条
+	// WM_COMMAND(CBN_SELCHANGE) —— 这正是 ComboBox 自己会发的那条消息。
+	sb.WriteString("\n=== 类型切换体检 ===\n")
+	{
+		typeSwitch := func(want string) (wgVis, srvVis bool, gotType string) {
+			idx := int32(indexOf(dlgTypes, want))
+			sendMessage(uintptr(getCtrlByID(d.hwnd, dgType)), cbSetCurSel, uintptr(idx), 0)
+			// 模拟 ComboBox 选中变化后发给父窗口的通知
+			sendMessage(d.hwnd, wmCommand,
+				uintptr(uint32(uint16(int32(dgType)))|uint32(cbnSelChange)<<16),
+				uintptr(getCtrlByID(d.hwnd, dgType)))
+			pumpMessagesFor(150 * time.Millisecond)
+			return d.cWGGroup.visible(), d.cServerGroup.visible(), d.cType.comboText()
+		}
+
+		wgVis, srvVis, got := typeSwitch("wireguard")
+		okWG := got == "wireguard" && wgVis && !srvVis
+		sb.WriteString(fmt.Sprintf("  %s 切到 wireguard：类型读回=%q WireGuard组可见=%v 服务器组可见=%v\n",
+			yesNoWord(okWG), got, wgVis, srvVis))
+
+		wgVis2, srvVis2, got2 := typeSwitch("socks5")
+		okSocks := got2 == "socks5" && !wgVis2 && srvVis2
+		sb.WriteString(fmt.Sprintf("  %s 切回 socks5：类型读回=%q WireGuard组可见=%v 服务器组可见=%v\n",
+			yesNoWord(okSocks), got2, wgVis2, srvVis2))
+
+		// 测完恢复成 wireguard，后面的按钮体检还要用
+		typeSwitch("wireguard")
+	}
+
 	// ---- 对话框按钮点击体检 ----
 	//
 	// 这一段专门盯住一个曾经真实发生过的坑：
