@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"net"
+	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -58,14 +60,24 @@ func TestSocksUDPAssociateThroughFront(t *testing.T) {
 	q = append(q, 0x00, 0x01) // A
 	q = append(q, 0x00, 0x01) // IN
 
-	if err := ch.SendToUDP(q, "1.1.1.1", 53); err != nil {
+	// 目标可用环境变量覆盖，用来区分"公网 UDP"与"私有地址 UDP"：
+	//主流客户端之类的前置通常对 TCP 私有地址走直连，但 UDP 未必同样处理。
+	dstHost := envOr("CHAINPROXY_UDP_TEST_HOST", "1.1.1.1")
+	dstPort := 53
+	if pv := os.Getenv("CHAINPROXY_UDP_TEST_PORT"); pv != "" {
+		if n, e := strconv.Atoi(pv); e == nil {
+			dstPort = n
+		}
+	}
+	t.Logf("UDP 测试目标 %s:%d", dstHost, dstPort)
+	if err := ch.SendToUDP(q, dstHost, dstPort); err != nil {
 		t.Fatalf("发送 DNS 查询失败：%v", err)
 	}
 
 	buf := make([]byte, 1500)
 	deadline := time.Now().Add(8 * time.Second)
 	for time.Now().Before(deadline) {
-		n, host, port, err := ch.ReceiveFromUDP(buf)
+		n, host, port, err := ch.ReceiveFromUDP(nil, buf)
 		if err != nil {
 			t.Fatalf("接收失败：%v", err)
 		}

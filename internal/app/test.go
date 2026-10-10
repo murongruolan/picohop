@@ -44,7 +44,13 @@ func (a *App) TestUpstream(ctx context.Context, id string) tester.Result {
 	if err != nil {
 		return tester.Result{Err: err}
 	}
-	front := proxy.NewFront(a.GetFront())
+	fc := a.GetFront()
+	// 这条链路若指定了专属前置，测试也必须用它，
+	// 否则会出现"启动能通、测试不通"这种自相矛盾的结果。
+	if u.FrontOverride != nil {
+		fc = *u.FrontOverride
+	}
+	front := proxy.NewFront(fc)
 	defer front.Close()
 
 	if err := up.Start(ctx, front); err != nil {

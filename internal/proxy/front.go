@@ -15,11 +15,25 @@ import (
 
 // UDPChannel 是一条"已经能收发 UDP 数据报"的逻辑通道。
 // 实现方负责把数据报封装成各自的传输格式（SOCKS5 UDP 头等）。
+// ErrUDPChannelClosed 表示本次会话被上层主动结束（不是通道坏了）。
+// 收包协程看到它应当安静退出。
+var ErrUDPChannelClosed = errors.New("UDP 通道会话已结束")
+
 type UDPChannel interface {
 	// SendToUDP 发送一个数据报到指定目标。
 	SendToUDP(payload []byte, host string, port int) error
 	// ReceiveFromUDP 阻塞等待下一个数据报，把来源地址填入 srcHost/srcPort。
-	ReceiveFromUDP(buf []byte) (n int, srcHost string, srcPort int, err error)
+	//
+	// quit 被关闭时立刻返回 ErrUDPChannelClosed。
+	//
+	// 【为什么必须有 quit】
+	// 调用方（WireGuard 的收包协程）需要一个"能被叫醒"的阻塞读：
+	// wireguard-go 在 BindUpdate / Close 时会先调 bind.Close()、再
+	// **等待收包协程退出**。如果这里既不看 quit 又关不掉底层通道，
+	// 收包协程就永远醒不过来，device.Close() 也永远等不到 —— 直接死锁
+	// （现象是 fatal error: all goroutines are asleep - deadlock!，
+	//   以及界面上"点停止卡死"）。
+	ReceiveFromUDP(quit <-chan struct{}, buf []byte) (n int, srcHost string, srcPort int, err error)
 	// Close 释放通道（控制连接 + UDP socket）。
 	Close() error
 }
@@ -293,13 +307,13 @@ func (c *plainUDPChannel) SendToUDP(payload []byte, host string, port int) error
 	return werr
 }
 
-func (c *plainUDPChannel) ReceiveFromUDP(buf []byte) (int, string, int, error) {
-	// 刻意**不设读超时**：超时会被上层当成"通道坏了"而干掉整个收包循环。
-	// 阻塞等待，由 Close() 关闭所有套接字来解除阻塞。
+func (c *plainUDPChannel) ReceiveFromUDP(quit <-chan struct{}, buf []byte) (int, string, int, error) {
 	select {
 	case p := <-c.pkts:
 		n := copy(buf, p.payload)
 		return n, p.host, p.port, nil
+	case <-quit:
+		return 0, "", 0, ErrUDPChannelClosed
 	case <-c.done:
 		return 0, "", 0, net.ErrClosed
 	}
@@ -399,16 +413,15 @@ func (c *socks5UDPChannel) SendToUDP(payload []byte, host string, port int) erro
 	return err
 }
 
-func (c *socks5UDPChannel) ReceiveFromUDP(buf []byte) (int, string, int, error) {
+func (c *socks5UDPChannel) ReceiveFromUDP(quit <-chan struct{}, buf []byte) (int, string, int, error) {
 	select {
-	case p, ok := <-c.pkts:
-		if !ok {
-			return 0, "", 0, errors.New("UDP 通道已关闭")
-		}
+	case p := <-c.pkts:
 		n := copy(buf, p.payload)
 		return n, p.host, p.port, nil
+	case <-quit:
+		return 0, "", 0, ErrUDPChannelClosed
 	case <-c.done:
-		return 0, "", 0, errors.New("UDP 通道已关闭")
+		return 0, "", 0, net.ErrClosed
 	}
 }
 

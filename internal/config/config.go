@@ -71,6 +71,13 @@ type Upstream struct {
 	ListenHost string `json:"listenHost"`
 	ListenPort int    `json:"listenPort"`
 
+	// FrontOverride 让**这一条链路单独指定前置**，留空则用全局前置。
+	//
+	// 为什么需要它：前置原本是全局的，但不同类型的上游诉求相反 ——
+	// 局域网里的 WireGuard 服务端必须「直连」（经前置反而到不了），
+	// 而住宅代理往往希望前置走主流客户端。全局设置二者只能选一个。
+	FrontOverride *Front `json:"frontOverride,omitempty"`
+
 	// 前置代理鉴权（我们自己的端口是否需要用户名密码；默认不需要，因为只监听回环）。
 	ListenUsername string `json:"listenUsername"`
 	ListenPassword string `json:"listenPassword"`

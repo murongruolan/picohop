@@ -302,6 +302,22 @@ func (a *App) IsRunning() bool {
 	return a.running
 }
 
+// frontFor 返回某条链路应使用的前置代理。
+//
+// 若该链路自己指定了前置（FrontOverride），就为它单独建一个实例；
+// 否则返回 nil，表示"沿用全局前置"。
+//
+// 这里每次调用都新建实例：前置对象持有 UDP 通道等会话状态，
+// 多条链路共用一个实例会互相干扰（尤其是 SOCKS5 UDP ASSOCIATE 的会话）。
+func (a *App) frontFor(u config.Upstream) proxy.Front {
+	if u.FrontOverride == nil {
+		return nil
+	}
+	f := proxy.NewFront(*u.FrontOverride)
+	a.Logf("「%s」使用链路专属前置：%s", u.Name, f.Describe())
+	return f
+}
+
 // Start 启动全部已启用的住宅代理链路。
 // 任何单条链路的失败都不会影响其它链路——这正是"端口不能重复 + 互不影响"的要求。
 func (a *App) Start() error {
@@ -328,7 +344,12 @@ func (a *App) Start() error {
 	okCount := 0
 	var firstErr error
 	for _, u := range enabled {
-		if err := a.startUpstreamWith(front, u); err != nil {
+		// 该链路若有自己的前置设置，就用它（例如局域网 WireGuard 需要直连）
+		upFront := front
+		if fu := a.frontFor(u); fu != nil {
+			upFront = fu
+		}
+		if err := a.startUpstreamWith(upFront, u); err != nil {
 			a.Logf("启动「%s」失败：%v", u.Name, err)
 			if firstErr == nil {
 				firstErr = err

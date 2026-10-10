@@ -57,7 +57,7 @@ func TestPlainUDPTransport(t *testing.T) {
 	got := make(chan string, 1)
 	go func() {
 		b := make([]byte, 512)
-		n, _, _, rerr := ch.ReceiveFromUDP(b)
+		n, _, _, rerr := ch.ReceiveFromUDP(nil, b)
 		if rerr == nil {
 			got <- string(b[:n])
 		}

@@ -298,7 +298,7 @@ func (h *Handler) socksUDPAssociate(tcp net.Conn, br *bufio.Reader) {
 	go func() {
 		buf := make([]byte, 64*1024)
 		for {
-			n, sh, sp, err := up.ReceiveFromUDP(buf)
+			n, sh, sp, err := up.ReceiveFromUDP(done, buf)
 			if err != nil {
 				shutdown()
 				return

@@ -107,8 +107,13 @@ func (b *socksBind) receive(bufs [][]byte, sizes []int, eps []conn.Endpoint) (in
 		// 中途把它换掉会让收到的包无法被正确交给解密队列 ——
 		// 现象是"握手响应明明收到了 92 字节，但握手永远不完成"。
 		// 设备给的缓冲一定够大，直接用即可。
-		n, srcHost, srcPort, err := b.ch.ReceiveFromUDP(bufs[0])
+		n, srcHost, srcPort, err := b.ch.ReceiveFromUDP(done, bufs[0])
 		if err != nil {
+			// 会话被上层结束：安静退出，这是正常收尾路径。
+			// 若在这里继续循环，device.Close() 会一直等下去（死锁）。
+			if errors.Is(err, proxy.ErrUDPChannelClosed) {
+				return 0, net.ErrClosed
+			}
 			if b.down() {
 				return 0, net.ErrClosed
 			}
