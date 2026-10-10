@@ -1,4 +1,4 @@
-﻿# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # ChainProxy 本地环境脚本
 #
 # 目的：把 Go 的所有"下载/缓存"位置强制重定向到本项目目录内，
@@ -19,8 +19,15 @@ $env:GOTMPDIR        = Join-Path $ChainProxyRoot '.cache\gotmp'
 $env:GOPROXY         = 'https://goproxy.cn,https://proxy.golang.org,direct'
 $env:GOFLAGS         = '-mod=mod'
 $env:CGO_ENABLED     = '0'
-$env:GOTOOLCHAIN        = 'local'   # 不自动下载新工具链，版本完全由本机 go 决定
 $env:CHAINPROXY_ROOT = $ChainProxyRoot
+
+# 工具链：本机 go 是 1.24.0，但 Wails v2.13 要求 >=1.25.0、sing-box v1.14 要求 >=1.25.5，
+# 所以必须允许 Go 自动切换工具链（GOTOOLCHAIN=auto）。
+#
+# 关键点：GOMODCACHE 已被重定向到 <项目>\.cache\gomod，
+# 因此自动下载的工具链也落在 **项目目录内**（.cache\gomod\golang.org\toolchain@...），
+# 不会写进 C:\Users\...\go 或 F:\DevCache 等外部目录。
+$env:GOTOOLCHAIN     = 'auto'
 
 foreach ($d in @($env:GOPATH, $env:GOMODCACHE, $env:GOCACHE, $env:GOTMPDIR)) {
     New-Item -ItemType Directory -Force -Path $d | Out-Null
