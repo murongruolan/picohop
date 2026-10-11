@@ -517,7 +517,21 @@ func runOverlaySession(ready chan overlayReady, result chan overlayResult, onRea
 
 	// 4) 通知调用方"窗口好了"。注意：onReady 由 SelectRegionHooked 那边统一调用，
 	//    这里只管通过 ready 通道报告，避免回调被触发两次。
+	//
+	//    这一步必须在窗口**真的显示出来之后、任何昂贵操作之前**发出 ——
+	//    调用方拿它当"用户已经能看到遮罩"的时刻来计时。
 	ready <- overlayReady{hwnd: ov.hwnd}
+
+	// 4.1) 然后才做那个昂贵的系统设置。
+	//
+	// disableDragFullWindows 用 SPIF_SENDCHANGE 把 WM_SETTINGCHANGE 广播给
+	// **所有**顶层窗口并等它们响应，实测要 **1.8 秒**。早先它排在显示窗口之前，
+	// 于是"主窗口已隐藏、遮罩还没出现"的空档接近 2 秒，用户看到的就是
+	// "点了圈选没反应"（实测：建窗耗时 2173ms → 挪到信号之后 331ms）。
+	//
+	// 晚 1.8 秒生效没问题：它只是为了避免 Windows 的拖拽全窗口重绘和我们的
+	// 实时选区重绘打架，而用户从"看到遮罩"到"真的开始拖"至少几百毫秒。
+	ov.disableDragFullWindows()
 
 	// 5) 消息循环（阻塞到窗口销毁）
 	ov.messageLoop()
@@ -652,11 +666,6 @@ func (ov *overlay) create(hidden bool) error {
 	ov.id = registerOverlay(ov)
 	pSetWindowLongPtrW.Call(hwnd, gwlpUserData, ov.id)
 
-	// 圈选期间把系统"拖拽时显示窗口内容"关掉：Windows 的拖拽全窗口重绘
-	// 会往我们的消息队列插一堆 WM_SYNCPAINT/WM_PAINT，和实时选区重绘打架，
-	// 边界会出现一帧残影。退出时恢复，不影响用户体验。
-	ov.disableDragFullWindows()
-
 	ov.recreateBackBuffer()
 
 	// 先 UpdateWindow 预热一次，让第一帧在"还没人操作"的时候就画好，
@@ -665,6 +674,10 @@ func (ov *overlay) create(hidden bool) error {
 		pShowWindow.Call(hwnd, uintptr(swShowNa))
 	}
 	pUpdateWindow.Call(hwnd)
+
+	// 【注意】这里**不做** disableDragFullWindows —— 它要 1.8 秒（见下面那个函数），
+	// 而"窗口已经出现在屏幕上"这件事不该等它。由 runOverlaySession 在发出
+	// "遮罩已就绪"信号之后再调用它，这样调用方拿到的耗时如实等于用户看到的延迟。
 	return nil
 }
 

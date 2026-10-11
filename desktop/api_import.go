@@ -126,6 +126,11 @@ func (a *API) BeginScreenScan() ImportResult {
 		return ImportResult{Source: "screen", Message: "应用尚未就绪"}
 	}
 
+	// tStart 是整条链路的起点，用来写计时日志。
+	// 用户感知的"点了圈选没反应"就是"主窗口消失"到"遮罩出现"之间的空档，
+	// 所以每一步都记毫秒数，而不是只说"做完了"。
+	tStart := time.Now()
+
 	a.mu.Lock()
 	if a.scanning {
 		a.mu.Unlock()
@@ -149,22 +154,26 @@ func (a *API) BeginScreenScan() ImportResult {
 	time.Sleep(280 * time.Millisecond)
 
 	// 圈选这条链路很长（隐藏窗口 → 调 Win32 建全屏遮罩 → 等用户拖 → 截图 → 识别），
-	// 而且**用户报过"点完就什么都没了"**。所以每一步都写日志：
-	// 出问题时能从 data\chainproxy.log 看出卡在哪一步，而不是只能猜。
+	// 而且**用户报过"点完就什么都没了"**。所以每一步都写日志 + 计时：
+	// 出问题时能从 data\chainproxy.log 看出卡在哪一步、慢在哪一步，而不是只能猜。
 	if a.app != nil {
-		a.app.Logf("屏幕圈选：主窗口已隐藏，准备创建遮罩")
+		a.app.Logf("屏幕圈选：主窗口已隐藏，准备创建遮罩（%dms）", sinceMs(tStart))
 	}
 
-	// 用 Hooked 版本是为了拿到"遮罩窗口真的建出来了"这个事实。
-	// 如果日志里没有下一行，就说明窗口创建这一步就失败了。
+	// 用 Hooked 版本是为了拿到两个事实：遮罩窗口真的建出来了、以及它花了多久。
+	// 用户感知的"点了没反应"就是"主窗口没了"到"遮罩出现"之间的这段空档，
+	// 所以这里必须把毫秒数记下来。
+	readyAt := time.Time{}
 	rect, err := qrscan.SelectRegionHooked(func(hwnd uintptr) {
+		readyAt = time.Now()
 		if a.app != nil {
-			a.app.Logf("屏幕圈选：遮罩窗口已创建 hwnd=0x%x，等待选择", hwnd)
+			a.app.Logf("屏幕圈选：遮罩已显示 hwnd=0x%x，等待选择（建窗耗时 %dms）",
+				hwnd, sinceMs(tStart))
 		}
 	})
 	if err != nil {
 		if a.app != nil {
-			a.app.Logf("屏幕圈选：结束（%v）", err)
+			a.app.Logf("屏幕圈选：结束（%v，总耗时 %dms）", err, sinceMs(tStart))
 		}
 		if err == qrscan.ErrCancelled {
 			return ImportResult{Source: "screen", Message: "已取消圈选"}
@@ -172,8 +181,9 @@ func (a *API) BeginScreenScan() ImportResult {
 		a.app.Notify("error", "屏幕圈选失败", err.Error())
 		return ImportResult{Source: "screen", Message: err.Error()}
 	}
+	_ = readyAt
 	if a.app != nil {
-		a.app.Logf("屏幕圈选：选定区域 %v", rect)
+		a.app.Logf("屏幕圈选：选定区域 %v（总耗时 %dms）", rect, sinceMs(tStart))
 	}
 
 	img, err := qrscan.CaptureRect(rect)
@@ -361,3 +371,6 @@ func truncateForLog(s string, n int) string {
 	}
 	return s[:n] + "…"
 }
+
+// sinceMs 返回从 t 到现在经过的毫秒数。圈选链路用它写计时日志。
+func sinceMs(t time.Time) int64 { return time.Since(t).Milliseconds() }
