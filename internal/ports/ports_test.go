@@ -6,57 +6,85 @@ import (
 	"testing"
 )
 
+// freeBase 找一个"从它开始连续 n 个端口都真正空闲"的起始端口。
+//
+// 【为什么必须动态找，不能写死 10810】
+// 这几个测试依赖真实的端口占用情况。早先直接断言"空占用表时 Next() 返回 10810"，
+// 结果开发机上正跑着 ChainProxy（占着 10810/10811）时测试就红了 ——
+// 那种失败与代码毫无关系，却极易被误判成回归。真踩过一次。
+func freeBase(t *testing.T, from, n int) int {
+	t.Helper()
+	for p := from; p < from+3000; p++ {
+		ok := true
+		for i := 0; i < n; i++ {
+			ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(p+i)))
+			if err != nil {
+				ok = false
+				break
+			}
+			_ = ln.Close()
+		}
+		if ok {
+			return p
+		}
+	}
+	t.Fatalf("从 %d 起找不到 %d 个连续空闲端口", from, n)
+	return 0
+}
+
 // TestNextFollowsMaxPlusOne 锁死"默认端口 = 本项目内所有 10800+ 端口最大值 + 1"。
 func TestNextFollowsMaxPlusOne(t *testing.T) {
+	base := freeBase(t, BaselineFloor+100, 2)
+
 	a := New()
 	a.Host = "127.0.0.1"
+	a.Start = base
 
-	// 没有端口时从 10810 起
-	if got := a.Next(); got != DefaultStart {
-		t.Fatalf("空占用表时应返回 %d，实际 %d", DefaultStart, got)
+	// 没有端口时从起始值开始
+	if got := a.Next(); got != base {
+		t.Fatalf("空占用表时应返回起始值 %d，实际 %d", base, got)
 	}
 
-	a.MarkProject(10810, "n1")
-	a.MarkProject(10812, "n2")
-	if got := a.Next(); got != 10813 {
-		t.Fatalf("最大值 10812 => 应返回 10813，实际 %d", got)
+	a.MarkProject(base, "n1")
+	if got := a.Next(); got != base+1 {
+		t.Fatalf("最大值 %d => 应返回 %d，实际 %d", base, base+1, got)
 	}
 
 	// 低于 10800 的端口不参与取最大值，否则一个 8080 会把结果拉低
 	a.MarkProject(8080, "low")
-	if got := a.Next(); got != 10813 {
-		t.Fatalf("8080 不应参与取最大值，应仍返回 10813，实际 %d", got)
+	if got := a.Next(); got != base+1 {
+		t.Fatalf("8080 不应参与取最大值，应仍返回 %d，实际 %d", base+1, got)
 	}
 
 	// 只有低端口时，回到起始值
 	b := New()
+	b.Host = "127.0.0.1"
+	b.Start = base
 	b.MarkProject(8080, "low")
-	if got := b.Next(); got != DefaultStart {
-		t.Fatalf("只有低端口时应返回 %d，实际 %d", DefaultStart, got)
+	if got := b.Next(); got != base {
+		t.Fatalf("只有低端口时应返回 %d，实际 %d", base, got)
 	}
 }
 
 // TestNextSkipsBusyPort 顺延跳过真正被占用的端口。
 func TestNextSkipsBusyPort(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	base := freeBase(t, BaselineFloor+100, 4)
+
+	// 用另一个监听把 base+1 占住
+	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(base+1)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	busy := ln.Addr().(*net.TCPAddr).Port
 
 	a := New()
 	a.Host = "127.0.0.1"
-	// 把起点设成 busy-1，Next 就应该跳过被占用的 busy
-	a.Start = busy - 1
-	a.MarkProject(busy-1, "n1")
+	a.Start = base
+	a.MarkProject(base, "n1")
 
-	got := a.Next()
-	if got == busy {
-		t.Fatalf("Next 不应当返回被占用的端口 %d", busy)
-	}
-	if got != busy+1 {
-		t.Logf("注意：Next 返回 %d（期望 %d），若 busy+1 也被占用则属正常", got, busy+1)
+	// max = base → 顺延候选 base+1（被占）→ 应当继续顺延到 base+2
+	if got := a.Next(); got != base+2 {
+		t.Fatalf("应跳过被占用的 %d 返回 %d，实际 %d", base+1, base+2, got)
 	}
 }
 
@@ -160,15 +188,19 @@ func TestRandomRetryCountIsFive(t *testing.T) {
 
 // TestAllocateForRegisters 确认自动分配后端口被登记，下一次不会重复。
 func TestAllocateForRegisters(t *testing.T) {
+	base := freeBase(t, BaselineFloor+100, 2)
+
 	a := New()
 	a.Host = "127.0.0.1"
+	a.Start = base
+
 	p1 := a.AllocateFor("n1")
 	p2 := a.AllocateFor("n2")
 	if p1 == p2 {
 		t.Fatalf("两次分配不应相同：%d / %d", p1, p2)
 	}
-	if p1 != DefaultStart {
-		t.Fatalf("第一次应分配 %d，实际 %d", DefaultStart, p1)
+	if p1 != base {
+		t.Fatalf("第一次应分配起始值 %d，实际 %d", base, p1)
 	}
 	if p2 != p1+1 {
 		t.Fatalf("第二次应分配 %d，实际 %d", p1+1, p2)

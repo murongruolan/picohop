@@ -1,8 +1,10 @@
 package app
 
 import (
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"chainproxy/internal/config"
@@ -166,26 +168,61 @@ func TestResolveFront(t *testing.T) {
 	}
 }
 
+// freeBase 找一个"从它开始连续 n 个端口都真正空闲"的起始端口。
+//
+// 【为什么必须动态找，不能写死 10810/10815】
+// 这几个测试依赖真实的端口占用情况。早先写死了端口，结果开发机上正跑着
+// ChainProxy（占着 10810/10811）时测试就红了 —— 与代码无关，却极易被
+// 误判成回归。真踩过一次。
+func freeBase(t *testing.T, from, n int) int {
+	t.Helper()
+	for p := from; p < from+3000; p++ {
+		ok := true
+		for i := 0; i < n; i++ {
+			ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(p+i)))
+			if err != nil {
+				ok = false
+				break
+			}
+			_ = ln.Close()
+		}
+		if ok {
+			return p
+		}
+	}
+	t.Fatalf("从 %d 起找不到 %d 个连续空闲端口", from, n)
+	return 0
+}
+
 // TestPortAllocationFollowsRules 锁死端口分配的三条界面规则。
 func TestPortAllocationFollowsRules(t *testing.T) {
-	a := newTestApp(t, []config.Node{
-		{ID: "a", Name: "A", Protocol: config.ProtocolSOCKS5, ListenPort: 10810, Server: "h", Port: 1},
-		{ID: "b", Name: "B", Protocol: config.ProtocolSOCKS5, ListenPort: 10815, Server: "h", Port: 1},
-	}, config.Front{Type: config.FrontTypeSocks5, Host: "127.0.0.1", Port: 10808})
+	// 找一段空闲端口，避免受"本机正在跑 ChainProxy"之类的干扰
+	base := freeBase(t, 12000, 8)
 
-	// 取"所有 10800+ 端口最大值 + 1"
-	if got := a.SuggestPort(""); got != 10816 {
-		t.Errorf("建议端口应为 10816，实际 %d", got)
+	cfgNodes := []config.Node{
+		{ID: "a", Name: "A", Protocol: config.ProtocolSOCKS5, ListenPort: base, Server: "h", Port: 1},
+		{ID: "b", Name: "B", Protocol: config.ProtocolSOCKS5, ListenPort: base + 5, Server: "h", Port: 1},
+	}
+	a := newTestApp(t, cfgNodes, config.Front{Type: config.FrontTypeSocks5, Host: "127.0.0.1", Port: 10808})
+	// 起始端口也要跟着挪，否则 SuggestPort 会从一个很远的地方开始扫
+	s := a.Settings()
+	s.PortStart = base
+	if err := a.SetSettings(s); err != nil {
+		t.Fatal(err)
 	}
 
-	// 排除 B 之后，B 自己占的 10815 就不再算占用，
-	// 于是最大值回落到 A 的 10810，建议值变成 10811。
+	// 取"所有 10800+ 端口最大值 + 1"
+	if got := a.SuggestPort(""); got != base+6 {
+		t.Errorf("建议端口应为 %d，实际 %d", base+6, got)
+	}
+
+	// 排除 B（它占着 base+5）之后，最大值回落到 A 的 base，建议值变成 base+1。
 	//
 	// 这个语义是对的：SuggestPort 的入参含义是"哪个节点的端口不算冲突"，
 	// 而界面只在**新增**节点（excludeID 为空）时才拿它做默认值，
 	// 编辑场景用的是节点原本的端口，不会走这里。
-	if got := a.SuggestPort("b"); got != 10811 {
-		t.Errorf("排除 B 后应为 10811（最大值回落到 A 的 10810），实际 %d", got)
+	if got := a.SuggestPort("b"); got != base+1 {
+		t.Errorf("排除 B 后应为 %d（最大值回落到 A 的 %d），实际 %d", base+1, base, got)
 	}
 
 	// 随机端口必须落在合法区间且空闲
@@ -198,13 +235,13 @@ func TestPortAllocationFollowsRules(t *testing.T) {
 	}
 
 	// 检测：已被本项目占用的端口
-	st := a.PortStatus(10810, "")
+	st := a.PortStatus(base, "")
 	if st.Free || !st.InProject {
-		t.Errorf("10810 应被识别为本项目占用：%+v", st)
+		t.Errorf("%d 应被识别为本项目占用：%+v", base, st)
 	}
 	// 检测：排除自己之后就变成可用的
-	if st := a.PortStatus(10810, "a"); !st.Free {
-		t.Errorf("排除 A 之后 10810 应当可用：%+v", st)
+	if st := a.PortStatus(base, "a"); !st.Free {
+		t.Errorf("排除 A 之后 %d 应当可用：%+v", base, st)
 	}
 	// 检测：非法端口
 	if st := a.PortStatus(80, ""); st.Free {

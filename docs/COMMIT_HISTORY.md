@@ -53,6 +53,7 @@
 | 015 | `fix(desktop): 通知重叠 / WebView2 数据目录越界 / 端口框宽度 + 补充运行时验证` | 2026-10-11 | 自己实现通知（ElNotification 同一 tick 连发会重叠）、WebView2 配置目录改到 data\webview、uishot 改用 PrintWindow 不抢焦点；补验需求 (4)(5)(7)(8)(10)(11) | [详情](#015) |
 | 016 | `feat(desktop): 列表改通栏 + 表头可拖拽调列宽（带最小宽度保护）` | 2026-10-11 | 列表左右不留白；列宽拖拽需要 border、库内下限仅 30px 会切字故自行钳到 56px、最后一列默认不可拖需 allow-drag-last-column；列宽持久化 + 重置入口 | [详情](#016) |
 | 017 | `fix(desktop): 最右一列作为填充列，右端永远不留白` | 2026-10-11 | 根因是"拖拽会把内部 column.width 写成数字→不再有弹性列"（table-layout.mjs 用 !isNumber(column.width) 判定弹性）；改为让最右列只吃 min-width 并在 dragend 清空其 width；地址/备注/前置改回固定列；验证右侧留白 0px | [详情](#017) |
+| 018 | `test: 端口相关测试不再依赖机器的端口占用状态` | 2026-10-11 | 写死 10810/10815 导致"开发机上开着 ChainProxy 时测试变红"，极易被误判成回归；改为动态找连续空闲端口作为基准，其余断言改为相对基准 | [详情](#018) |
 
 ---
 
@@ -1723,3 +1724,51 @@ PROJECT_PROGRESS.md 追加"界面微调（第 3 轮）"。
 
 ARCHITECTURE.md 的"界面层"补上第 4 条（为什么要填充列、以及清 width 的原因）；
 PROJECT_PROGRESS.md 追加"填充列：右端永远不留白（第 4 轮）"。
+
+---
+
+## 018
+
+**`test: 端口相关测试不再依赖机器的端口占用状态`**
+
+### 起因：一次差点被误判的假红灯
+
+提交 017 之前跑 `go test ./...`，`internal/ports` 与 `internal/app` 里三个
+端口相关测试红了。当时正在启动着 `dist\ChainProxy.exe` 看界面效果 ——
+**它正占着 127.0.0.1:10810 与 10811**，而那几个测试写死了这两个端口，
+断言"空占用表时 `Next()` 返回 10810"，于是：
+
+    Next() 发现 10810 被真实占用 → 顺延到 10813 → 断言失败
+
+与代码毫无关系的红灯。更糟的是我在红灯状态下把 017 提交了（这是流程错误，
+已在这一条里修正）。
+
+### 修法
+
+新增测试辅助函数 `freeBase(t, from, n)`：从 `from` 开始找"连续 n 个都真正
+空闲"的起始端口（真的 `net.Listen` 一次再关掉），拿它当基准；
+所有断言改成**相对这个基准**，不再写死具体端口号：
+
+  - `TestNextFollowsMaxPlusOne`：基准 base → 空表时返回 base；
+    标记 base 后返回 base+1；`MarkProject(8080)` 不参与取最大值（8080 < 10800）；
+    只有低端口时回到 base。
+  - `TestNextSkipsBusyPort`：用另一个监听占住 base+1，断言 `Next()` 跳到 base+2。
+  - `TestAllocateForRegisters`：起点设为 base，断言两次分配是 base 与 base+1。
+  - `TestPortAllocationFollowsRules`：把两个节点的端口放在 base 与 base+5，
+    并把 `Settings.PortStart` 一起设成 base，断言 `SuggestPort("") == base+6`、
+    `SuggestPort("b") == base+1`，占用检测也全部改用 base。
+
+### 验证
+
+    # 不启动程序
+    go test ./internal/ports/ ./internal/app/   → ok / ok
+    # 故意让界面程序占着 10810 与 10811 再跑
+    go test ./internal/ports/ ./internal/app/   → ok / ok
+    # 程序仍在运行时跑全量
+    go test ./...                                → 8 个包全 ok
+
+### 教训
+
+测试里凡是**依赖宿主机真实资源**（端口、网络、时钟）的断言，都不该写死具体值 ——
+否则"开发机上正跑着被测程序"这种再正常不过的情况会让测试变红，
+而红灯一旦不可信，它作为质量门禁的价值就没了。
