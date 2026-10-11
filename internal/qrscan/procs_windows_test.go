@@ -55,6 +55,10 @@ func TestAllWin32ProcsResolve(t *testing.T) {
 		{"CreateSolidBrush", pCreateSolidBrush},
 		{"TextOutW", pTextOutW},
 		{"AlphaBlend", pAlphaBlend},
+		{"SetLayeredWindowAttributes", pSetLayeredWindowAttributes},
+		{"SetWindowRgn", pSetWindowRgn},
+		{"CreateRectRgn", pCreateRectRgn},
+		{"CombineRgn", pCombineRgn},
 		// 截屏那边（screen_windows.go）
 		{"GetSystemMetrics", pGetSystemMetrics},
 		{"GetDC", pGetDC},

@@ -43,27 +43,31 @@ const errorClassAlreadyExists = 1410
 // ---------------------------------------------------------------------------
 
 var (
-	pRegisterClassExW      = user32.NewProc("RegisterClassExW")
-	pCreateWindowExW       = user32.NewProc("CreateWindowExW")
-	pDefWindowProcW        = user32.NewProc("DefWindowProcW")
-	pDestroyWindow         = user32.NewProc("DestroyWindow")
-	pShowWindow            = user32.NewProc("ShowWindow")
-	pUpdateWindow          = user32.NewProc("UpdateWindow")
-	pGetMessageW           = user32.NewProc("GetMessageW")
-	pTranslateMessage      = user32.NewProc("TranslateMessage")
-	pDispatchMessageW      = user32.NewProc("DispatchMessageW")
-	pPostQuitMessage       = user32.NewProc("PostQuitMessage")
-	pInvalidateRect        = user32.NewProc("InvalidateRect")
-	pBeginPaint            = user32.NewProc("BeginPaint")
-	pEndPaint              = user32.NewProc("EndPaint")
-	pGetClientRect         = user32.NewProc("GetClientRect")
-	pFillRect              = user32.NewProc("FillRect")
-	pSetCapture            = user32.NewProc("SetCapture")
-	pReleaseCapture        = user32.NewProc("ReleaseCapture")
-	pShowCursor            = user32.NewProc("ShowCursor")
-	pSetWindowLongPtrW     = user32.NewProc("SetWindowLongPtrW")
-	pGetWindowLongPtrW     = user32.NewProc("GetWindowLongPtrW")
-	pSystemParametersInfoW = user32.NewProc("SystemParametersInfoW")
+	pRegisterClassExW           = user32.NewProc("RegisterClassExW")
+	pCreateWindowExW            = user32.NewProc("CreateWindowExW")
+	pDefWindowProcW             = user32.NewProc("DefWindowProcW")
+	pDestroyWindow              = user32.NewProc("DestroyWindow")
+	pShowWindow                 = user32.NewProc("ShowWindow")
+	pUpdateWindow               = user32.NewProc("UpdateWindow")
+	pGetMessageW                = user32.NewProc("GetMessageW")
+	pTranslateMessage           = user32.NewProc("TranslateMessage")
+	pDispatchMessageW           = user32.NewProc("DispatchMessageW")
+	pPostQuitMessage            = user32.NewProc("PostQuitMessage")
+	pInvalidateRect             = user32.NewProc("InvalidateRect")
+	pBeginPaint                 = user32.NewProc("BeginPaint")
+	pEndPaint                   = user32.NewProc("EndPaint")
+	pGetClientRect              = user32.NewProc("GetClientRect")
+	pFillRect                   = user32.NewProc("FillRect")
+	pSetLayeredWindowAttributes = user32.NewProc("SetLayeredWindowAttributes")
+	pSetWindowRgn               = user32.NewProc("SetWindowRgn")
+	pCreateRectRgn              = gdi32.NewProc("CreateRectRgn")
+	pCombineRgn                 = gdi32.NewProc("CombineRgn")
+	pSetCapture                 = user32.NewProc("SetCapture")
+	pReleaseCapture             = user32.NewProc("ReleaseCapture")
+	pShowCursor                 = user32.NewProc("ShowCursor")
+	pSetWindowLongPtrW          = user32.NewProc("SetWindowLongPtrW")
+	pGetWindowLongPtrW          = user32.NewProc("GetWindowLongPtrW")
+	pSystemParametersInfoW      = user32.NewProc("SystemParametersInfoW")
 )
 
 var (
@@ -172,6 +176,10 @@ const (
 	wsPopup        = 0x80000000
 	wsExTopmost    = 0x00000008
 	wsExToolWindow = 0x00000080 // 不出现在 Alt+Tab 里
+	wsExLayered    = 0x00080000 // 分层窗口：配合 SetLayeredWindowAttributes 做半透明
+
+	lwaAlpha = 0x00000002 // SetLayeredWindowAttributes：整窗统一 alpha
+	rgnDiff  = 4          // CombineRgn：前者减去后者
 
 	swShowNa = 8 // 显示但不激活：圈选期间不该抢走前台窗口
 
@@ -359,6 +367,12 @@ type overlay struct {
 	srcBounds   image.Rectangle
 	srcStride   int
 
+	// 压暗用的纯黑画刷（背景就是黑 + 半透明窗口属性）
+	blackBrush uintptr
+
+	// regionSel 是"窗口区域最后一次按哪个选区设过"，用来避免每帧重设区域
+	regionSel image.Rectangle
+
 	dimDC     uintptr
 	dimBmp    uintptr
 	dimOldBmp uintptr
@@ -495,10 +509,27 @@ func runOverlaySession(ready chan overlayReady, result chan overlayResult, onRea
 		res    image.Rectangle
 		resErr error
 	)
+	readySent := false
+	sendReady := func(r overlayReady) {
+		readySent = true
+		ready <- r
+	}
+
 	defer func() {
 		// 恢复光标：无论正常结束、报错还是 panic，都必须执行。
 		// 漏掉这一句用户就再也看不到鼠标指针了。
 		restoreSystemCursor()
+
+		// 【就绪前 panic 也必须叫醒调用方】
+		//
+		// 真实踩过：newOverlay 因为空指针 panic，而 panic 发生在
+		// ready 信号之前，于是 SelectRegionHooked 永远卡在 <-ready 上，
+		// 表现为"点了圈选没反应、日志也停在准备创建遮罩"。
+		// 这里补一次：只要还没发过 ready，就把错误送过去。
+		if !readySent {
+			readySent = true
+			ready <- overlayReady{err: errors.New("qrscan: 圈选会话在就绪前异常结束")}
+		}
 
 		// 【把 panic 挡在这里】这是"圈选出问题不该拖死整个程序"的最后一道防线。
 		//
@@ -515,19 +546,18 @@ func runOverlaySession(ready chan overlayReady, result chan overlayResult, onRea
 		result <- overlayResult{rect: res, err: resErr}
 	}()
 
-	// 1) 先把"点按钮那一刻的屏幕"拍下来。必须在建窗口之前，否则遮罩会把自己拍进去。
+	// 1) 只需要虚拟桌面矩形。
+	//
+	// 【这里以前会先截一整屏当背景】现在不需要了：压暗是"半透明黑窗口"这个窗口属性
+	// 给的效果，选区是"窗口区域挖洞"漏出的真实桌面 —— 显示环节完全不碰像素，
+	// 于是少了约 37ms 的整屏截图、也少了 16MB 的缓冲区。
+	// 截图只在最后识别二维码时截一次（CaptureRect）。
 	tMark := time.Now()
-	full, err := capture(virtualScreenRect())
-	if err != nil {
-		ready <- overlayReady{err: err}
-		resErr = err
-		return
-	}
-	msCapture := sinceMS(tMark)
+	msCapture := int64(0)
 
 	vs, err := VirtualScreen()
 	if err != nil {
-		ready <- overlayReady{err: err}
+		sendReady(overlayReady{err: err})
 		resErr = err
 		return
 	}
@@ -538,14 +568,12 @@ func runOverlaySession(ready chan overlayReady, result chan overlayResult, onRea
 
 	// 3) 建窗口。这一步失败（无桌面会话）必须回报有意义的错误，不能 panic。
 	tMark = time.Now()
-	ov = newOverlay(vs, full)
-	ov.srcBounds = full.Bounds()
-	ov.srcStride = full.Stride
+	ov = newOverlay(vs, nil)
 	msConvert := sinceMS(tMark)
 
 	tMark = time.Now()
 	if err := ov.create(hideOverlayForTest()); err != nil {
-		ready <- overlayReady{err: err}
+		sendReady(overlayReady{err: err})
 		resErr = err
 		return
 	}
@@ -563,7 +591,7 @@ func runOverlaySession(ready chan overlayReady, result chan overlayResult, onRea
 	//
 	//    这一步必须在窗口**真的显示出来之后、任何昂贵操作之前**发出 ——
 	//    调用方拿它当"用户已经能看到遮罩"的时刻来计时。
-	ready <- overlayReady{hwnd: ov.hwnd}
+	sendReady(overlayReady{hwnd: ov.hwnd})
 
 	// 【这里刻意什么都不做】
 	//
@@ -652,8 +680,13 @@ func newOverlay(vs image.Rectangle, full *image.RGBA) *overlay {
 	ov := &overlay{
 		vs:    vs,
 		mouse: image.Pt(w/2, h/2), // 还没收到 WM_MOUSEMOVE 时，准星先待在屏幕中央
-		bgra:  make([]byte, w*h*4),
 	}
+	// full == nil：显示不再依赖截图（见 runOverlaySession），
+	// 所以 bgra/bmi 这些"背景位图"字段全部不需要了。
+	if full == nil {
+		return ov
+	}
+	ov.bgra = make([]byte, w*h*4)
 	// image.RGBA 的内存序是 R,G,B,A，而 BI_RGB 的 32bpp DIB 内存序是 B,G,R,A，
 	// 必须逐像素换一次。只换这一次（建窗口前），之后每帧直接复用这块缓冲。
 	for i := 0; i+3 < len(full.Pix) && i+3 < len(ov.bgra); i += 4 {
@@ -687,10 +720,12 @@ func (ov *overlay) create(hidden bool) error {
 	// 窗口位置尺寸 = 虚拟桌面矩形，可能是 (-1920,0)-(1920,1080) 这种负原点，
 	// CreateWindowExW 的 x/y 是有符号 int，直接原样传。
 	hwnd, _, callErr := pCreateWindowExW.Call(
-		uintptr(wsExTopmost|wsExToolWindow),
+		// WS_EX_LAYERED：让"黑底 + 半透明"自己构成压暗层，
+		// 于是**不需要把整屏截图当背景**（截图只留给最后的二维码识别用）。
+		uintptr(wsExTopmost|wsExToolWindow|wsExLayered),
 		uintptr(unsafe.Pointer(overlayClassName)),
 		uintptr(unsafe.Pointer(overlayClassName)), // 标题用不到（无 WS_CAPTION），给个非空串即可
-		uintptr(wsPopup),                          // 无边框、无标题栏
+		uintptr(wsPopup), // 无边框、无标题栏
 		uintptr(int32(ov.vs.Min.X)), uintptr(int32(ov.vs.Min.Y)),
 		uintptr(ov.vs.Dx()), uintptr(ov.vs.Dy()),
 		0, 0, 0, 0,
@@ -707,6 +742,10 @@ func (ov *overlay) create(hidden bool) error {
 	// "possible misuse of unsafe.Pointer"。
 	ov.id = registerOverlay(ov)
 	pSetWindowLongPtrW.Call(hwnd, gwlpUserData, ov.id)
+
+	// 半透明黑 = 压暗。整屏压暗是**窗口属性**给的，不经过任何像素处理，
+	// 也就不存在"截图与显示对不上"的可能。
+	pSetLayeredWindowAttributes.Call(hwnd, 0, uintptr(dimAlpha), uintptr(lwaAlpha))
 
 	ov.recreateBackBuffer()
 
@@ -876,6 +915,10 @@ func (ov *overlay) destroy() {
 	if ov.brush != 0 {
 		pDeleteObject.Call(ov.brush)
 		ov.brush = 0
+	}
+	if ov.blackBrush != 0 {
+		pDeleteObject.Call(ov.blackBrush)
+		ov.blackBrush = 0
 	}
 	if ov.font != 0 {
 		pDeleteObject.Call(ov.font)
@@ -1132,12 +1175,21 @@ func (ov *overlay) onPaint() {
 			len(ov.bgra), ov.vs.Dx()*ov.vs.Dy()*4,
 			ov.srcBounds, ov.srcStride, ov.vs.Dx()*4)
 	}
-	ov.paintScreen(w, h)
-	// 全屏压暗 → 再把选区那块从原图重贴一次。
-	// 这就是微信/QQ 截图的观感：**整屏变暗、只有选中的区域是清楚的**。
-	// 顺序不能反：先把暗色铺满、再"挖"出选区，否则选区也会被一起压暗。
-	ov.paintDim(w, h)
-	ov.paintClearSelection()
+	// 【不再贴截图】背景只铺一层纯黑：窗口本身是 LWA_ALPHA 半透明的，
+	// "黑 + 半透明"就是整屏压暗。
+	if ov.blackBrush == 0 {
+		ov.blackBrush, _, _ = pCreateSolidBrush.Call(0)
+	}
+	fillRect(ov.memDC, ov.blackBrush, image.Rect(0, 0, w, h))
+
+	// 选区那块不靠"挖像素"来透亮，而是把窗口区域挖个洞漏出**真实桌面**
+	// （对齐由窗口管理器保证）。区域只在选区变化时才重设 —— 否则
+	// SetWindowRgn(TRUE) 会在 WM_PAINT 里触发下一次重绘，形成死循环。
+	if ov.sel != ov.regionSel {
+		ov.regionSel = ov.sel
+		ov.applySelectionRegion()
+	}
+
 	ov.paintSelection()
 	ov.paintCrosshair(w, h)
 
@@ -1256,6 +1308,42 @@ func (ov *overlay) paintSelection() {
 			uintptr(unsafe.Pointer(&u16[0])), uintptr(len(u16)-1))
 	}
 	pSelectObject.Call(ov.memDC, oldFont)
+}
+
+// applySelectionRegion 在窗口区域上"挖"出选区。
+//
+// 【为什么这样做】早先是"把整屏截图贴到画布上、再自己算坐标把选区那块重新贴一遍"——
+// 坐标只要有一点点不一致，选区内外就会错位（用户实报过，而且我连测几轮都没定位准）。
+// 现在改成：压暗层是一个半透明黑窗口，把它的**窗口区域**设成"整屏减去选区"，
+// 选区那块就不再被窗口覆盖 —— 用户看到的是**真实的、未压暗的桌面**。
+// 对齐由窗口管理器保证，没有任何坐标换算，所以这一类错位从结构上消失。
+func (ov *overlay) applySelectionRegion() {
+	if ov.hwnd == 0 {
+		return
+	}
+	full, _, _ := pCreateRectRgn.Call(0, 0, uintptr(ov.vs.Dx()), uintptr(ov.vs.Dy()))
+	if full == 0 {
+		return
+	}
+	if ov.sel.Empty() {
+		// 还没有选区：整块都要压暗
+		pSetWindowRgn.Call(ov.hwnd, full, 1)
+		return // 成功后区域归系统所有，不能再 DeleteObject
+	}
+	// 洞比选区**内缩**一个边框宽度：让那 2px 边框仍然画在窗口上，
+	// 否则边框正好压在洞口边缘会被区域一起裁掉。
+	hole := ov.sel.Inset(selectionBorderPx)
+	if hole.Dx() <= 0 || hole.Dy() <= 0 {
+		hole = ov.sel
+	}
+	h, _, _ := pCreateRectRgn.Call(
+		uintptr(int64(hole.Min.X)), uintptr(int64(hole.Min.Y)),
+		uintptr(int64(hole.Max.X)), uintptr(int64(hole.Max.Y)))
+	if h != 0 {
+		pCombineRgn.Call(full, full, h, uintptr(rgnDiff))
+		pDeleteObject.Call(h)
+	}
+	pSetWindowRgn.Call(ov.hwnd, full, 1)
 }
 
 // drawBorderRect 用画刷在 dc 上画一条 thickness 像素宽、画在 r 内侧的实线边框。
