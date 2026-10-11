@@ -228,6 +228,83 @@ async function handleDevOpen(name) {
       )
       break
     }
+
+    // 验证两件事：
+    //   a) 长表单（VLESS + Reality，本对话框最长的形态）底部按钮不再被窗口裁掉
+    //   b) 对话框可拖动"飘开"，而且拖动被钳制在窗口内（不会被边界裁切）
+    //
+    // 拖拽用**合成鼠标事件**走 Element Plus 的真实拖拽实现
+    // （mousedown 挂在 .el-dialog__header 上，mousemove/mouseup 挂在 document）。
+    // 它的 use-draggable 在 overflow=false（默认）时会对位移做 clamp，
+    // 所以往窗口外硬拖 1200x900 也应当停在窗口内。
+    case 'dialogdrag': {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      ui.openNodeDialog('add', {
+        protocol: 'vless',
+        name: '',
+        server: '',
+        port: 443,
+        uuid: '',
+        flow: '',
+        transport: { network: 'ws', path: '/p', host: 'h' },
+        tls: { enabled: true, serverName: 's', alpn: [], fingerprint: 'chrome' },
+      })
+      await sleep(800)
+
+      // 注意：cp-dialog 这个 class 落在 .el-dialog 自身上（属性透传），
+      // 所以要写成复合选择器，不能写成祖先-后代
+      const dlg = document.querySelector('.el-dialog.cp-dialog')
+      const header = dlg?.querySelector('.el-dialog__header')
+      if (!dlg || !header) {
+        notify('error', '对话框拖动测试', '找不到对话框或标题栏', 0)
+        break
+      }
+      const drag = async (dx, dy) => {
+        const r = header.getBoundingClientRect()
+        const x = Math.round(r.left + r.width / 2)
+        const y = Math.round(r.top + r.height / 2)
+        const fire = (type, cx, cy, target) =>
+          target.dispatchEvent(
+            new MouseEvent(type, {
+              clientX: cx,
+              clientY: cy,
+              bubbles: true,
+              cancelable: true,
+              button: 0,
+              buttons: type === 'mouseup' ? 0 : 1,
+            }),
+          )
+        fire('mousedown', x, y, header)
+        fire('mousemove', x + dx, y + dy, document)
+        fire('mouseup', x + dx, y + dy, document)
+        await sleep(320)
+      }
+
+      // 1) 往右下硬拖一个远超窗口的量 → 应当被钳制在窗口内
+      await drag(1200, 900)
+      let r = dlg.getBoundingClientRect()
+      const inside =
+        r.left >= -1 && r.top >= -1 && r.right <= innerWidth + 1 && r.bottom <= innerHeight + 1
+      const line1 =
+        `硬拖 +1200,+900 后：left=${Math.round(r.left)} top=${Math.round(r.top)} ` +
+        `right=${Math.round(r.right)} bottom=${Math.round(r.bottom)}（视口 ${innerWidth}x${innerHeight}）\n` +
+        `→ ${inside ? '整框仍在窗口内 ✓ 不会被裁切' : '超出窗口 ✗'}`
+
+      // 2) 再拖到一个偏左上的位置，让截图看得出它确实"飘"离了居中位置
+      await drag(-300, -30)
+      r = dlg.getBoundingClientRect()
+      const line2 =
+        `再拖 -300,-30 后：left=${Math.round(r.left)} top=${Math.round(r.top)} ` +
+        `right=${Math.round(r.right)} bottom=${Math.round(r.bottom)}`
+      const footer = dlg.querySelector('.el-dialog__footer')?.getBoundingClientRect()
+      const footerVisible = !!footer && footer.bottom <= innerHeight + 1 && footer.top >= -1
+      const line3 = `底部按钮区 bottom=${footer ? Math.round(footer.bottom) : '?'}（视口高 ${innerHeight}）` +
+        ` → ${footerVisible ? '完整可见 ✓' : '被裁掉 ✗'}`
+
+      notify(inside && footerVisible ? 'success' : 'error', '对话框拖动 + 长表单测试',
+        `${line1}\n${line2}\n${line3}`, 0)
+      break
+    }
   }
 }
 

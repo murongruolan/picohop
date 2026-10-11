@@ -51,6 +51,8 @@ async function download() {
     class="cp-dialog"
     title="分享节点"
     width="420px"
+    top="4vh"
+    draggable
     :close-on-click-modal="false"
     append-to-body
   >

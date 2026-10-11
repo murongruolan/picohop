@@ -154,7 +154,8 @@ const meta = computed(() => store.meta || {})
     class="cp-dialog"
     title="设置"
     width="680px"
-    top="7vh"
+    top="4vh"
+    draggable
     :close-on-click-modal="false"
     append-to-body
   >
@@ -353,7 +354,7 @@ const meta = computed(() => store.meta || {})
     <template #footer>
       <el-button :icon="RefreshRight" @click="resetAll">恢复默认设置</el-button>
       <div class="cp-spacer" />
-      <el-button @click="ui.settingsDialog = false">取消</el-button>
+      <el-button type="warning" @click="ui.settingsDialog = false">取消</el-button>
       <el-button type="primary" :loading="saving" @click="save">保存</el-button>
     </template>
   </el-dialog>

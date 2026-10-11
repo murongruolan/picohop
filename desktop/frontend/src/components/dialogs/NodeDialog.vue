@@ -7,7 +7,7 @@
  * 而端口是天天要看的 —— 用户改端口时不该先滚过一整屏协议配置。
  */
 import { computed, reactive, ref, watch } from 'vue'
-import { CopyDocument, Key, MagicStick, Monitor, Refresh, Upload } from '@element-plus/icons-vue'
+import { CopyDocument, Key, MagicStick, Refresh } from '@element-plus/icons-vue'
 import { useStore } from '../../store'
 import { useUi } from '../../ui'
 import { useActions } from '../../actions'
@@ -309,15 +309,6 @@ async function save() {
   }
 }
 
-/** 从剪贴板 / 屏幕导入：关掉本对话框，交给统一的导入流程。 */
-async function importClipboard() {
-  ui.closeNodeDialog()
-  await actions.importFromClipboard()
-}
-async function importScreen() {
-  ui.closeNodeDialog()
-  await actions.scanScreen()
-}
 
 const alpnPresets = ['http/1.1', 'h2', 'h3']
 const obfsOptions = [
@@ -337,19 +328,11 @@ const flowOptions = [
     class="cp-dialog"
     :title="isEdit ? '编辑节点' : '添加节点'"
     width="760px"
-    top="6vh"
+    top="4vh"
+    draggable
     :close-on-click-modal="false"
     append-to-body
   >
-    <!-- 添加时把两个导入入口放在最显眼的位置 -->
-    <div v-if="!isEdit" class="cp-import-bar">
-      <el-button :icon="Upload" @click="importClipboard">从剪贴板导入分享链接</el-button>
-      <el-button :icon="Monitor" @click="importScreen">从屏幕扫描二维码</el-button>
-      <span class="cp-hint" style="margin-left: 4px">
-        导入后会先让你确认本地端口
-      </span>
-    </div>
-
     <el-form class="cp-form" label-width="104px" label-position="right" @submit.prevent>
       <div class="cp-section">基本信息</div>
 
@@ -753,7 +736,7 @@ const flowOptions = [
     </el-form>
 
     <template #footer>
-      <el-button @click="ui.closeNodeDialog()">取消</el-button>
+      <el-button type="warning" @click="ui.closeNodeDialog()">取消</el-button>
       <el-button type="primary" :loading="saving" @click="save">
         {{ isEdit ? '保存' : '添加' }}
       </el-button>
@@ -761,15 +744,4 @@ const flowOptions = [
   </el-dialog>
 </template>
 
-<style scoped>
-.cp-import-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  margin-bottom: 16px;
-  border: 1px dashed var(--cp-border-strong);
-  border-radius: var(--cp-radius);
-  background: var(--cp-panel-2);
-}
-</style>
+

@@ -419,9 +419,33 @@ html.dark .cp-tag {
 /* --------------------------------------------------------------------------
  * 对话框：表单紧凑一点，标签右对齐
  * ------------------------------------------------------------------------ */
+/* --------------------------------------------------------------------------
+ * 对话框
+ *
+ * 几个刻意的决定：
+ *  - 给 .el-dialog 一个高度上限，让 body 内部滚动。否则长表单（例如 VLESS
+ *    带 Reality）会超出窗口高度，底部那排按钮直接被窗口边缘裁掉。
+ *  - 底部按钮居中、并且做大一点。Element Plus 全局 size 是 small（24px），
+ *    对这种"填完要点确认"的对话框来说太小了。
+ *  - 右上角关闭按钮的命中区域也一起做大，免得不好点。
+ * ------------------------------------------------------------------------ */
+/* 注意：el-dialog 上的 class="cp-dialog" 是**落在 .el-dialog 自身**上的
+ * （属性透传到 el-dialog 的根元素），不是包在外面的容器。
+ * 所以要给对话框本体加样式必须写 `.el-dialog.cp-dialog`，
+ * 写成 `.cp-dialog .el-dialog`（祖先-后代）是匹配不到的 —— 踩过一次，
+ * 表现是"高度上限根本没生效、长表单底部按钮仍被窗口裁掉"。 */
+.el-dialog.cp-dialog {
+  display: flex;
+  flex-direction: column;
+  /* 4vh 的上边距 + 这个高度上限 + 24px 下边距 ≤ 100vh，保证整框落在窗口内 */
+  max-height: calc(96vh - 32px);
+  margin-bottom: 24px;
+}
 .cp-dialog .el-dialog__header {
+  flex: 0 0 auto;
+  /* 右侧留出关闭按钮的位置，标题不会压到它 */
+  padding: 16px 56px 12px 20px;
   margin-right: 0;
-  padding: 16px 20px 10px;
   border-bottom: 1px solid var(--cp-border);
 }
 .cp-dialog .el-dialog__title {
@@ -430,15 +454,48 @@ html.dark .cp-tag {
   color: var(--cp-text);
 }
 .cp-dialog .el-dialog__body {
+  /* flex:1 + min-height:0 才能让内部滚动生效（默认的 min-height:auto 会撑破容器） */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   padding: 16px 20px;
 }
 .cp-dialog .el-dialog__footer {
-  padding: 10px 20px 16px;
+  flex: 0 0 auto;
+  padding: 12px 20px 16px;
   border-top: 1px solid var(--cp-border);
-  /* 用 flex 才能让 .cp-spacer 真的把按钮推向两侧；默认的 text-align:right 不行 */
+  /* 居中；配合 flex:1 的 .cp-spacer，设置面板那排按钮仍会靠右，不受影响 */
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
+}
+/* 关闭按钮：整体做大一圈，图标也放大 */
+.cp-dialog .el-dialog__headerbtn {
+  width: 40px;
+  height: 40px;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--cp-radius-sm);
+}
+.cp-dialog .el-dialog__headerbtn:hover {
+  background: var(--cp-panel-2);
+}
+.cp-dialog .el-dialog__headerbtn .el-dialog__close {
+  font-size: 20px;
+}
+/* 底部按钮做大一点；间距沿用 footer 的 gap: 8px */
+.cp-dialog .el-dialog__footer .el-button {
+  min-width: 112px;
+  height: 36px;
+  padding: 0 20px;
+  font-size: 13.5px;
+}
+.cp-dialog .el-dialog__footer .el-button + .el-button {
+  margin-left: 0;
 }
 .cp-form .el-form-item {
   margin-bottom: 14px;

@@ -137,6 +137,8 @@ async function confirm() {
     class="cp-dialog"
     :title="`设置本地代理端口（来自${sourceLabel}）`"
     width="520px"
+    top="4vh"
+    draggable
     :close-on-click-modal="false"
     append-to-body
   >
@@ -171,7 +173,7 @@ async function confirm() {
     </div>
 
     <template #footer>
-      <el-button @click="ui.closePortDialog()">取消</el-button>
+      <el-button type="warning" @click="ui.closePortDialog()">取消</el-button>
       <el-button type="primary" :loading="saving" @click="confirm">
         添加{{ rows.length > 1 ? `这 ${rows.length} 个节点` : '节点' }}
       </el-button>

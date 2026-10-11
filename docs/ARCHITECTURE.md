@@ -245,7 +245,24 @@ PlanActivation(["C"])  ──►  Order = [A, B, C], Auto = [A, B]
      它才会在拖拽之后重新回到弹性状态（`min-width` 的 watcher 会触发重排）。
      代价：在空间还有富余时，把填充列拖窄看不出变化 —— 这是刻意的，
      拖它实际改的是它的最小宽度（窗口变窄时才有区别）。
-- **`-open <面板名>` 开发参数**：让界面启动后直接打开某个面板。：让界面启动后直接打开某个面板。
+- **对话框可以拖动"飘开"，但只能在主窗口内部**。用 `<el-dialog draggable>` 实现 ——
+  它的 `use-draggable`（`hooks/use-draggable/index.mjs` 第 25-28 行）在
+  `overflow` 为假时会 `clamp(moveX, minLeft, maxLeft)`，把对话框限制在视口内；
+  而 `overflow` 的默认值就是假，所以**默认就是"能拖但不会被边界裁切"**。
+  注意它的文档注释写的是 "draggable Dialog can overflow the viewport"，
+  那是显式打开 `overflow` 时的行为，默认并非如此。
+  **真正的"独立窗口"做不到**：Wails v2 没有多窗口 API
+  （`options.App` 描述的是唯一那个窗口），要在窗口外再开一个窗口得换 Wails v3
+  或自己托管 WebView2 —— 代价过大，所以这里只提供"窗口内自由拖动 + 不裁切"。
+- **对话框本体的样式必须写 `.el-dialog.cp-dialog`**，不能写 `.cp-dialog .el-dialog`。
+  `el-dialog` 上的 `class` 会**透传到 `.el-dialog` 自身**（不是外面那层 overlay），
+  所以祖先-后代选择器匹配不到。踩过一次：给对话框加高度上限的规则没生效，
+  表现是"VLESS 那种长表单底部按钮仍被窗口裁掉"。
+- **长表单靠高度上限 + 内部滚动解决**：`.el-dialog.cp-dialog` 设
+  `max-height: calc(96vh - 32px)` 并成为 flex 列，`.el-dialog__body` 设
+  `flex:1; min-height:0; overflow-y:auto`（少了 `min-height:0` 会被内容撑破），
+  这样标题栏和底部按钮永远可见。另配 `top="4vh"` + `margin-bottom:24px`
+  保证 `4vh + 上限 + 24px ≤ 100vh`。：让界面启动后直接打开某个面板。：让界面启动后直接打开某个面板。
   这是给"界面自测"用的：桌面程序的排版必须真的看一眼，
   而模拟鼠标点击会去动用户的鼠标（甚至点到别的程序上），不可接受。
 

@@ -54,6 +54,7 @@
 | 016 | `feat(desktop): 列表改通栏 + 表头可拖拽调列宽（带最小宽度保护）` | 2026-10-11 | 列表左右不留白；列宽拖拽需要 border、库内下限仅 30px 会切字故自行钳到 56px、最后一列默认不可拖需 allow-drag-last-column；列宽持久化 + 重置入口 | [详情](#016) |
 | 017 | `fix(desktop): 最右一列作为填充列，右端永远不留白` | 2026-10-11 | 根因是"拖拽会把内部 column.width 写成数字→不再有弹性列"（table-layout.mjs 用 !isNumber(column.width) 判定弹性）；改为让最右列只吃 min-width 并在 dragend 清空其 width；地址/备注/前置改回固定列；验证右侧留白 0px | [详情](#017) |
 | 018 | `test: 端口相关测试不再依赖机器的端口占用状态` | 2026-10-11 | 写死 10810/10815 导致"开发机上开着 ChainProxy 时测试变红"，极易被误判成回归；改为动态找连续空闲端口作为基准，其余断言改为相对基准 | [详情](#018) |
+| 019 | `feat(desktop): 对话框可拖动不裁切 + 长表单内部滚动 + 按钮做大居中 + 取消改警告色` | 2026-10-11 | 去掉弹窗顶部的导入区块；el-dialog draggable 默认即"可拖但被钳制在视口内"；长表单靠 max-height + body 滚动；修 `.cp-dialog .el-dialog` 选择器不匹配的坑；关闭图标 20px、按钮 36px 居中、取消橙色 | [详情](#019) |
 
 ---
 
@@ -1772,3 +1773,82 @@ PROJECT_PROGRESS.md 追加"填充列：右端永远不留白（第 4 轮）"。
 测试里凡是**依赖宿主机真实资源**（端口、网络、时钟）的断言，都不该写死具体值 ——
 否则"开发机上正跑着被测程序"这种再正常不过的情况会让测试变红，
 而红灯一旦不可信，它作为质量门禁的价值就没了。
+
+---
+
+## 019
+
+**`feat(desktop): 对话框可拖动不裁切 + 长表单内部滚动 + 按钮做大居中 + 取消改警告色`**
+
+四条使用反馈。
+
+### 1. 添加节点弹窗去掉顶部那两个导入入口
+
+「从剪贴板导入分享链接 / 从屏幕扫描二维码」在对话框顶部与顶栏「导入」菜单重复。
+删掉区块、两个处理函数、图标导入与那段 `cp-import-bar` 样式；
+入口统一留在顶栏「导入」菜单（它还有第三个"手动粘贴链接…"）。
+
+### 2. 可拖动"飘开"，且不被边界裁切
+
+`<el-dialog draggable>` 即可，因为它的**默认行为就是"可拖但不越界"**：
+
+    hooks/use-draggable/index.mjs
+    if (!overflow?.value) {
+      moveX = clamp(moveX, minLeft, maxLeft)
+      moveY = clamp(moveY, minTop, maxTop)
+    }
+
+`overflow` 默认值为假（use-dialog.mjs: `props.overflow ?? globalConfig ?? false`）。
+它的文档注释写 "draggable Dialog can overflow the viewport" 指的是显式打开
+`overflow` 的情形 —— 差点被这句话误导成"要自己写钳制"。
+
+**真正的独立窗口做不到**：Wails v2 没有多窗口 API（`options.App` 只描述唯一
+那个窗口，`pkg/runtime` 里全是这一个窗口的 setter）。要做到得换 Wails v3 或用
+COM 自己托管第二个 WebView2，代价过大。交付的是"窗口内自由拖动 + 不裁切"。
+
+### 3. 长表单底部按钮不再被窗口裁掉
+
+"被边界裁切"的真实主因：VLESS + Reality 的表单比窗口还高，底部按钮被窗口
+下边缘切掉。给对话框加高度上限、让 body 内部滚动：
+
+    .el-dialog.cp-dialog { display:flex; flex-direction:column;
+                           max-height: calc(96vh - 32px); margin-bottom: 24px; }
+    .cp-dialog .el-dialog__body { flex:1 1 auto; min-height:0; overflow-y:auto; }
+
+`min-height: 0` 不能少 —— 默认的 `min-height: auto` 会让 flex 子项被内容撑破，
+内部滚动失效。
+
+**踩了一个 CSS 选择器的坑**：`el-dialog` 的 `class="cp-dialog"` 是**透传到
+`.el-dialog` 自身**的（不是外层 overlay），所以给对话框本体加样式必须写
+`.el-dialog.cp-dialog`。我一开始写成 `.cp-dialog .el-dialog`（要求祖先-后代），
+根本匹配不到 → 高度上限没生效、底部按钮照样被裁。
+是 `-open dialogdrag` 那条自测通知先报"找不到对话框"才暴露出来。
+
+### 4. 关闭图标与底部按钮做大 + 居中 + 取消改警告色
+
+  - 右上角关闭按钮：命中区域 40x40、图标字号 14px → 20px
+  - 底部按钮：高度 24px（全局 size=small）→ 36px，最小宽度 112px
+  - 底部按钮居中（`justify-content:center`），两个按钮间距仍为 8px
+  - 「取消」统一为 `type="warning"` 警告色
+  - 设置面板那排是"恢复默认设置 + flex:1 占位 + 取消 + 保存"，
+    居中规则配合占位元素后仍靠右，不受影响
+
+### 验证
+
+`-open dialogdrag` 打开最长的表单（VLESS + Reality），用**合成鼠标事件**走一遍
+真实拖拽（`mousedown` 在 `.el-dialog__header`，`mousemove/mouseup` 在 `document`），
+把量到的坐标打进常驻通知：
+
+    硬拖 +1200,+900 后：left=404 top=60 right=1164 bottom=701（视口 1164x701）
+    → 整框仍在窗口内 ✓ 不会被裁切
+    再拖 -300,-30 后：left=104 top=30（已飘离居中位置）
+    底部按钮区 bottom=655（视口高 701）→ 完整可见 ✓
+
+硬拖到边界时正好停在 `right=1164 / bottom=701`（等于视口尺寸），
+说明钳制是精确的。
+
+### 文档
+
+ARCHITECTURE.md 的"界面层"补三条（drag 的钳制依据、`cp-dialog` 选择器的坑、
+长表单的高度上限与 `min-height:0`，以及 Wails v2 单窗口的限制）；
+PROJECT_PROGRESS.md 追加"对话框体验调整（第 5 轮）"。

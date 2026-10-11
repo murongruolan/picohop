@@ -52,6 +52,8 @@ async function fromScreen() {
     class="cp-dialog"
     title="导入节点"
     width="560px"
+    top="4vh"
+    draggable
     :close-on-click-modal="false"
     append-to-body
   >

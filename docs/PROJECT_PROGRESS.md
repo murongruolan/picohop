@@ -554,3 +554,76 @@ Element Plus 判断一列是否"弹性"，依据是 `!isNumber(column.width)`
 
 注意第 2 条：拖了 60px 之后**视觉宽度不变**（仍然 290px），
 而 store 里记的下限从 116 变成了 230 —— 正是"先改下限、宽度仍由剩余空间决定"的设计。
+
+---
+
+## 对话框体验调整（第 5 轮，2026-10-11）
+
+四条使用反馈，都改了。
+
+### 1. 添加节点弹窗去掉顶部那两个导入入口
+
+「从剪贴板导入分享链接 / 从屏幕扫描二维码」原本在对话框顶部又放了一份，
+和顶栏「导入」菜单重复。删掉区块、对应的两个函数、图标导入与那段样式。
+入口统一留在顶栏「导入」菜单里（它还有第三个"手动粘贴链接…"）。
+
+### 2. 弹窗能拖动"飘开"，且不会被边界裁切
+
+用 `<el-dialog draggable>`。关键发现是**它的默认行为就是"能拖但不越界"**：
+
+    hooks/use-draggable/index.mjs 第 25-28 行
+    if (!overflow?.value) {
+      moveX = clamp(moveX, minLeft, maxLeft)
+      moveY = clamp(moveY, minTop, maxTop)
+    }
+
+`overflow` 的默认值是假（`props.overflow ?? globalConfig ?? false`），
+所以拖动会被钳制在视口内。它的文档注释写的是 "draggable Dialog can overflow
+the viewport"，那指的是显式把 `overflow` 设成真的时候 —— 差点被这句话误导。
+
+**"脱离主窗口成为独立窗口"做不到**：Wails v2 没有多窗口 API
+（`options.App` 描述的是唯一那个窗口，`pkg/runtime` 只有对这一个窗口的
+setter，没有创建新窗口的接口）。要做到真正的独立窗口得换 Wails v3，
+或者自己用 COM 托管第二个 WebView2 —— 代价都太大了。
+所以这里交付的是"窗口内自由拖动 + 永远不被裁切"。
+
+### 3. 长表单底部按钮不再被窗口裁掉
+
+这是"被边界裁切"的真实主因：VLESS 带 Reality 的表单比窗口还高，
+底部那排按钮直接被窗口下边缘切掉。修法是给对话框加高度上限、让 body 内部滚动：
+
+    .el-dialog.cp-dialog { display:flex; flex-direction:column;
+                           max-height: calc(96vh - 32px); margin-bottom: 24px; }
+    .cp-dialog .el-dialog__body { flex:1 1 auto; min-height:0; overflow-y:auto; }
+
+`min-height: 0` 不能少 —— 默认的 `min-height: auto` 会让 flex 子项被内容撑破，
+内部滚动就失效了。
+
+**这里踩了一个 CSS 选择器的坑**：`el-dialog` 上的 `class="cp-dialog"` 是
+**透传到 `.el-dialog` 自身**的（不是外面那层 overlay），所以"给对话框本体加样式"
+必须写 `.el-dialog.cp-dialog`；我一开始写成 `.cp-dialog .el-dialog`
+（祖先-后代）根本匹配不到，表现为"高度上限没生效、底部按钮照样被裁"。
+是 `-open dialogdrag` 那条自测通知先报出"找不到对话框"才暴露的。
+
+### 4. 关闭图标与底部按钮做大 + 居中 + 取消改警告色
+
+  - 右上角关闭按钮：命中区域 40x40，图标字号 14px → 20px
+  - 底部按钮：高度 24px（全局 size 是 small）→ 36px，最小宽度 112px
+  - 底部按钮**居中**（`justify-content: center`）；两个按钮间距仍是 8px
+  - 「取消」统一换成 `type="warning"` 警告色（橙）
+  - 设置面板那排是"恢复默认设置 + 占位 + 取消 + 保存"，
+    `justify-content: center` 配合 `flex:1` 的占位元素后仍然靠右，不受影响
+
+### 验证
+
+`-open dialogdrag` 会打开最长的表单（VLESS + Reality），然后用**合成鼠标事件**
+走一遍真实拖拽（`mousedown` 在 `.el-dialog__header` 上，`mousemove/mouseup`
+在 `document` 上），把量到的坐标打进常驻通知：
+
+    硬拖 +1200,+900 后：left=404 top=60 right=1164 bottom=701（视口 1164x701）
+    → 整框仍在窗口内 ✓ 不会被裁切
+    再拖 -300,-30 后：left=104 top=30 right=864 bottom=671（已飘离居中位置）
+    底部按钮区 bottom=655（视口高 701）→ 完整可见 ✓
+
+硬拖到边界时正好停在 `right=1164 / bottom=701`（等于视口尺寸），
+说明钳制是精确的，不是"大概不出界"。
