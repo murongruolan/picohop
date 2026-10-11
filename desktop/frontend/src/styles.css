@@ -606,7 +606,10 @@ body.cp-float-window .el-overlay-dialog {
 }
 
 .cp-bottom-chevron {
-  /* 比原来宽：原来是 22×22 的纯图标，点起来费劲（用户要求"弄大点/宽一点"） */
+  /* 比原来宽：原来是 22×22 的纯图标，点起来费劲（用户要求"弄大点/宽一点"）。
+     注意里面的文字**不能**自己设 line-height：旁边的页签按钮用的是浏览器默认行盒
+     （约 1.15倍字号），而 line-height:1 会把文字的轴心上移一两个像素，看起来就是
+     "收起/展开没和同行其他元素对齐"（用户实报）。靠 align-items: center 就够了。 */
   height: 24px;
   padding: 0 10px 0 8px;
   display: inline-flex;
@@ -619,9 +622,6 @@ body.cp-float-window .el-overlay-dialog {
   cursor: default;
   font-size: 12.5px;
   white-space: nowrap;
-}
-.cp-bottom-chevron span {
-  line-height: 1;
 }
 .cp-bottom-chevron:hover {
   background: var(--cp-brand-soft);
