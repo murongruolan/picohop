@@ -470,7 +470,19 @@ async function handleDevOpen(name) {
       await wait(250)
       lines.push(`① 只按 K → 仍是「${box().textContent.trim()}」`)
 
+      // ②' 空格：必须记成 Space，不能是一个裸空格
+      box().dispatchEvent(
+        new KeyboardEvent('keydown', { key: ' ', ctrlKey: true, altKey: true, bubbles: true, cancelable: true }),
+      )
+      await wait(300)
+      const spaceShown = box().textContent.trim()
+      lines.push(`②' Ctrl+Alt+空格 → 「${spaceShown}」（应为 Ctrl+Alt+Space）`)
+
       // ② 按 Ctrl+Shift+K —— 应当被记下来
+      //    注意：上一步（空格）结束时录制已经结束，这里必须重新点一下录制框，
+      //    否则这次按键根本没人接 —— 我第一版就是漏了这一步，自测误报成失败。
+      box().click()
+      await wait(150)
       box().dispatchEvent(
         new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }),
       )
@@ -485,7 +497,7 @@ async function handleDevOpen(name) {
       const cleared = box().textContent.trim()
       lines.push(`③ 点清除 → 「${cleared}」`)
 
-      const ok = after === 'Ctrl+Shift+K' && cleared.includes('未启用')
+      const ok = after === 'Ctrl+Shift+K' && cleared.includes('未启用') && spaceShown === 'Ctrl+Alt+Space'
       notify(ok ? 'success' : 'error', '快捷键录制测试', lines.join('\n'), 0)
       break
     }

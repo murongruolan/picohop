@@ -43,6 +43,42 @@ const shortcutRows = [
 ]
 const MODIFIER_KEYS = ['Control', 'Alt', 'Shift', 'Meta']
 
+/**
+ * 浏览器 e.key → 加速键名。
+ *
+ * 【为什么必须有这张表】Wails 的加速键解析器**按 "+" 切分**，并且只认它自己那张
+ * 键名表（global_shortcut_windows.go 的 winKeyCodes）。而空格键在浏览器里
+ * e.key === ' ' —— 直接拼出来就是 "Ctrl+Alt+ "，解析器拿到一个空格当键名，
+ * 报 "' ' is not a valid key"，于是"设置看着保存了、按下去毫无反应"（用户实报）。
+ * 它认的名字是 "Space"；方向键同理要写成 Up/Down/Left/Right 而不是 ArrowUp 之类。
+ */
+const KEY_ALIASES = {
+  ' ': 'Space',
+  Spacebar: 'Space',
+  ArrowUp: 'Up',
+  ArrowDown: 'Down',
+  ArrowLeft: 'Left',
+  ArrowRight: 'Right',
+  PageUp: 'Page Up',
+  PageDown: 'Page Down',
+  Enter: 'Enter',
+  Tab: 'Tab',
+  Backspace: 'Backspace',
+  Delete: 'Delete',
+  Home: 'Home',
+  End: 'End',
+  // 加号不能当键名：加速键本身是用 "+" 拼的，写进去会被切碎。
+  '+': '',
+}
+
+/** 把一次按键换算成加速键名；返回空串表示这个键不能用作快捷键。 */
+function keyNameOf(e) {
+  if (Object.prototype.hasOwnProperty.call(KEY_ALIASES, e.key)) return KEY_ALIASES[e.key]
+  if (/^F\d{1,2}$/.test(e.key)) return e.key // F1–F24
+  if (e.key.length === 1 && /[A-Za-z0-9]/.test(e.key)) return e.key.toUpperCase()
+  return ''
+}
+
 function startRecord(key, ev) {
   recording.value = key
   // 让这个 div 拿到焦点，否则收不到 keydown
@@ -76,7 +112,16 @@ function onRecordKey(e) {
     return
   }
   // 键名统一成后端认识的写法：单字符大写，其余原样（F9 / Space / ArrowUp …）
-  const key = e.key.length === 1 ? e.key.toUpperCase() : e.key
+  const key = keyNameOf(e)
+  if (!key) {
+    // 明确拒绝，而不是注册一个"看着有、按了没用"的组合
+    notify(
+      'warning',
+      '这个键不能用作快捷键',
+      `「${e.key}」不在支持的键名里。请用字母、数字、F1–F24，或空格 / 方向键 / Home / End 这类功能键。`,
+    )
+    return
+  }
   form[recording.value] = [...mods, key].join('+')
   recording.value = ''
 }

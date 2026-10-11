@@ -188,12 +188,36 @@ func (a *API) shortcutDefs() []ShortcutStatus {
 		if strings.EqualFold(strings.TrimSpace(v), disabledShortcut) {
 			return ""
 		}
-		return strings.TrimSpace(v)
+		return normalizeAccel(v)
 	}
 	return []ShortcutStatus{
 		{Key: "toggleWindow", Label: "显示 / 隐藏主窗口", Accel: norm(s.ShortcutToggleWindow)},
 		{Key: "toggleAll", Label: "激活全部节点 / 停止全部", Accel: norm(s.ShortcutToggleAll)},
 	}
+}
+
+// normalizeAccel 修正常见的"键名写法问题"，让老配置也能自愈。
+//
+// 真实踩过：空格键在浏览器里 e.key === ' '，于是存成了 "Ctrl+Alt+ "。
+// 而 Wails 的加速键解析器是**按 "+" 切分**的，切出来的最后一段是个空格 ——
+// 它报 "' ' is not a valid key"，表现就是"设置看着保存了、按下去毫无反应"。
+// 它认的名字是 "Space"（见 global_shortcut_windows.go 的 winKeyCodes）。
+//
+// 这里只做"裸空格 → Space"这一处归一化：其它错误键名交给注册去报错，
+// 免得自作聪明把用户写的组合改成别的东西。
+func normalizeAccel(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	parts := strings.Split(v, "+")
+	last := parts[len(parts)-1]
+	if strings.TrimSpace(last) == "" {
+		parts[len(parts)-1] = "Space"
+	} else {
+		parts[len(parts)-1] = strings.TrimSpace(last)
+	}
+	return strings.Join(parts, "+")
 }
 
 // ApplyShortcuts 按当前设置**重新**注册全局快捷键，返回每一条的结果。

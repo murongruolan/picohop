@@ -245,7 +245,12 @@ func (a *API) GetSettings() config.Settings {
 	if a.app == nil {
 		return config.Default().Settings
 	}
-	return a.app.Settings()
+	s := a.app.Settings()
+	// 归一化后再交给界面：老配置里可能存着 "Ctrl+Alt+ "（空格键的旧写法），
+	// 注册时虽然已经能自愈，但界面上不该继续显示一个看不见的裸空格。
+	s.ShortcutToggleWindow = normalizeAccel(s.ShortcutToggleWindow)
+	s.ShortcutToggleAll = normalizeAccel(s.ShortcutToggleAll)
+	return s
 }
 
 // SaveSettings 保存全局设置。
@@ -259,6 +264,9 @@ func (a *API) SaveSettings(s config.Settings) error {
 	if s.TestConcurrency < 1 || s.TestConcurrency > 64 {
 		return fmt.Errorf("测试并发数应在 1-64 之间")
 	}
+	// 存之前归一化，让"空格键"这类写法在配置里就落成规范名字（Space）
+	s.ShortcutToggleWindow = normalizeAccel(s.ShortcutToggleWindow)
+	s.ShortcutToggleAll = normalizeAccel(s.ShortcutToggleAll)
 	if err := a.app.SetSettings(s); err != nil {
 		return err
 	}
