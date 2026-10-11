@@ -15,6 +15,7 @@ import { useUi } from '../ui'
 import { api } from '../api'
 import { formatBytes } from '../columns'
 import TrafficView from './bottom/TrafficView.vue'
+import SiteTestView from './bottom/SiteTestView.vue'
 
 const store = useStore()
 const ui = useUi()
@@ -299,6 +300,9 @@ watch(
 
       <!-- 流量统计 -->
       <TrafficView v-else-if="view === 'traffic'" />
+
+      <!-- 网站测试 -->
+      <SiteTestView v-else-if="view === 'sites'" />
 
       <!-- 其余视图：骨架先占位，按施工顺序逐个补 -->
       <div v-else class="cp-bottom-placeholder">{{ TABS.find((t) => t.key === view)?.label }}</div>

@@ -590,6 +590,25 @@ async function handleDevOpen(name) {
       await new Promise((r) => setTimeout(r, 1500))
       break
 
+    // 底部栏：展开到「网站测试」（截图核对用）
+    case 'sitespanel': {
+      ui.bottomPanelView = 'logs'
+      await new Promise((r) => setTimeout(r, 400))
+      ui.bottomPanelView = 'sites'
+      await new Promise((r) => setTimeout(r, 2500))
+      // 真的点一下「全部测试」：只有跑过才知道 SOCKS5 客户端与整条链路通不通
+      // 先把「矩阵」打开（让测试跑遍所有节点）再全部测试
+      const sw = document.querySelector('.cp-sites-bar .el-switch')
+      if (sw && !sw.classList.contains('is-checked')) sw.click()
+      await new Promise((r) => setTimeout(r, 500))
+      const btn = [...document.querySelectorAll('.cp-sites-bar button')].find((b) =>
+        b.textContent.includes('全部测试'),
+      )
+      if (btn) btn.click()
+      await new Promise((r) => setTimeout(r, 16000))
+      break
+    }
+
     // 连开两次浮动对话框：第一次是新建（要建 WebView2 + 加载前端），
     // 第二次应该走**复用**（窗口已在、不重新加载）。
     // 这是用户报的“打开还是卡”那条，两边的耗时在 Go 日志里（"~前端就绪 Xms"~

@@ -64,6 +64,11 @@ type Settings struct {
 	// LogLines 是界面日志面板保留的最大行数。
 	LogLines int `json:"logLines"`
 
+	// IPInfoURL 是"我的 IP 信息"查询用的接口地址；空表示用内置默认值
+	// （https://ipinfo.io/json —— 实测直连可用且字段齐全）。
+	// 做成可配置是因为这类免费接口随时可能限流或失效，换一个不该要改代码。
+	IPInfoURL string `json:"ipInfoUrl"`
+
 	// ---- 底部栏目 ----
 	//
 	// 这三项是界面的布局偏好，跟着配置一起走：

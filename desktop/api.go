@@ -220,6 +220,25 @@ func (a *API) GetNodes() []app.NodeView {
 	return a.app.Nodes()
 }
 
+// GetIPInfo 查一次本机直连 IP 信息（底部栏「网站测试」右侧那块）。
+func (a *API) GetIPInfo() app.IPInfo {
+	if a.app == nil {
+		return app.IPInfo{Err: "应用尚未就绪"}
+	}
+	return a.app.FetchIPInfo(context.Background())
+}
+
+// TestSites 通过各节点的本地端口测站点可达性与延迟。
+//
+// 返回的是"站点 × 节点"的结果：界面既可以用它画普通列表，
+// 也可以用它画"哪个站点经哪个节点通"的矩阵。
+func (a *API) TestSites(sites []string, nodeIDs []string) []app.SiteTestResult {
+	if a.app == nil {
+		return nil
+	}
+	return a.app.TestSites(context.Background(), sites, nodeIDs, 6*time.Second)
+}
+
 // GetNetworkLogs 返回序号大于 afterSeq 的网络日志（游标式增量拉取），
 // 第二个返回值是当前最大序号。
 func (a *API) GetNetworkLogs(afterSeq int64) ([]app.NetLogEntry, int64) {
