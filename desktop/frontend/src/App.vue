@@ -16,6 +16,7 @@ import api, { hasBridge, notify } from './api'
 import TopBar from './components/TopBar.vue'
 import FilterBar from './components/FilterBar.vue'
 import NodeTable from './components/NodeTable.vue'
+import BottomPanel from './components/BottomPanel.vue'
 import ContextMenu from './components/ContextMenu.vue'
 import LogDrawer from './components/LogDrawer.vue'
 import Notifications from './components/Notifications.vue'
@@ -560,6 +561,17 @@ async function handleDevOpen(name) {
       break
     }
 
+    // 底部栏目自测：展开到日志视图（截图核对用）
+    case 'bottompanel': {
+      // 先切到别的视图再切日志：直接设 "logs" 时若本来就停在日志视图，
+      // 面板会按"点当前视图 = 收起"的逻辑收起来（我第一次自测就栽在这里）。
+      ui.bottomPanelView = 'traffic'
+      await new Promise((r) => setTimeout(r, 500))
+      ui.bottomPanelView = 'logs'
+      await new Promise((r) => setTimeout(r, 1200))
+      break
+    }
+
     // 连开两次浮动对话框：第一次是新建（要建 WebView2 + 加载前端），
     // 第二次应该走**复用**（窗口已在、不重新加载）。
     // 这是用户报的“打开还是卡”那条，两边的耗时在 Go 日志里（"~前端就绪 Xms"~
@@ -878,6 +890,7 @@ function onKeydown(e) {
     <TopBar />
     <FilterBar />
     <NodeTable />
+    <BottomPanel />
 
     <ContextMenu />
     <LogDrawer />

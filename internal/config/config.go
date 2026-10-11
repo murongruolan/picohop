@@ -64,6 +64,20 @@ type Settings struct {
 	// LogLines 是界面日志面板保留的最大行数。
 	LogLines int `json:"logLines"`
 
+	// ---- 底部栏目 ----
+	//
+	// 这三项是界面的布局偏好，跟着配置一起走：
+	//
+	//	BottomPanelView  当前视图：traffic / network / logs / sites / connections
+	//	BottomPanelHeight 展开时身体的高度（像素）
+	//	BottomPanelOpen  是否展开
+	//
+	// 空/0 由界面侧补默认值（logs / 200 / false），不在这里塞默认值 ——
+	// 免得"用户真的把高度调到 0"和"没设过"混在一起。
+	BottomPanelView   string `json:"bottomPanelView"`
+	BottomPanelHeight int    `json:"bottomPanelHeight"`
+	BottomPanelOpen   bool   `json:"bottomPanelOpen"`
+
 	// ---- 全局快捷键 ----
 	//
 	// 空字符串表示"用默认值"；要**关掉**某一条请显式写 "none"。

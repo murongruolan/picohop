@@ -520,6 +520,231 @@ body.cp-float-window .el-overlay-dialog {
 }
 
 /* --------------------------------------------------------------------------
+ * 底部栏目
+ *
+ * 头部常驻 34px：列表的横向滚动条从此离窗口底边 34px（原先贴着底边不好按住），
+ * 同时端口 / 前置 / 流量常驻可见，底部不再空。原因与结构见 docs/BOTTOM_PANEL.md。
+ * ------------------------------------------------------------------------ */
+.cp-bottom {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--cp-panel);
+  border-top: 1px solid var(--cp-border);
+}
+
+/* 4px 拖高把手：贴在头部上沿 */
+.cp-bottom-grip {
+  height: 4px;
+  margin-top: -2px;
+  cursor: ns-resize;
+  flex: 0 0 auto;
+}
+.cp-bottom-grip:hover {
+  background: var(--cp-brand);
+  opacity: 0.5;
+}
+
+.cp-bottom-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* 右侧留够：状态区最后一个数字贴边时会被切掉（实测） */
+  padding: 0 12px 0 8px;
+  overflow: hidden;
+}
+
+.cp-bottom-chevron {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--cp-radius-sm);
+  background: transparent;
+  color: var(--cp-text-2);
+  cursor: default;
+  font-size: 13px;
+}
+.cp-bottom-chevron:hover {
+  background: var(--cp-brand-soft);
+  color: var(--cp-brand);
+}
+
+.cp-bottom-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.cp-bottom-tab {
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--cp-radius-sm);
+  background: transparent;
+  color: var(--cp-text-2);
+  font-size: 12.5px;
+  cursor: default;
+  white-space: nowrap;
+}
+.cp-bottom-tab:hover {
+  background: var(--cp-brand-soft);
+  color: var(--cp-brand);
+}
+.cp-bottom-tab.is-active {
+  background: var(--cp-brand-soft);
+  color: var(--cp-brand);
+  font-weight: 600;
+}
+
+/* 状态区：挤到最右，次要信息在窄窗口下先消失 */
+.cp-bottom-status {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--cp-text-2);
+}
+.cp-bottom-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.cp-bottom-chip.is-dim {
+  color: var(--cp-text-3);
+}
+.cp-bottom-chip.is-off {
+  color: var(--cp-text-3);
+}
+.cp-bottom-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cp-success);
+}
+.cp-bottom-chip.is-off .cp-bottom-dot {
+  background: var(--cp-text-3);
+}
+
+.cp-bottom-body {
+  flex: 0 0 auto;
+  min-height: 0;
+  border-top: 1px solid var(--cp-border);
+  overflow: hidden;
+}
+
+.cp-bottom-placeholder {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--cp-text-3);
+  font-size: 12.5px;
+}
+
+/* ---- 日志视图 ---- */
+.cp-logs {
+  height: 100%;
+  display: flex;
+  min-height: 0;
+}
+.cp-logs-side {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-right: 1px solid var(--cp-border);
+}
+.cp-logs-tab {
+  width: 84px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: var(--cp-radius-sm);
+  background: transparent;
+  color: var(--cp-text-2);
+  font-size: 12.5px;
+  cursor: default;
+}
+.cp-logs-tab:hover {
+  background: var(--cp-brand-soft);
+  color: var(--cp-brand);
+}
+.cp-logs-tab.is-active {
+  background: var(--cp-brand-soft);
+  color: var(--cp-brand);
+  font-weight: 600;
+}
+.cp-logs-tab.is-disabled {
+  color: var(--cp-text-3);
+  opacity: 0.6;
+}
+.cp-logs-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  gap: 8px;
+}
+.cp-logs-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cp-logs-bar {
+  overflow: hidden;
+}
+.cp-logs-bar .el-input {
+  /* 定长而不是"自动撑满"：这一行有 输入框 + 按钮 + 开关 三件，
+     让输入框按剩余空间分配时开关会被挤出边界（实测被切掉几个像素）。
+     给一个确定的宽度，整行宽度就变得可预测，永远不会溢出。 */
+  flex: 0 1 360px;
+  min-width: 120px;
+}
+/* 开关的文案不换行：窗口窄一点它就折成两行，很难看。
+   注意两点（都是踩过的）：
+     - 这是**全局**样式表，:deep() 是 scoped 专用语法，写在这里等于无效；
+     - 中文默认可以在字与字之间换行，只给 .el-switch__label 加 nowrap 不够，
+       得连开关本体和它的子元素一起管住。 */
+.cp-logs-bar .el-switch,
+.cp-logs-bar .el-switch__label,
+.cp-logs-bar .el-switch__label * {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.cp-logs-search {
+  cursor: default;
+}
+.cp-logs-box {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 8px;
+  background: var(--cp-bg);
+  border: 1px solid var(--cp-border);
+  border-radius: var(--cp-radius-sm);
+}
+.cp-logs-line {
+  font-family: var(--cp-mono, ui-monospace, Consolas, monospace);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--cp-text-2);
+  white-space: pre;
+}
+.cp-logs-empty {
+  color: var(--cp-text-3);
+  font-size: 12px;
+}
+
+/* --------------------------------------------------------------------------
  * 下拉菜单（「导入」那个）
  *
  * 为什么单独设样式：Element Plus 的全局 size 是 small，下拉项被压到 ~12px 字号、
