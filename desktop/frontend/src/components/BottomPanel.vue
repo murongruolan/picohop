@@ -105,12 +105,33 @@ function onGripUp() {
 }
 
 // ---- 头部状态区 ----
-const localPorts = computed(() =>
+// 活动节点的本地端口（升序）
+const activePorts = computed(() =>
   (store.nodes || [])
     .filter((n) => n.active && n.listenPort)
     .map((n) => n.listenPort)
-    .join(' / '),
+    .sort((a, b) => a - b),
 )
+
+// 状态区里显示成什么。
+//
+// 【为什么不能一路排下去】用户问："下面展示两个端口，如果我开四个呢、开八个呢，
+// 都要显示吗" —— 8 个节点就是 "10810 / 10811 / … / 10817"，既占满状态区，
+// 也看不出重点。规则：
+//   ≤2 个        → 全列（"10810 / 10811"，最常用的情况，看着最直观）
+//   3 个以上连续 → 区间（"10810–10817"：完整且只占几个字）
+//   3 个以上不连续 → 首个 + 剩余个数（"10810 +3"，端口是用户随手改的时候会这样）
+// 完整列表始终在 tooltip 里，点一下仍然复制全部。
+const localPortsText = computed(() => {
+  const ps = activePorts.value
+  if (!ps.length) return '—'
+  if (ps.length <= 2) return ps.join(' / ')
+  const contiguous = ps.every((p, i) => i === 0 || p === ps[i - 1] + 1)
+  return contiguous ? `${ps[0]}–${ps[ps.length - 1]}` : `${ps[0]} +${ps.length - 1}`
+})
+
+// tooltip 里给完整列表
+const localPortsFull = computed(() => activePorts.value.join(' / '))
 const frontOk = computed(() => !!store.summary?.frontOk)
 const frontDesc = computed(() => store.summary?.frontDesc || '未配置')
 
@@ -121,7 +142,11 @@ function openLogs() {
 }
 
 function copyPorts() {
-  if (localPorts.value) api.copyText(localPorts.value)
+  const ps = activePorts.value
+  if (!ps.length) return
+  // 一行一个可粘贴的地址：本项目其它地方（托盘"复制本地代理地址"）已经是这个格式，
+  // 只复制光秃秃的数字没什么用。
+  api.copyText(ps.map((p) => `socks5://127.0.0.1:${p}`).join('\n'))
 }
 
 // ---- 日志视图 ----
@@ -241,9 +266,13 @@ watch(
       </div>
 
       <div class="cp-bottom-status">
-        <el-tooltip :content="localPorts ? `本地端口：${localPorts}（点击复制）` : '没有运行中的节点'" placement="top" :show-after="400">
-          <span class="cp-bottom-chip cp-num" :class="{ 'is-dim': !localPorts }" @click="copyPorts">
-            {{ localPorts || '—' }}
+        <el-tooltip
+          :content="activePorts.length ? `本地端口：${localPortsFull}（点击复制）` : '没有运行中的节点'"
+          placement="top"
+          :show-after="400"
+        >
+          <span class="cp-bottom-chip cp-num" :class="{ 'is-dim': !activePorts.length }" @click="copyPorts">
+            {{ localPortsText }}
           </span>
         </el-tooltip>
 
