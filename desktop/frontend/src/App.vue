@@ -308,6 +308,28 @@ async function handleDevOpen(name) {
       break
     }
 
+    // 验证"运行期切换标题栏明暗"。
+    //
+    // 这一条在 v3 下必须自己实现：v3 只在**创建窗口时**用 WindowsWindow{Theme}
+    // 指定明暗，没有运行期 setter（v2 有 runtime.WindowSetDarkTheme）。
+    // 所以后端直接调 DwmSetWindowAttribute，这个入口就是去看它到底有没有生效。
+    case 'theme': {
+      const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms))
+      const ok1 = await api.setWindowTheme('dark')
+      store.theme = 'dark'
+      store.applyTheme()
+      await sleepMs(800)
+      const ok2 = await api.setWindowTheme('light')
+      await sleepMs(400)
+      // 留在深色上，方便截图核对标题栏
+      const ok3 = await api.setWindowTheme('dark')
+      await sleepMs(600)
+      notify(ok1 && ok2 && ok3 ? 'success' : 'error', '标题栏明暗切换测试',
+        `setWindowTheme(dark)=${ok1} → (light)=${ok2} → (dark)=${ok3}\n` +
+        `（v3 无运行期 setter，后端用 DwmSetWindowAttribute 实现；返回 false 说明没找到窗口）`, 0)
+      break
+    }
+
     // 验证"托盘菜单那几个动作"。
     //
     // 为什么不直接点托盘菜单：那需要真的去动鼠标，而输入注入早就因为会误点到
