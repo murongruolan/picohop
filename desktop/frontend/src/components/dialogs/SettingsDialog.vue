@@ -5,7 +5,7 @@
  * 刻意保持精简：只放主流客户端/主流客户端里**我们真的会用到**的项。
  * 没有订阅、没有开机自启、没有一堆用不上的开关。
  */
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { Folder, Refresh, RefreshRight } from '@element-plus/icons-vue'
 import { useStore } from '../../store'
 import { useUi } from '../../ui'
@@ -161,6 +161,17 @@ watch(visible, async (v) => {
   tab.value = ui.settingsInitialTab || 'front'
   ui.settingsInitialTab = ''
   frontTest.value = null
+
+  // 【每次打开都回到默认位置】
+  //
+  // Element Plus 的拖动是给 .el-dialog 加一个 inline transform，而对话框关闭后
+  // **元素不会被销毁** —— 于是"上次拖到哪儿、下次就开在哪儿"（用户注意到的那点）。
+  // 别的对话框留着这个记忆挺好，但设置面板内容固定、居中打开最好找，所以这里清掉。
+  // 清的是 inline transform（拖动产生的唯一东西），不影响布局样式。
+  nextTick(() => {
+    const el = document.querySelector('.el-dialog.cp-dlg-settings')
+    if (el) el.style.transform = ''
+  })
   try {
     const [s, f] = await Promise.all([api.getSettings(), api.getFront()])
     Object.assign(form, blankSettings(), s || {})
@@ -255,7 +266,7 @@ const meta = computed(() => store.meta || {})
 <template>
   <el-dialog
     v-model="visible"
-    class="cp-dialog"
+    class="cp-dialog cp-dlg-settings"
     title="设置"
     width="680px"
     top="4vh"

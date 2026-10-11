@@ -524,6 +524,53 @@ async function handleDevOpen(name) {
       break
     }
 
+    // 验证「设置面板每次打开都回到默认位置」。
+    // 手法：打开 → 合成一次标题栏拖动（真的把它拖走）→ 读位移 → 关闭 → 重开 → 再读位移。
+    case 'settingsreset': {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const dlgEl = () => document.querySelector('.el-dialog.cp-dlg-settings')
+      const tf = () => dlgEl()?.style.transform || '（空）'
+
+      ui.settingsDialog = true
+      await wait(900)
+      const before = tf()
+      const header = dlgEl()?.querySelector('.el-dialog__header')
+      if (!header) {
+        notify('error', '设置面板位置重置测试', '找不到标题栏', 0)
+        break
+      }
+      const r = header.getBoundingClientRect()
+      const x = Math.round(r.left + 80)
+      const y = Math.round(r.top + r.height / 2)
+      const fire = (type, cx, cy, target) =>
+        target.dispatchEvent(
+          new MouseEvent(type, {
+            clientX: cx, clientY: cy, bubbles: true, cancelable: true,
+            button: 0, buttons: type === 'mouseup' ? 0 : 1,
+          }),
+        )
+      fire('mousedown', x, y, header)
+      fire('mousemove', x + 160, y + 90, document)
+      fire('mouseup', x + 160, y + 90, document)
+      await wait(400)
+      const dragged = tf()
+
+      ui.settingsDialog = false
+      await wait(600)
+      ui.settingsDialog = true
+      await wait(900)
+      const reopened = tf()
+
+      const ok = dragged !== '（空）' && reopened === '（空）'
+      notify(ok ? 'success' : 'error', '设置面板位置重置测试',
+        `拖动前 transform = ${before}\n拖动后 = ${dragged}（应非空）\n` +
+        `关闭再打开 = ${reopened}（应为空）\n` +
+        `→ ${ok ? '每次打开都回到默认位置 ✓' : '有问题'}`,
+        0)
+      ui.settingsDialog = false
+      break
+    }
+
     // 触发一次"从屏幕圈选二维码"，用来复现/验证那条链路。
     // 不 await：它会一直挂着直到用户圈选完或取消。
     case 'screenscan': {
