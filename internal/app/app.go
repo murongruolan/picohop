@@ -83,6 +83,12 @@ type App struct {
 	netLog    []NetLogEntry
 	netLogSeq int64
 
+	// trafficByNode 是**按节点**的每秒速率历史（受 mu 保护）。
+	//
+	// 为什么要有它：流量统计的图可以切"看哪个节点"，只有一条总量曲线时那个下拉没有数据可画。
+	// 内存代价：1 秒一个样本、每样本 24 字节、保留 1 小时 → 每节点约 86KB。
+	trafficByNode map[string][]TrafficSample
+
 	// traffic 是每秒速率的历史环形缓冲（受 mu 保护），给"流量统计"画图用。
 	// 由 Socialticks 写入，见 TrafficHistory。
 	traffic []TrafficSample
@@ -117,12 +123,13 @@ func New(cfgPath string) (*App, error) {
 		baseUp:   map[string]int64{},
 		baseDown: map[string]int64{},
 		// 预分配：1 秒一个样本，够 1 小时
-		traffic: make([]TrafficSample, 0, trafficHistorySeconds),
-		netLog:  make([]NetLogEntry, 0, netLogCap),
-		conns:   make(map[uint64]ConnRecord),
-		logs:    newRingBuffer(1000),
-		closing: make(chan struct{}),
-		lastDay: config.Today(),
+		traffic:       make([]TrafficSample, 0, trafficHistorySeconds),
+		trafficByNode: make(map[string][]TrafficSample),
+		netLog:        make([]NetLogEntry, 0, netLogCap),
+		conns:         make(map[uint64]ConnRecord),
+		logs:          newRingBuffer(1000),
+		closing:       make(chan struct{}),
+		lastDay:       config.Today(),
 	}
 
 	if f, err := os.OpenFile(config.LogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {

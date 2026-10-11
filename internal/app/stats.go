@@ -267,6 +267,8 @@ func (a *App) tickStats() {
 
 	now := time.Now()
 	var tickUp, tickDown int64
+	// 本轮的按节点增量（循环里拿不到就别的地方再算一遍）
+	nodeDelta := make(map[string][2]int64, len(a.servers))
 	for id, srv := range a.servers {
 		idx := a.indexOfLocked(id)
 		if idx < 0 {
@@ -299,12 +301,34 @@ func (a *App) tickStats() {
 
 		tickUp += dUp
 		tickDown += dDown
+		nodeDelta[id] = [2]int64{dUp, dDown}
 	}
 
 	// 留下来的这两个数原先算完就扔了 —— 于是界面既拿不到速率、也没法画曲线。
 	a.upRate.Store(tickUp)
 	a.downRate.Store(tickDown)
-	a.pushTrafficLocked(TrafficSample{At: now.UnixMilli(), Up: tickUp, Down: tickDown})
+	sampleAt := now.UnixMilli()
+	a.pushTrafficLocked(TrafficSample{At: sampleAt, Up: tickUp, Down: tickDown})
+
+	// 按节点各写一条：**遍历配置里的所有节点**（不只是运行中的），
+	// 这样每个节点的序列都按同一节拍推进，切节点看图时横轴才对得上。
+	for _, n := range a.cfg.Nodes {
+		d := nodeDelta[n.ID]
+		a.pushNodeTrafficLocked(n.ID, TrafficSample{At: sampleAt, Up: d[0], Down: d[1]})
+	}
+}
+
+// pushNodeTrafficLocked 追加某节点的一个采样并裁剪。调用方须持有 mu。
+func (a *App) pushNodeTrafficLocked(nodeID string, s TrafficSample) {
+	if a.trafficByNode == nil {
+		a.trafficByNode = make(map[string][]TrafficSample)
+	}
+	ring := append(a.trafficByNode[nodeID], s)
+	if n := len(ring); n > trafficHistorySeconds {
+		copy(ring, ring[n-trafficHistorySeconds:])
+		ring = ring[:trafficHistorySeconds]
+	}
+	a.trafficByNode[nodeID] = ring
 }
 
 // pushTrafficLocked 追加一个采样并裁掉超出保留时长的旧样本。调用方须持有 mu。
@@ -322,16 +346,21 @@ func (a *App) pushTrafficLocked(s TrafficSample) {
 
 // TrafficHistory 返回最近 seconds 秒的速率样本（按时间升序）。
 //
+// nodeID 为空表示"全部节点"（总量）；给了节点 ID 就返回那个节点的曲线。
 // seconds <= 0 或超过缓冲长度时，返回缓冲里的全部样本。
-func (a *App) TrafficHistory(seconds int) []TrafficSample {
+func (a *App) TrafficHistory(seconds int, nodeID string) []TrafficSample {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	n := len(a.traffic)
+	ring := a.traffic
+	if nodeID != "" {
+		ring = a.trafficByNode[nodeID]
+	}
+	n := len(ring)
 	if seconds > 0 && seconds < n {
 		n = seconds
 	}
 	out := make([]TrafficSample, n)
-	copy(out, a.traffic[len(a.traffic)-n:])
+	copy(out, ring[len(ring)-n:])
 	return out
 }
 

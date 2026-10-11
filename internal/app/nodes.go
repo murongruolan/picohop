@@ -143,6 +143,8 @@ func (a *App) DeleteNodes(ids []string) error {
 			delete(a.errs, n.ID)
 			delete(a.baseUp, n.ID)
 			delete(a.baseDown, n.ID)
+			// 顺带清掉它的流量历史：不清的话每删一个节点就残留约 86KB
+			delete(a.trafficByNode, n.ID)
 			continue
 		}
 		kept = append(kept, n)

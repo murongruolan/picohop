@@ -273,12 +273,13 @@ func (a *API) ClearNetworkLogs() {
 
 // GetTrafficHistory 返回最近 seconds 秒的每秒速率样本（流量统计画曲线用）。
 //
+// nodeID 为空表示全部节点（总量），否则只看那一个节点 —— 用户要求图可以按节点切。
 // 放在 Go 侧留历史的原因见 internal/app/stats.go 的 TrafficSample 注释。
-func (a *API) GetTrafficHistory(seconds int) []app.TrafficSample {
+func (a *API) GetTrafficHistory(seconds int, nodeID string) []app.TrafficSample {
 	if a.app == nil {
 		return nil
 	}
-	return a.app.TrafficHistory(seconds)
+	return a.app.TrafficHistory(seconds, nodeID)
 }
 
 // GetSummary 返回顶部总览。

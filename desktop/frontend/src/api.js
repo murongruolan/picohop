@@ -111,7 +111,7 @@ export const api = {
   // 设置
   getSettings: () => call('GetSettings'),
   saveSettings: (s) => call('SaveSettings', s),
-  getTrafficHistory: (seconds) => call('GetTrafficHistory', seconds),
+  getTrafficHistory: (seconds, nodeId) => call('GetTrafficHistory', seconds, nodeId),
   getNetworkLogs: (afterSeq) => call('GetNetworkLogs', afterSeq),
   clearNetworkLogs: () => call('ClearNetworkLogs'),
   getIPInfo: () => call('GetIPInfo'),
