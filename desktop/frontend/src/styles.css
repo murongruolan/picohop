@@ -500,6 +500,26 @@ body.cp-float-window .el-overlay-dialog {
 }
 
 /* --------------------------------------------------------------------------
+ * 设置面板：真正的垂直居中
+ *
+ * el-dialog 的 align-center 依赖"遮罩层是 flex + 对话框 margin: auto"，
+ * 但两件事在破坏它：
+ *   - Element 自己给 .el-dialog 的 margin-top: var(--el-dialog-margin-top)（我传了 4vh）；
+ *   - 我给 .cp-dialog 的 margin-bottom: 24px（那是为了长表单留出底部余量）。
+ * 结果弹窗明显偏下（实测上间距 144px、下只有 33px）。
+ * 把上下 margin 都归成 auto，flex 就会把它真正居中。
+ * 选择器特异性与 Element 的 .el-dialog.is-align-center 相同，而本文件在其后加载，
+ * 所以能覆盖，不需要 !important。
+ * ------------------------------------------------------------------------ */
+/* 选择器写成三段：文件后面还有一条 `.el-dialog.cp-dialog { margin-bottom: 24px }`，
+   特异性相同但在后面 —— 只写 `.el-dialog.cp-dlg-settings` 会被它覆盖掉，
+   于是 margin-top:auto 把弹窗一路推到最下面（实测上间距 144px、下 33px）。 */
+.el-dialog.cp-dialog.cp-dlg-settings {
+  margin-top: auto;
+  margin-bottom: auto;
+}
+
+/* --------------------------------------------------------------------------
  * 下拉菜单（「导入」那个）
  *
  * 为什么单独设样式：Element Plus 的全局 size 是 small，下拉项被压到 ~12px 字号、

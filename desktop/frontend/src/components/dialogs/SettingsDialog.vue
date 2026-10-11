@@ -271,6 +271,7 @@ const meta = computed(() => store.meta || {})
     width="680px"
     top="4vh"
     draggable
+    align-center
     :close-on-click-modal="false"
     append-to-body
   >

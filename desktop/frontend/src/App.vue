@@ -99,6 +99,23 @@ onMounted(async () => {
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('blur', () => ui.closeContextMenu())
 
+  // 【对话框右上角的关闭按钮不能被"拖动对话框"吃掉】
+  //
+  // Element Plus 的 draggable 把 mousedown 挂在**标题栏**上，而关闭按钮是标题栏的
+  // 子元素 —— 按住 X 的时候鼠标只要有一两个像素的位移，就被当成"拖动标题栏"，
+  // 结果是"点了关闭却关不掉、弹窗自己往下跑"（用户实报，偶发就是因为那点位移）。
+  //
+  // 用一个**捕获阶段**的监听在事件到达标题栏之前截住它（捕获先于冒泡），
+  // 只对关闭按钮生效，标题栏其余部分照常可以拖动。
+  // 放在 App.vue 里是对所有对话框生效 —— 带 draggable 的都有这个隐患。
+  document.addEventListener(
+    'mousedown',
+    (e) => {
+      if (e.target?.closest?.('.el-dialog__headerbtn')) e.stopPropagation()
+    },
+    true,
+  )
+
   // 浮动窗口：只打开那一个对话框就够了
   if (props.floatKind) {
     await enterFloatMode(props.floatKind)
@@ -561,11 +578,27 @@ async function handleDevOpen(name) {
       await wait(900)
       const reopened = tf()
 
-      const ok = dragged !== '（空）' && reopened === '（空）'
+      // 再验一件用户实报的事：按住关闭按钮时**不能**被当成拖动。
+      // 手法：在关闭按钮上合成 mousedown + 轻微移动 + mouseup，看位移是否仍为空。
+      const btn = dlgEl()?.querySelector('.el-dialog__headerbtn')
+      let btnMoved = '（找不到按钮）'
+      if (btn) {
+        const br = btn.getBoundingClientRect()
+        const bx = Math.round(br.left + br.width / 2)
+        const by = Math.round(br.top + br.height / 2)
+        fire('mousedown', bx, by, btn)
+        fire('mousemove', bx + 6, by + 12, document)
+        fire('mouseup', bx + 6, by + 12, document)
+        await wait(300)
+        btnMoved = tf()
+      }
+
+      const ok = dragged !== '（空）' && reopened === '（空）' && btnMoved === '（空）'
       notify(ok ? 'success' : 'error', '设置面板位置重置测试',
         `拖动前 transform = ${before}\n拖动后 = ${dragged}（应非空）\n` +
         `关闭再打开 = ${reopened}（应为空）\n` +
-        `→ ${ok ? '每次打开都回到默认位置 ✓' : '有问题'}`,
+        `按住关闭按钮微拖后 = ${btnMoved}（应为空，即没被当成拖动）\n` +
+        `→ ${ok ? '回到默认位置 + 关闭按钮不被拖动吃掉 ✓' : '有问题，看上面几项'}`,
         0)
       ui.settingsDialog = false
       break
