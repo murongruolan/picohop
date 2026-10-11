@@ -8,6 +8,15 @@ import { defineStore } from 'pinia'
 
 export const useUi = defineStore('cp-ui', {
   state: () => ({
+    /**
+     * 当前窗口是不是"浮动对话框窗口"（由 App.vue 的 enterFloatMode 置位）。
+     *
+     * 它决定对话框**由谁来拖**：窗口内浮层靠 Element Plus 的 draggable
+     * （移动对话框卡片），浮动窗口里则靠整个 OS 窗口移动。
+     * 两者绝不能同时开启 —— 同时开会出现"卡片跟着鼠标跑、松开还黏住"，
+     * 因为两套位移叠加在一起。详见 NodeDialog 里 :draggable 的注释。
+     */
+    floatMode: false,
     /** 添加/编辑节点对话框 */
     nodeDialog: { open: false, mode: 'add', node: null, fromImport: false },
     /**

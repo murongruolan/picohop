@@ -330,7 +330,7 @@ const flowOptions = [
     :title="isEdit ? '编辑节点' : '添加节点'"
     width="760px"
     top="4vh"
-    draggable
+    :draggable="!ui.floatMode"
     :close-on-click-modal="false"
     append-to-body
   >

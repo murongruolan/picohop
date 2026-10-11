@@ -51,6 +51,9 @@ let mediaQuery = null
  * 保存逻辑统统不用重写，差别只有"关掉时通知 Go"这一步。
  */
 async function enterFloatMode(kind) {
+  // 告诉对话框"拖动由整个窗口负责"：浮动窗口里必须关掉 Element Plus 的
+  //   draggable，否则两套位移叠加 —— 卡片跟着鼠标跑、松开还黏在鼠标上。
+  ui.floatMode = true
   let payload = {}
   try {
     const raw = await api.getFloatPayload()
@@ -439,6 +442,67 @@ async function handleDevOpen(name) {
     case 'floatsubmit':
       ui.closeNodeDialog({ submitted: false, via: 'float-self-test' })
       break
+
+    // 【主窗口】发起一条"拖动归属"测试：打开浮动对话框并把 floatdrag 透传进去。
+    // 注意名字必须和浮动窗口里的那个自测项不同（switch 重复 case 只有第一个命中）。
+    case 'floatdragtest': {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      api
+        .openFloatDialog('node', JSON.stringify({ mode: 'add' }), 'floatdrag')
+        .catch((e) => notify('error', '拖动归属测试失败', String(e?.message || e), 0))
+      await wait(1500)
+      notify('info', '拖动归属测试', '已在浮动窗口里合成一次标题栏拖动，结果见那边窗口的通知。', 0)
+      break
+    }
+
+    // 【在浮动窗口里跑】验证"拖动的归属"。
+    //
+    // 这条测试是针对一个真实 bug 的回归：浮动窗口里曾经同时开着两套拖动 ——
+    // Element Plus 的对话框 draggable（用 transform 移动卡片）
+    // 和 v3 的 --wails-draggable（移动整个 OS 窗口）。
+    // 表现是"按住标题栏后卡片跟着鼠标跑、松开还黏在鼠标上，窗口内的页面上下滚"。
+    // 修法是浮动模式下关掉对话框的 draggable，由整个窗口负责移动。
+    //
+    // 所以这里断言：合成一次标题栏拖动之后，.el-dialog 的 inline transform 必须仍是空。
+    case 'floatdrag': {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const dlg = document.querySelector('.el-dialog.cp-dialog')
+      const header = dlg?.querySelector('.el-dialog__header')
+      if (!dlg || !header) {
+        notify('error', '拖动归属测试', '找不到对话框或标题栏', 0)
+        break
+      }
+      const before = dlg.style.transform || '（空）'
+      const r = header.getBoundingClientRect()
+      const x = Math.round(r.left + 60)
+      const y = Math.round(r.top + r.height / 2)
+      const fire = (type, cx, cy, target) =>
+        target.dispatchEvent(
+          new MouseEvent(type, {
+            clientX: cx,
+            clientY: cy,
+            bubbles: true,
+            cancelable: true,
+            button: 0,
+            buttons: type === 'mouseup' ? 0 : 1,
+          }),
+        )
+      fire('mousedown', x, y, header)
+      fire('mousemove', x + 140, y + 70, document)
+      fire('mouseup', x + 140, y + 70, document)
+      await wait(300)
+      const after = dlg.style.transform || '（空）'
+      // 卡片被拖出可视区就会冒横向滚动条 —— 这也是那个 bug 的伴随症状
+      const overflowX = document.documentElement.scrollWidth > window.innerWidth + 1
+      const ok = after === '（空）' && !overflowX
+      notify(ok ? 'success' : 'error', '浮动窗口拖动归属测试',
+        `标题栏拖动前后 .el-dialog 的 transform：${before} → ${after}\n` +
+        `是否出现横向溢出 = ${overflowX}\n` +
+        `→ ${ok
+          ? '拖动只归窗口管，卡片没被 Element Plus 拖走 ✓'
+          : '卡片仍被 Element Plus 拖动（transform 非空）✗ 两套拖动又打架了'}`, 0)
+      break
+    }
 
     // 验证「浮动弹窗的结果回传」。
     //

@@ -458,6 +458,14 @@ body.cp-float-window .el-dialog.cp-dialog {
 body.cp-float-window .cp-dialog .el-dialog__header {
   --wails-draggable: drag;
   background: var(--cp-panel-2);
+  /* 拖动时不要触发浏览器原生的文字选中/元素拖拽（那会拖出一个"幽灵"跟着鼠标）
+     —— 配合 NodeDialog 关掉 Element Plus 的 draggable，标题栏只负责移动窗口。 */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+}
+body.cp-float-window .cp-dialog .el-dialog__header * {
+  -webkit-user-drag: none;
 }
 /* 但标题栏里的关闭按钮要排除，否则点它会变成拖窗口 */
 body.cp-float-window .cp-dialog .el-dialog__headerbtn {
