@@ -356,6 +356,8 @@ type overlay struct {
 	// 只要 1x1：源是纯色，拉伸不会失真，还省掉一整张 16MB 的暗色副本
 	// —— 那样每帧都得多跑一次 400 万像素的换算，纯属浪费。
 	loggedSizes bool
+	srcBounds   image.Rectangle
+	srcStride   int
 
 	dimDC     uintptr
 	dimBmp    uintptr
@@ -537,6 +539,8 @@ func runOverlaySession(ready chan overlayReady, result chan overlayResult, onRea
 	// 3) 建窗口。这一步失败（无桌面会话）必须回报有意义的错误，不能 panic。
 	tMark = time.Now()
 	ov = newOverlay(vs, full)
+	ov.srcBounds = full.Bounds()
+	ov.srcStride = full.Stride
 	msConvert := sinceMS(tMark)
 
 	tMark = time.Now()
@@ -1120,8 +1124,13 @@ func (ov *overlay) onPaint() {
 	// 那会让"挖选区"与"贴背景"两套坐标对不上 —— 记下来，别靠猜。
 	if !ov.loggedSizes {
 		ov.loggedSizes = true
-		Tracef("qrscan 尺寸核对：客户区=%dx%d 截图=%dx%d（一致才说明两个映射相同）",
-			w, h, ov.vs.Dx(), ov.vs.Dy())
+		// 关键：把**真正拿到的图**的属性打出来，而不是我以为的尺寸。
+		// bgra 是按 w*h*4 顺序拷的，如果源图的 Stride ≠ 4*宽（image.RGBA 允许带行填充），
+		// 逐行错位就会把内容整体"斜切"——表现正是"同一批文字在内外两块里位置不同"。
+		Tracef("qrscan 尺寸核对：客户区=%dx%d 虚拟桌面=%dx%d", w, h, ov.vs.Dx(), ov.vs.Dy())
+		Tracef("qrscan 缓冲区核对：bgra=%d 期望=%d；源图 bounds=%v stride=%d 期望stride=%d",
+			len(ov.bgra), ov.vs.Dx()*ov.vs.Dy()*4,
+			ov.srcBounds, ov.srcStride, ov.vs.Dx()*4)
 	}
 	ov.paintScreen(w, h)
 	// 全屏压暗 → 再把选区那块从原图重贴一次。
