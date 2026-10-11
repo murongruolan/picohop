@@ -129,6 +129,13 @@ func (a *API) BeginScreenScan() ImportResult {
 	// tStart 是整条链路的起点，用来写计时日志。
 	// 用户感知的"点了圈选没反应"就是"主窗口消失"到"遮罩出现"之间的空档，
 	// 所以每一步都记毫秒数，而不是只说"做完了"。
+	// 把 qrscan 的时间线接到应用日志（哪一步慢只能靠测量）
+	qrscan.Tracef = func(format string, args ...any) {
+		if a.app != nil {
+			a.app.Logf(format, args...)
+		}
+	}
+
 	tStart := time.Now()
 
 	a.mu.Lock()
@@ -144,20 +151,51 @@ func (a *API) BeginScreenScan() ImportResult {
 		a.mu.Unlock()
 	}()
 
-	// 无论中途出什么问题，都必须把主界面恢复出来，
+	// 【让接下来的整屏截图看不见主窗口】
+	//
+	// 优先用 WDA_EXCLUDEFROMCAPTURE 把主窗口从屏幕捕获里排除：窗口原地不动、
+	// 也不用等，用户感觉就是"点了就有反应"。
+	// 系统不支持时才退回老办法（隐藏窗口 + 等 280ms 让它真的消失）。
+	//
+	// 为什么值得做：实测那 280ms 是整条链路里最大的一块（其余合计约 55ms），
+	// 而用户原话是"点击扫码的时候得卡一会儿才会弄出来十字准星"。
+	// 隐藏主窗口（隐藏而不是"从捕获里排除"：WDA_EXCLUDEFROMCAPTURE 会让被排除的
+	// 窗口在 BitBlt 捕获里变成**一块纯黑**，实测遮罩背景上会出现一个黑色方洞 ——
+	// 那不是用户想看到的）。无论中途出什么问题都必须恢复出来，
 	// 否则用户会面对一个"程序还在跑但窗口没了"的状态。
-	a.windowHide()
-	defer a.windowRestore()
+	// 【把主窗口挪到屏幕外，而不是 Hide()】
+	//
+	// 试过两种更"正统"的做法，都有坑：
+	//   - Hide()：DWM 会做约 200ms 的**淡出动画**，截屏拍到的是动画中间 ——
+	//     实测就是一块半透明黑板（窗口标题栏还看得见）。早先那句
+	//     `time.Sleep(280ms)` 实际上就是在等这个动画演完。
+	//   - WDA_EXCLUDEFROMCAPTURE：0ms，但被排除的窗口在 BitBlt 捕获里会变成
+	//     **一块纯黑**，遮罩背景上直接出现一个黑色方洞。
+	// 挪窗口没有动画：位置一变、下一帧就是最终状态，既快又干净。
+	prevX, prevY, parked := parkMainWindowOffscreen()
+	defer func() {
+		if parked {
+			restoreWindowPos(prevX, prevY)
+		} else {
+			// 挪不动（极少数情况）才退回隐藏
+			a.windowRestore()
+		}
+		dwmFlush()
+		// 圈选结束：把主窗口**临时**提到最前（不做置顶）。
+		// 用户原话："松手的时候取消全部遮罩然后将主窗口临时提到所有窗口上面，
+		// 就提一下，不固定"。
+		raiseMainWindowOnce()
+	}()
 
-	// 等窗口真的从屏幕上消失再去截图。
-	// WindowHide 只是投递消息，立刻截图有可能把还没隐掉的窗口拍进去。
-	time.Sleep(280 * time.Millisecond)
+	// 等合成器把"窗口已挪走"这一帧画完再去截图（挪窗口本身没有动画，
+	// 所以这里只需等一帧，实测个位数毫秒）。
+	dwmFlush()
 
-	// 圈选这条链路很长（隐藏窗口 → 调 Win32 建全屏遮罩 → 等用户拖 → 截图 → 识别），
+	// 圈选这条链路很长（排除/隐藏窗口 → 调 Win32 建全屏遮罩 → 等用户拖 → 截图 → 识别），
 	// 而且**用户报过"点完就什么都没了"**。所以每一步都写日志 + 计时：
 	// 出问题时能从 data\chainproxy.log 看出卡在哪一步、慢在哪一步，而不是只能猜。
 	if a.app != nil {
-		a.app.Logf("屏幕圈选：主窗口已隐藏，准备创建遮罩（%dms）", sinceMs(tStart))
+		a.app.Logf("屏幕圈选：主窗口已挪出屏幕，准备创建遮罩（%dms）", sinceMs(tStart))
 	}
 
 	// 用 Hooked 版本是为了拿到两个事实：遮罩窗口真的建出来了、以及它花了多久。

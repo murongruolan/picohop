@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -85,6 +86,9 @@ var (
 	// CreateSolidBrush 在 gdi32 里，不在 user32 —— 放错不会编译报错，
 	// 而是运行时在 mustFind 里直接 panic（Failed to find ... procedure）。
 	pCreateSolidBrush = gdi32.NewProc("CreateSolidBrush")
+
+	// AlphaBlend 在 msimg32.dll（不是 gdi32，也不是 user32）—— 压暗整屏用它。
+	pAlphaBlend = msimg32.NewProc("AlphaBlend")
 )
 
 // LOGPIXELSY：GetDeviceCaps 的索引，用来把字号从 96 DPI 缩放到实际 DPI。
@@ -148,6 +152,16 @@ var gwlpUserData = uintptr(uint32(userDataIndex))
 // 常量
 // ---------------------------------------------------------------------------
 
+// Tracef 是可选的时间线日志钩子，由 desktop 层注入（写进应用日志）。
+//
+// 为什么要有它：圈选这条链路"哪一步慢"只能靠测量，不能靠猜。
+// 已经吃过两次教训：一次是 1.8 秒花在一个系统设置广播上；一次是度量点选错，
+// 导致"改完了读数却没变"。默认什么都不做。
+var Tracef = func(format string, args ...any) {}
+
+// sinceMS 返回从 t 到现在经过的毫秒数（本文件内的计时用）。
+func sinceMS(t time.Time) int64 { return time.Since(t).Milliseconds() }
+
 const (
 	// 窗口类 / 窗口
 	csHRedraw = 0x0002
@@ -162,11 +176,11 @@ const (
 	swShowNa = 8 // 显示但不激活：圈选期间不该抢走前台窗口
 
 	// 消息
-	// minSelectSide 是"算得上一次圈选"的最小边长（像素）。
-	// 小于它的选区按取消处理：一个 0x0 的矩形既截不到东西、也识别不出二维码，
-	// 只会让用户收到一句莫名其妙的报错，不如直接当成"他点了一下想退出"。
+	wmDestroy = 0x0002
+	// minSelectSide 是"算得上一次圈选"的最小边长（像素）：小于它的选区按取消处理。
+	// 一个 0x0 的矩形既截不到东西也识别不出二维码，不如当成"他点了一下想退出"。
 	minSelectSide = 12
-	wmDestroy     = 0x0002
+
 	wmPaint       = 0x000F
 	wmClose       = 0x0010
 	wmEraseBkgnd  = 0x0014
@@ -213,6 +227,12 @@ const (
 
 	// SetBkMode 的 TRANSPARENT：文字不涂背景，直接压在截图上
 	bkModeTransparent = 1
+
+	// 压暗整屏用：AC_SRC_OVER 是唯一可用的混合方式（AlphaBlend 的 BlendOp）。
+	acSrcOver = 0
+	// dimAlpha 是压暗程度（0-255，SourceConstantAlpha）。
+	// 110/255 ≈ 43%，和微信/QQ 截图的观感接近：能看清底下是什么，但注意力在选区上。
+	dimAlpha = 110
 )
 
 // ---------------------------------------------------------------------------
@@ -331,6 +351,13 @@ type overlay struct {
 	brush     uintptr // 红色实心画刷
 	font      uintptr // 尺寸文字字体
 	labelSize int32   // 实际字号像素
+
+	// 压暗整屏用的 1x1 纯黑源 DC（见 paintDim）。
+	// 只要 1x1：源是纯色，拉伸不会失真，还省掉一整张 16MB 的暗色副本
+	// —— 那样每帧都得多跑一次 400 万像素的换算，纯属浪费。
+	dimDC     uintptr
+	dimBmp    uintptr
+	dimOldBmp uintptr
 
 	// 鼠标（客户区坐标）
 	mouse image.Point
@@ -485,12 +512,15 @@ func runOverlaySession(ready chan overlayReady, result chan overlayResult, onRea
 	}()
 
 	// 1) 先把"点按钮那一刻的屏幕"拍下来。必须在建窗口之前，否则遮罩会把自己拍进去。
+	tMark := time.Now()
 	full, err := capture(virtualScreenRect())
 	if err != nil {
 		ready <- overlayReady{err: err}
 		resErr = err
 		return
 	}
+	msCapture := sinceMS(tMark)
+
 	vs, err := VirtualScreen()
 	if err != nil {
 		ready <- overlayReady{err: err}
@@ -503,12 +533,19 @@ func runOverlaySession(ready chan overlayReady, result chan overlayResult, onRea
 	hideSystemCursor()
 
 	// 3) 建窗口。这一步失败（无桌面会话）必须回报有意义的错误，不能 panic。
+	tMark = time.Now()
 	ov = newOverlay(vs, full)
+	msConvert := sinceMS(tMark)
+
+	tMark = time.Now()
 	if err := ov.create(hideOverlayForTest()); err != nil {
 		ready <- overlayReady{err: err}
 		resErr = err
 		return
 	}
+	msCreate := sinceMS(tMark)
+	Tracef("qrscan 时间线：截屏=%dms 转格式=%dms 建窗+首帧=%dms（合计 %dms）",
+		msCapture, msConvert, msCreate, msCapture+msConvert+msCreate)
 	// 保证窗口一定会被销毁、GDI 资源一定会被释放，即使中途 return 或 panic。
 	defer func() {
 		pDestroyWindow.Call(ov.hwnd)
@@ -752,6 +789,27 @@ func (ov *overlay) recreateBackBuffer() {
 	old, _, _ := pSelectObject.Call(memDC, bmp)
 	ov.memDC, ov.memBmp, ov.oldBmp = memDC, bmp, old
 
+	// 压暗用的 1x1 黑源 DC：也建一次就够（源是纯色，靠拉伸铺满）。
+	if ov.dimDC == 0 {
+		srcDC, _, _ := pCreateCompatibleDC.Call(winDC)
+		if srcDC != 0 {
+			oneBmp, _, _ := pCreateCompatibleBitmap.Call(winDC, 1, 1)
+			if oneBmp != 0 {
+				oldOne, _, _ := pSelectObject.Call(srcDC, oneBmp)
+				// 用黑画刷把这一格涂黑。PatBlt 的 BLACKNESS 更省事，
+				// 但这里已经在 FillRect 体系里，就统一用它。
+				blackBrush, _, _ := pCreateSolidBrush.Call(0 /* 黑色 */)
+				if blackBrush != 0 {
+					rcOne := rectT{0, 0, 1, 1}
+					pFillRect.Call(srcDC, uintptr(unsafe.Pointer(&rcOne)), blackBrush)
+					pDeleteObject.Call(blackBrush)
+				}
+				ov.dimDC, ov.dimBmp, ov.dimOldBmp = srcDC, oneBmp, oldOne
+			} else {
+				pDeleteDC.Call(srcDC)
+			}
+		}
+	}
 	// 画刷 / 字体只建一次，destroy 里统一释放。
 	if ov.brush == 0 {
 		ov.brush, _, _ = pCreateSolidBrush.Call(uintptr(colorrefRed))
@@ -798,6 +856,17 @@ func (ov *overlay) destroy() {
 	if ov.memBmp != 0 {
 		pDeleteObject.Call(ov.memBmp)
 		ov.memBmp = 0
+	}
+	if ov.dimDC != 0 {
+		if ov.dimBmp != 0 {
+			pSelectObject.Call(ov.dimDC, ov.dimOldBmp)
+		}
+		pDeleteDC.Call(ov.dimDC)
+		ov.dimDC = 0
+	}
+	if ov.dimBmp != 0 {
+		pDeleteObject.Call(ov.dimBmp)
+		ov.dimBmp = 0
 	}
 	if ov.brush != 0 {
 		pDeleteObject.Call(ov.brush)
@@ -1046,6 +1115,11 @@ func (ov *overlay) onPaint() {
 		ov.recreateBackBuffer()
 	}
 	ov.paintScreen(w, h)
+	// 全屏压暗 → 再把选区那块从原图重贴一次。
+	// 这就是微信/QQ 截图的观感：**整屏变暗、只有选中的区域是清楚的**。
+	// 顺序不能反：先把暗色铺满、再"挖"出选区，否则选区也会被一起压暗。
+	ov.paintDim(w, h)
+	ov.paintClearSelection()
 	ov.paintSelection()
 	ov.paintCrosshair(w, h)
 
@@ -1076,6 +1150,53 @@ func (ov *overlay) paintScreen(w, h int) {
 }
 
 // paintSelection 画选区：2 像素红色实线边框 + 左上角的尺寸文字。
+// ---------------------------------------------------------------------------
+// 遮罩（压暗 / 挖空）
+// ---------------------------------------------------------------------------
+
+// paintDim 把整个客户区压上一层半透明黑。
+//
+// 实现用的是 msimg32 的 AlphaBlend：源是一块 1x1 的纯黑位图（dimDC），
+// 靠 SourceConstantAlpha 给出固定透明度再被拉伸到整个客户区。
+// 1x1 就够 —— 源是纯色，拉伸不会失真，还省掉一整张 16MB 的暗色副本
+// （那样每帧都要多一次 400 万像素的换算，纯属浪费）。
+func (ov *overlay) paintDim(w, h int) {
+	if ov.memDC == 0 || ov.dimDC == 0 {
+		return
+	}
+	// BLENDFUNCTION 是 4 个字节，直接按位打包成一个 uintptr 传给 syscall。
+	//   BlendOp = AC_SRC_OVER(0)、BlendFlags = 0、
+	//   SourceConstantAlpha = 压暗程度、AlphaFormat = 0（不用逐像素 alpha）
+	blend := uintptr(acSrcOver) |
+		uintptr(0)<<8 |
+		uintptr(dimAlpha)<<16 |
+		uintptr(0)<<24
+	pAlphaBlend.Call(
+		ov.memDC, 0, 0, uintptr(w), uintptr(h),
+		ov.dimDC, 0, 0, 1, 1,
+		blend)
+}
+
+// paintClearSelection 把选区那块从原始截图里"重新贴一遍"（不压暗）。
+//
+// 客户区坐标与虚拟桌面是严格 1:1（见 paintScreen 的说明），所以源矩形与
+// 目标矩形用同一个值。
+func (ov *overlay) paintClearSelection() {
+	if ov.memDC == 0 || !ov.haveSel || ov.sel.Empty() || len(ov.bgra) == 0 {
+		return
+	}
+	r := ov.sel
+	pStretchDIBits.Call(
+		ov.memDC,
+		uintptr(int32(r.Min.X)), uintptr(int32(r.Min.Y)),
+		uintptr(r.Dx()), uintptr(r.Dy()),
+		uintptr(int32(r.Min.X)), uintptr(int32(r.Min.Y)),
+		uintptr(r.Dx()), uintptr(r.Dy()),
+		uintptr(unsafe.Pointer(&ov.bgra[0])),
+		uintptr(unsafe.Pointer(&ov.bmi)),
+		uintptr(dibRGBColors), uintptr(srcCopy))
+}
+
 func (ov *overlay) paintSelection() {
 	if ov.memDC == 0 || !ov.haveSel || ov.sel.Empty() {
 		return

@@ -21,6 +21,9 @@ import (
 var (
 	user32 = syscall.NewLazyDLL("user32.dll")
 	gdi32  = syscall.NewLazyDLL("gdi32.dll")
+	// msimg32.dll 只放 AlphaBlend（压暗整屏用的）。注意它既不在 gdi32 也不在 user32，
+	// 绑错的话要到真正调用时才 panic（同一个坑已经踩过两次，见 procs_windows_test.go）。
+	msimg32 = syscall.NewLazyDLL("msimg32.dll")
 )
 
 var (

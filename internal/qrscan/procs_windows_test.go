@@ -54,6 +54,7 @@ func TestAllWin32ProcsResolve(t *testing.T) {
 		{"SetBkMode", pSetBkMode},
 		{"CreateSolidBrush", pCreateSolidBrush},
 		{"TextOutW", pTextOutW},
+		{"AlphaBlend", pAlphaBlend},
 		// 截屏那边（screen_windows.go）
 		{"GetSystemMetrics", pGetSystemMetrics},
 		{"GetDC", pGetDC},

@@ -146,6 +146,7 @@ func main() {
 	wait := flag.Int("wait", 0, "等待窗口出现的秒数")
 	pad := flag.Int("pad", 0, "截图时四周留白像素")
 	rect := flag.String("rect", "", "截取屏幕区域，格式 x,y,w,h（用于拍摄任务栏托盘等不属于任何窗口的东西）")
+	holdDrag := flag.Bool("hold", false, "配合 -postdrag：只按下并移动，不松开（截取拖拽中间态）")
 	postdrag := flag.String("postdrag", "", "向该标题的窗口投递一组鼠标拖拽消息（自测用，完全不碰真实鼠标）")
 	flag.Parse()
 
@@ -163,7 +164,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "解析 -rect 失败：%v\n", err)
 			os.Exit(2)
 		}
-		if err := postDrag(*postdrag, r); err != nil {
+		if err := postDrag(*postdrag, r, *holdDrag); err != nil {
 			fmt.Fprintf(os.Stderr, "投递拖拽消息失败：%v\n", err)
 			os.Exit(1)
 		}
@@ -292,7 +293,7 @@ func main() {
 //
 // 坐标用**屏幕坐标**传入，这里换算成客户区坐标（遮罩窗口覆盖整个虚拟桌面，
 // 原点是 (-1920,0) 这种负值，不换算就会选到屏幕外面去）。
-func postDrag(title string, screenArea image.Rectangle) error {
+func postDrag(title string, screenArea image.Rectangle, hold bool) error {
 	needle := strings.ToLower(title)
 	var target *windowInfo
 	for _, w := range enumWindows() {
@@ -345,6 +346,11 @@ func postDrag(title string, screenArea image.Rectangle) error {
 			return err
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+	if hold {
+		// 只按下 + 移动、不松开：用来截取"拖拽中间态"的画面
+		// （验证"全屏压暗 + 选区透亮"必须看这个状态）。
+		return nil
 	}
 	return post(wmLButtonUp, 0, x2, y2)
 }

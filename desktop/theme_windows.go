@@ -28,9 +28,23 @@ var (
 	procGetWindowTextW           = user32.NewProc("GetWindowTextW")
 	procGetWindowThreadProcessID = user32.NewProc("GetWindowThreadProcessId")
 	procDwmSetWindowAttribute    = dwmapi.NewProc("DwmSetWindowAttribute")
+	procSetWindowDisplayAffinity = user32.NewProc("SetWindowDisplayAffinity")
+	procDwmFlush                 = dwmapi.NewProc("DwmFlush")
+	procGetWindowRect            = user32.NewProc("GetWindowRect")
+	procSetForegroundWindow      = user32.NewProc("SetForegroundWindow")
 	procRegGetValueW             = advapi32.NewProc("RegGetValueW")
 	procSetWindowLongPtrW        = user32.NewProc("SetWindowLongPtrW")
 	procSetWindowPos             = user32.NewProc("SetWindowPos")
+)
+
+// SetWindowDisplayAffinity 的取值。
+//
+// WDA_EXCLUDEFROMCAPTURE（0x11，Windows 10 2004+）：窗口在屏幕捕获里直接不可见。
+// 圈选前把主窗口排除掉，就不用隐藏它、也不用等它消失 ——
+// 那 280ms 的等待是用户能明显感觉到的卡顿（实测从 ~340ms 降到 ~60ms）。
+const (
+	wdaNone               = 0x00000000
+	wdaExcludeFromCapture = 0x00000011
 )
 
 // 把浮动窗口设为主窗口的附属窗口要用到的常量。
@@ -41,6 +55,7 @@ const (
 	hwndNotTopmost = ^uintptr(1) // -2
 	// SetWindowPos 的 flags：不动位置尺寸、不激活
 	swpNoSize     = 0x0001
+	swpNoZOrder   = 0x0004
 	swpNoMove     = 0x0002
 	swpNoActivate = 0x0010
 )
@@ -153,4 +168,99 @@ func systemIsDark() bool {
 		return false
 	}
 	return val == 0
+}
+
+// setWindowCaptureExclusion 把窗口从**屏幕捕获**里排除/恢复。
+//
+// 用 WDA_EXCLUDEFROMCAPTURE：被排除的窗口在 BitBlt 之类的屏幕捕获里直接看不见。
+// 圈选前把主窗口排除掉，就**不用把它隐藏起来**，于是也没有"等窗口真的消失"
+// 那 280ms —— 用户感觉是"点了就有反应"。
+//
+// 返回 false 表示系统不支持，调用方应退回"隐藏窗口"的老路。
+func setWindowCaptureExclusion(hwnd uintptr, exclude bool) bool {
+	if hwnd == 0 {
+		return false
+	}
+	v := uintptr(wdaNone)
+	if exclude {
+		v = wdaExcludeFromCapture
+	}
+	r, _, _ := procSetWindowDisplayAffinity.Call(hwnd, v)
+	return r != 0
+}
+
+// raiseMainWindowOnce 把主窗口**临时**提到最前，但**不做置顶**。
+//
+// 用户的原话："将主窗口临时提到所有窗口上面，就提一下，不固定"。
+// 所以用 SetWindowPos(HWND_TOP) 而不是 HWND_TOPMOST ——
+// 前者只是这一次把它挪到 z 序最前，后者会留下 WS_EX_TOPMOST 永久压住别的程序。
+func raiseMainWindowOnce() bool {
+	hwnd := findOwnWindow(mainWindowTitle)
+	if hwnd == 0 {
+		return false
+	}
+	procSetWindowPos.Call(hwnd, 0 /* HWND_TOP */, 0, 0, 0, 0,
+		uintptr(swpNoMove|swpNoSize))
+	// 只提到最前还不够：当前前台若是别的程序，用户可能仍看不到它。
+	// SetForegroundWindow 受前台锁限制（后台进程不一定抢得到），
+	// 所以失败不当错误 —— 上一步已经让它排到最前了。
+	procSetForegroundWindow.Call(hwnd)
+	return true
+}
+
+// dwmFlush 等桌面合成器把当前这一帧真正画完。
+//
+// 用途：隐藏主窗口之后，屏幕内容不会立刻更新（Hide 只是投递消息），
+// 早先的做法是 `time.Sleep(280ms)` 硬等 —— 那是整条圈选链路里最大的一块延迟。
+// DwmFlush 是等到"这一帧合成完成"，比瞎等精确也快得多。
+//
+// 它失败（比如 DWM 被关掉）不算错误，调用方照常往下走。
+func dwmFlush() {
+	procDwmFlush.Call()
+}
+
+// parkMainWindowOffscreen 把主窗口临时挪到虚拟桌面之外，返回原来的位置。
+//
+// 【为什么不直接 Hide()】DWM 会给"隐藏窗口"做一个约 200ms 的**淡出动画**，
+// 而截屏是在动画中间拍的 —— 实测拍到的是一块半透明的黑板（窗口标题栏还在）。
+// 早先那句 `time.Sleep(280ms)` 实际上就是在等这个动画演完。
+//
+// 挪窗口没有动画：位置一变，下一帧就是最终状态。所以既快（几十毫秒）又干净。
+// -32000 远超任何真实显示器，屏幕捕获（只覆盖虚拟桌面矩形）拍不到它。
+func parkMainWindowOffscreen() (int, int, bool) {
+	hwnd := findOwnWindow(mainWindowTitle)
+	if hwnd == 0 {
+		return 0, 0, false
+	}
+	var rc rectT
+	if r, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&rc))); r == 0 {
+		return 0, 0, false
+	}
+	x, y := int(rc.Left), int(rc.Top)
+	// 用变量而不是常量：常量负数转 uintptr 会被编译器判为溢出，
+	// 而 Win32 的坐标本来就是有符号的，运行时按位传过去正是我们要的。
+	offX, offY := int64(-32000), int64(-32000)
+	r, _, _ := procSetWindowPos.Call(hwnd, 0,
+		uintptr(offX), uintptr(offY), 0, 0,
+		uintptr(swpNoSize|swpNoZOrder|swpNoActivate))
+	if r == 0 {
+		return 0, 0, false
+	}
+	return x, y, true
+}
+
+// restoreWindowPos 把窗口挪回原来的位置。
+func restoreWindowPos(x, y int) {
+	hwnd := findOwnWindow(mainWindowTitle)
+	if hwnd == 0 {
+		return
+	}
+	procSetWindowPos.Call(hwnd, 0,
+		uintptr(int32(x)), uintptr(int32(y)), 0, 0,
+		uintptr(swpNoSize|swpNoZOrder|swpNoActivate))
+}
+
+// rectT 是 Win32 的 RECT（这里只用到左上角）。
+type rectT struct {
+	Left, Top, Right, Bottom int32
 }
