@@ -101,7 +101,7 @@ const themeTip = computed(() => {
 
     <div class="cp-spacer" />
 
-    <el-dropdown trigger="click" @command="onImportCommand">
+    <el-dropdown trigger="click" popper-class="cp-dropdown" @command="onImportCommand">
       <el-button :icon="Upload" :disabled="!!busy">
         导入<el-icon class="el-icon--right"><ArrowDown /></el-icon>
       </el-button>

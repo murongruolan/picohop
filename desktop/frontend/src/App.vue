@@ -490,6 +490,28 @@ async function handleDevOpen(name) {
       break
     }
 
+    // 打开「导入」下拉，方便截图核对条目的大小与间距（Element 下拉是 teleport 的，
+    // 没法用 scoped 样式改，必须看实际渲染）
+    case 'importmenu': {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      await wait(400)
+      const trigger = document.querySelector('.cp-toolbar .el-dropdown .el-tooltip__trigger')
+      if (!trigger) {
+        notify('error', '导入菜单自测', '找不到触发按钮', 0)
+        break
+      }
+      trigger.click()
+      await wait(300)
+      const items = document.querySelectorAll('.cp-dropdown .el-dropdown-menu__item')
+      notify(
+        items.length ? 'success' : 'error',
+        '导入菜单自测',
+        `下拉条目数 = ${items.length}；首项高度 = ${items[0]?.getBoundingClientRect().height ?? '?'}px`,
+        0,
+      )
+      break
+    }
+
     // 触发一次"从屏幕圈选二维码"，用来复现/验证那条链路。
     // 不 await：它会一直挂着直到用户圈选完或取消。
     case 'screenscan': {

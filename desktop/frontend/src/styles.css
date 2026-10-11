@@ -500,6 +500,43 @@ body.cp-float-window .el-overlay-dialog {
 }
 
 /* --------------------------------------------------------------------------
+ * 下拉菜单（「导入」那个）
+ *
+ * 为什么单独设样式：Element Plus 的全局 size 是 small，下拉项被压到 ~12px 字号、
+ * 行高也只有 20 出头 —— 鼠标 DPI 高、或者匆忙的时候很容易点错行。
+ * 这里放大到与**节点右键菜单**同一套手感（.cp-menu-item：13px / 30px 高），
+ * 再留一点行间距，让每一项彼此的边界清楚。
+ *
+ * 注意必须用 popper-class 而不是 scoped 样式：下拉面板是 teleport 到 body 的，
+ * 组件的 scoped 样式够不到它。
+ * ------------------------------------------------------------------------ */
+.cp-dropdown .el-dropdown-menu {
+  padding: 5px;
+  min-width: 208px;
+}
+.cp-dropdown .el-dropdown-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  line-height: 34px;
+  padding: 0 12px;
+  margin: 2px 0;
+  border-radius: var(--cp-radius-sm);
+  font-size: 13.5px;
+  color: var(--cp-text);
+}
+.cp-dropdown .el-dropdown-menu__item:not(.is-disabled):focus,
+.cp-dropdown .el-dropdown-menu__item:not(.is-disabled):hover {
+  background: var(--cp-brand-soft);
+  color: var(--cp-brand);
+}
+/* 图标也跟着大一点，否则大字号配小图标会显得头重脚轻 */
+.cp-dropdown .el-dropdown-menu__item .el-icon {
+  font-size: 15px;
+}
+
+/* --------------------------------------------------------------------------
  * 对话框：表单紧凑一点，标签右对齐
  * ------------------------------------------------------------------------ */
 /* --------------------------------------------------------------------------
