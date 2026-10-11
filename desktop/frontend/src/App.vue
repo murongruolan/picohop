@@ -578,9 +578,33 @@ async function handleDevOpen(name) {
       await wait(900)
       const reopened = tf()
 
+      // 【重开后第一次轻拖不能"跳"】用户实报："稍微动一下，他自己就会有一个
+      // 往拖动方向大范围动作"。原因是 Element Plus 把位移存在自己的闭包里，
+      // 而我刚开始只清了 DOM 的 transform —— 内部旧值还在，于是第一次拖动先弹回旧位置。
+      // 现在改成 destroy-on-close（组件重挂载、闭包重建），所以这里应该只有 1px 的位移。
+      const header2 = dlgEl()?.querySelector('.el-dialog__header')
+      let firstDrag = '（找不到标题栏）'
+      let jump = false
+      if (header2) {
+        const hr = header2.getBoundingClientRect()
+        const hx = Math.round(hr.left + 120)
+        const hy = Math.round(hr.top + hr.height / 2)
+        fire('mousedown', hx, hy, header2)
+        fire('mousemove', hx + 1, hy + 1, document)
+        fire('mouseup', hx + 1, hy + 1, document)
+        await wait(300)
+        firstDrag = tf()
+        const m = /translate\((-?\d+(?:\.\d+)?)px,\s*(-?\d+(?:\.\d+)?)px\)/.exec(firstDrag)
+        if (m) jump = Math.abs(Number(m[1])) > 3 || Math.abs(Number(m[2])) > 3
+        else if (firstDrag !== '（空）') jump = true
+      }
+
       // 再验一件用户实报的事：按住关闭按钮时**不能**被当成拖动。
       // 手法：在关闭按钮上合成 mousedown + 轻微移动 + mouseup，看位移是否仍为空。
       const btn = dlgEl()?.querySelector('.el-dialog__headerbtn')
+      // 断言要跟"微拖前"比，而不是跟"空"比 —— 上面那步"重开后轻拖 1px"
+      // 已经让弹窗带上了 1px 位移（我第一次就写成了跟空比，于是误报）。
+      const beforeBtnDrag = tf()
       let btnMoved = '（找不到按钮）'
       if (btn) {
         const br = btn.getBoundingClientRect()
@@ -593,12 +617,17 @@ async function handleDevOpen(name) {
         btnMoved = tf()
       }
 
-      const ok = dragged !== '（空）' && reopened === '（空）' && btnMoved === '（空）'
+      const ok =
+        dragged !== '（空）' &&
+        reopened === '（空）' &&
+        btnMoved === beforeBtnDrag && // 微拖前后一致 = 没被当成拖动
+        !jump
       notify(ok ? 'success' : 'error', '设置面板位置重置测试',
         `拖动前 transform = ${before}\n拖动后 = ${dragged}（应非空）\n` +
         `关闭再打开 = ${reopened}（应为空）\n` +
-        `按住关闭按钮微拖后 = ${btnMoved}（应为空，即没被当成拖动）\n` +
-        `→ ${ok ? '回到默认位置 + 关闭按钮不被拖动吃掉 ✓' : '有问题，看上面几项'}`,
+        `按住关闭按钮微拖：${beforeBtnDrag} → ${btnMoved}（应不变，即没被当成拖动）\n` +
+        `重开后第一次轻拖 1px = ${firstDrag}（应只有 1px，不能跳到旧位置）\n` +
+        `→ ${ok ? '回到默认位置 + 关闭按钮不被拖动吃掉 + 重开不跳 ✓' : '有问题，看上面几项'}`,
         0)
       ui.settingsDialog = false
       break

@@ -295,10 +295,16 @@ func (a *API) finishFloat(result string, closeWindow bool) {
 
 	if closeWindow && sess.window != nil {
 		sess.closing.Store(true)
+		// 【先立刻隐藏，再销毁窗口】
+		//
+		// 对话框的 DOM 在收到结果那一刻就已经清空了，而窗口还要等一会儿才销毁 ——
+		// 这段间隙里用户会看到"一个什么都没装的弹窗一闪而过"（用户实报）。
+		// 隐藏是瞬时的，先把这块空壳从屏幕上撤掉，再从容销毁。
+		sess.window.Hide()
 		go func() {
 			// 稍等一下再关：调用方可能正是这个窗口里的 JS，
 			// 立刻销毁会让它那条调用以异常收场（无害，但难看）。
-			time.Sleep(150 * time.Millisecond)
+			time.Sleep(120 * time.Millisecond)
 			sess.window.Close()
 		}()
 	}

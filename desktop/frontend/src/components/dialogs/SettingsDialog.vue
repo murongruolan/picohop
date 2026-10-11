@@ -5,7 +5,7 @@
  * 刻意保持精简：只放主流客户端/主流客户端里**我们真的会用到**的项。
  * 没有订阅、没有开机自启、没有一堆用不上的开关。
  */
-import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { Folder, Refresh, RefreshRight } from '@element-plus/icons-vue'
 import { useStore } from '../../store'
 import { useUi } from '../../ui'
@@ -161,17 +161,16 @@ watch(visible, async (v) => {
   tab.value = ui.settingsInitialTab || 'front'
   ui.settingsInitialTab = ''
   frontTest.value = null
-
-  // 【每次打开都回到默认位置】
+  // 【每次打开都回到默认位置 —— 靠 destroy-on-close，不要自己清 transform】
   //
-  // Element Plus 的拖动是给 .el-dialog 加一个 inline transform，而对话框关闭后
-  // **元素不会被销毁** —— 于是"上次拖到哪儿、下次就开在哪儿"（用户注意到的那点）。
-  // 别的对话框留着这个记忆挺好，但设置面板内容固定、居中打开最好找，所以这里清掉。
-  // 清的是 inline transform（拖动产生的唯一东西），不影响布局样式。
-  nextTick(() => {
-    const el = document.querySelector('.el-dialog.cp-dlg-settings')
-    if (el) el.style.transform = ''
-  })
+  // 走过的弯路：一开始我在打开时把 .el-dialog 的 inline transform 清成空。
+  // 位置确实回去了，但**第一次拖动会"跳"一下**：Element Plus 把拖动位移存在
+  // 自己的闭包里（useDraggable 的 transform.offsetX/offsetY），我只清了 DOM，
+  // 没清它内部的值 —— 下次按住移动时它算的是"内部旧值 + 位移"，于是弹窗先弹回
+  // 上次的位置、之后才跟手（用户实报："稍微动一下就往拖动方向大动作一下"）。
+  //
+  // destroy-on-close 让内容在关闭时真的销毁、下次打开重新挂载，拖动组件的闭包
+  // 跟着重建 → DOM 位移和内部值一起归零：既回默认位置，也不会跳。
   try {
     const [s, f] = await Promise.all([api.getSettings(), api.getFront()])
     Object.assign(form, blankSettings(), s || {})
@@ -272,6 +271,7 @@ const meta = computed(() => store.meta || {})
     top="4vh"
     draggable
     align-center
+    destroy-on-close
     :close-on-click-modal="false"
     append-to-body
   >
