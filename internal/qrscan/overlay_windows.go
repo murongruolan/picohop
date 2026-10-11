@@ -67,11 +67,9 @@ var (
 	pShowCursor                 = user32.NewProc("ShowCursor")
 	pSetWindowLongPtrW          = user32.NewProc("SetWindowLongPtrW")
 	pGetWindowLongPtrW          = user32.NewProc("GetWindowLongPtrW")
-	pSystemParametersInfoW      = user32.NewProc("SystemParametersInfoW")
 )
 
 var (
-	pStretchDIBits = gdi32.NewProc("StretchDIBits")
 	// TextOutW 也在 gdi32 里，**不在 user32**。
 	//
 	// 这一行曾经写成 user32.NewProc("TextOutW")，代价是：拖动产生选区之后，
@@ -90,9 +88,6 @@ var (
 	// CreateSolidBrush 在 gdi32 里，不在 user32 —— 放错不会编译报错，
 	// 而是运行时在 mustFind 里直接 panic（Failed to find ... procedure）。
 	pCreateSolidBrush = gdi32.NewProc("CreateSolidBrush")
-
-	// AlphaBlend 在 msimg32.dll（不是 gdi32，也不是 user32）—— 压暗整屏用它。
-	pAlphaBlend = msimg32.NewProc("AlphaBlend")
 )
 
 // LOGPIXELSY：GetDeviceCaps 的索引，用来把字号从 96 DPI 缩放到实际 DPI。
@@ -207,9 +202,6 @@ const (
 	// 会直接编译报错（constant -21 overflows uintptr）。
 
 	// SystemParametersInfo：设置/清除"拖拽时显示窗口内容"
-	spiSetDragFullWindows = 0x0025
-	spifSendChange        = 0x0002
-	spifUpdateIniFile     = 0x0001
 
 	// EndPaint 的返回值 / DefWindowProc 的返回值
 	defWindowProcOK = 0
@@ -237,9 +229,8 @@ const (
 	bkModeTransparent = 1
 
 	// 压暗整屏用：AC_SRC_OVER 是唯一可用的混合方式（AlphaBlend 的 BlendOp）。
-	acSrcOver = 0
-	// dimAlpha 是压暗程度（0-255，SourceConstantAlpha）。
-	// 110/255 ≈ 43%，和微信/QQ 截图的观感接近：能看清底下是什么，但注意力在选区上。
+	// dimAlpha 是压暗程度（0-255），交给 SetLayeredWindowAttributes 的 LWA_ALPHA。
+	// 110/255 ≈ 43%，和微信/QQ 截图的观感接近：能看清底下是什么，注意力却在选区上。
 	dimAlpha = 110
 )
 
@@ -347,11 +338,6 @@ type overlay struct {
 	// 尺寸=vs.Dx()xvs.Dy()，客户区坐标 = 绝对坐标 - vs.Min。
 	vs image.Rectangle
 
-	// bmi/bgra 是给 StretchDIBits 用的 top-down 32bpp DIB。
-	// bgra 是"背景位图"的内存副本，建窗口前转换一次，之后每帧直接复用。
-	bmi  bitmapInfo
-	bgra []byte
-
 	// 双缓冲：直接画到窗口 DC 上会闪烁（每帧先擦白再贴图）。
 	memDC     uintptr
 	memBmp    uintptr
@@ -360,22 +346,13 @@ type overlay struct {
 	font      uintptr // 尺寸文字字体
 	labelSize int32   // 实际字号像素
 
-	// 压暗整屏用的 1x1 纯黑源 DC（见 paintDim）。
-	// 只要 1x1：源是纯色，拉伸不会失真，还省掉一整张 16MB 的暗色副本
-	// —— 那样每帧都得多跑一次 400 万像素的换算，纯属浪费。
 	loggedSizes bool
-	srcBounds   image.Rectangle
-	srcStride   int
 
 	// 压暗用的纯黑画刷（背景就是黑 + 半透明窗口属性）
 	blackBrush uintptr
 
 	// regionSel 是"窗口区域最后一次按哪个选区设过"，用来避免每帧重设区域
 	regionSel image.Rectangle
-
-	dimDC     uintptr
-	dimBmp    uintptr
-	dimOldBmp uintptr
 
 	// 鼠标（客户区坐标）
 	mouse image.Point
@@ -391,8 +368,6 @@ type overlay struct {
 	cancelled bool
 
 	// SPI_SETDRAGFULLWINDOWS 的原值，退出时恢复（属于全局用户设置，不能改完就跑）
-	dragFullWas     uint32
-	dragFullChanged bool
 }
 
 // ---------------------------------------------------------------------------
@@ -568,7 +543,7 @@ func runOverlaySession(ready chan overlayReady, result chan overlayResult, onRea
 
 	// 3) 建窗口。这一步失败（无桌面会话）必须回报有意义的错误，不能 panic。
 	tMark = time.Now()
-	ov = newOverlay(vs, nil)
+	ov = newOverlay(vs)
 	msConvert := sinceMS(tMark)
 
 	tMark = time.Now()
@@ -674,38 +649,18 @@ func registerOverlayClass() (uint16, error) {
 	return atom, nil
 }
 
-// newOverlay 构造会话状态：把整屏 RGBA 转成 StretchDIBits 需要的 top-down BGRA。
-func newOverlay(vs image.Rectangle, full *image.RGBA) *overlay {
+// newOverlay 构造圈选会话。
+//
+// 这里曾经要把整屏 RGBA 转成 StretchDIBits 用的 top-down BGRA ——
+// 显示改成"半透明黑窗口（WS_EX_LAYERED）+ 窗口区域挖洞"之后，背景不再需要截图，
+// 于是那段 400 万像素的逐像素转换、16MB 的缓冲区、以及 bgra/bmi 两个字段一起删掉了。
+// 截图现在只在最后识别二维码时截**选区那一小块**。
+func newOverlay(vs image.Rectangle) *overlay {
 	w, h := vs.Dx(), vs.Dy()
-	ov := &overlay{
+	return &overlay{
 		vs:    vs,
 		mouse: image.Pt(w/2, h/2), // 还没收到 WM_MOUSEMOVE 时，准星先待在屏幕中央
 	}
-	// full == nil：显示不再依赖截图（见 runOverlaySession），
-	// 所以 bgra/bmi 这些"背景位图"字段全部不需要了。
-	if full == nil {
-		return ov
-	}
-	ov.bgra = make([]byte, w*h*4)
-	// image.RGBA 的内存序是 R,G,B,A，而 BI_RGB 的 32bpp DIB 内存序是 B,G,R,A，
-	// 必须逐像素换一次。只换这一次（建窗口前），之后每帧直接复用这块缓冲。
-	for i := 0; i+3 < len(full.Pix) && i+3 < len(ov.bgra); i += 4 {
-		ov.bgra[i+0] = full.Pix[i+2] // B ← R
-		ov.bgra[i+1] = full.Pix[i+1] // G ← G
-		ov.bgra[i+2] = full.Pix[i+0] // R ← B
-		ov.bgra[i+3] = 0xFF
-	}
-	ov.bmi = bitmapInfo{
-		Header: bitmapInfoHeader{
-			BiSize:        uint32(unsafe.Sizeof(bitmapInfoHeader{})),
-			BiWidth:       int32(w),
-			BiHeight:      -int32(h), // 负高度 = top-down，与内存顺序一致
-			BiPlanes:      1,
-			BiBitCount:    32,
-			BiCompression: biRGB,
-		},
-	}
-	return ov
 }
 
 // create 建窗口并显示。
@@ -762,38 +717,6 @@ func (ov *overlay) create(hidden bool) error {
 	return nil
 }
 
-// disableDragFullWindows 在圈选期间关掉系统"拖拽时显示窗口内容"。
-//
-// 为什么值得做：开着它时 Windows 会为拖拽路径额外插入 WM_SYNCPAINT /
-// 全窗口重绘，和我们在 WM_PAINT 里"每帧重贴整屏原图"打架，选区边框会出现
-// 一帧旧边界（残影）。关掉之后只有我们自己的重绘。
-// 调用失败（权限/远程会话）不算错误，照常继续。
-func (ov *overlay) disableDragFullWindows() {
-	var old uint32
-	r, _, _ := pSystemParametersInfoW.Call(
-		uintptr(spiSetDragFullWindows), 0,
-		uintptr(unsafe.Pointer(&old)),
-		uintptr(spifSendChange|spifUpdateIniFile))
-	if r == 0 {
-		return
-	}
-	ov.dragFullWas = old
-	ov.dragFullChanged = true
-}
-
-// restoreDragFullWindows 把上面那个系统设置恢复原值。
-//
-// 必须恢复：这是**全局用户设置**，不恢复就等于我们悄悄改掉了用户的系统偏好。
-func (ov *overlay) restoreDragFullWindows() {
-	if !ov.dragFullChanged {
-		return
-	}
-	ov.dragFullChanged = false
-	pSystemParametersInfoW.Call(
-		uintptr(spiSetDragFullWindows), uintptr(ov.dragFullWas), 0,
-		uintptr(spifSendChange|spifUpdateIniFile))
-}
-
 // recreateBackBuffer 建双缓冲：一个尺寸等于客户区的内存 DC + 兼容位图。
 //
 // 为什么要双缓冲：WM_PAINT 里要"贴整屏原图 + 画边框 + 画准星"三步，
@@ -833,27 +756,8 @@ func (ov *overlay) recreateBackBuffer() {
 	old, _, _ := pSelectObject.Call(memDC, bmp)
 	ov.memDC, ov.memBmp, ov.oldBmp = memDC, bmp, old
 
-	// 压暗用的 1x1 黑源 DC：也建一次就够（源是纯色，靠拉伸铺满）。
-	if ov.dimDC == 0 {
-		srcDC, _, _ := pCreateCompatibleDC.Call(winDC)
-		if srcDC != 0 {
-			oneBmp, _, _ := pCreateCompatibleBitmap.Call(winDC, 1, 1)
-			if oneBmp != 0 {
-				oldOne, _, _ := pSelectObject.Call(srcDC, oneBmp)
-				// 用黑画刷把这一格涂黑。PatBlt 的 BLACKNESS 更省事，
-				// 但这里已经在 FillRect 体系里，就统一用它。
-				blackBrush, _, _ := pCreateSolidBrush.Call(0 /* 黑色 */)
-				if blackBrush != 0 {
-					rcOne := rectT{0, 0, 1, 1}
-					pFillRect.Call(srcDC, uintptr(unsafe.Pointer(&rcOne)), blackBrush)
-					pDeleteObject.Call(blackBrush)
-				}
-				ov.dimDC, ov.dimBmp, ov.dimOldBmp = srcDC, oneBmp, oldOne
-			} else {
-				pDeleteDC.Call(srcDC)
-			}
-		}
-	}
+	// 压暗用的 1x1 黑源 DC 已经不需要了：压暗改成窗口属性（WS_EX_LAYERED）之后，
+	// 背景只铺纯黑，既没有 AlphaBlend、也没有那张 1x1 位图。
 	// 画刷 / 字体只建一次，destroy 里统一释放。
 	if ov.brush == 0 {
 		ov.brush, _, _ = pCreateSolidBrush.Call(uintptr(colorrefRed))
@@ -888,8 +792,6 @@ func overlayFontSize(dc uintptr) int32 {
 // destroy 逆序释放全部资源。必须可重复调用（会话正常结束时走这里，
 // 消息循环里的 WM_DESTROY 也会兜一次）。
 func (ov *overlay) destroy() {
-	// 先恢复系统设置：这是全局用户偏好，任何退出路径都不能漏。
-	ov.restoreDragFullWindows()
 	if ov.memDC != 0 {
 		if ov.memBmp != 0 {
 			pSelectObject.Call(ov.memDC, ov.oldBmp)
@@ -900,17 +802,6 @@ func (ov *overlay) destroy() {
 	if ov.memBmp != 0 {
 		pDeleteObject.Call(ov.memBmp)
 		ov.memBmp = 0
-	}
-	if ov.dimDC != 0 {
-		if ov.dimBmp != 0 {
-			pSelectObject.Call(ov.dimDC, ov.dimOldBmp)
-		}
-		pDeleteDC.Call(ov.dimDC)
-		ov.dimDC = 0
-	}
-	if ov.dimBmp != 0 {
-		pDeleteObject.Call(ov.dimBmp)
-		ov.dimBmp = 0
 	}
 	if ov.brush != 0 {
 		pDeleteObject.Call(ov.brush)
@@ -924,7 +815,6 @@ func (ov *overlay) destroy() {
 		pDeleteObject.Call(ov.font)
 		ov.font = 0
 	}
-	ov.bgra = nil
 }
 
 // messageLoop 是标准的 GetMessage/Translate/Dispatch 循环（跑在锁定线程上）。
@@ -1162,18 +1052,12 @@ func (ov *overlay) onPaint() {
 	if ov.memDC == 0 {
 		ov.recreateBackBuffer()
 	}
-	// 只诊断一次：客户区尺寸与截图尺寸是否一致。
-	// 不一致就说明窗口的物理尺寸没对齐虚拟桌面（DPI 缩放/窗口管理器调整），
-	// 那会让"挖选区"与"贴背景"两套坐标对不上 —— 记下来，别靠猜。
+	// 只诊断一次：客户区尺寸和虚拟桌面尺寸是否一致。
+	// 不一致就说明窗口的物理尺寸没对齐虚拟桌面（DPI 缩放 / 窗口管理器调整），
+	// 那会让"挖洞"的坐标与真实屏幕对不上 —— 记下来，别靠猜。
 	if !ov.loggedSizes {
 		ov.loggedSizes = true
-		// 关键：把**真正拿到的图**的属性打出来，而不是我以为的尺寸。
-		// bgra 是按 w*h*4 顺序拷的，如果源图的 Stride ≠ 4*宽（image.RGBA 允许带行填充），
-		// 逐行错位就会把内容整体"斜切"——表现正是"同一批文字在内外两块里位置不同"。
 		Tracef("qrscan 尺寸核对：客户区=%dx%d 虚拟桌面=%dx%d", w, h, ov.vs.Dx(), ov.vs.Dy())
-		Tracef("qrscan 缓冲区核对：bgra=%d 期望=%d；源图 bounds=%v stride=%d 期望stride=%d",
-			len(ov.bgra), ov.vs.Dx()*ov.vs.Dy()*4,
-			ov.srcBounds, ov.srcStride, ov.vs.Dx()*4)
 	}
 	// 【不再贴截图】背景只铺一层纯黑：窗口本身是 LWA_ALPHA 半透明的，
 	// "黑 + 半透明"就是整屏压暗。
@@ -1198,80 +1082,10 @@ func (ov *overlay) onPaint() {
 	}
 }
 
-// paintScreen 把背景截图 1:1 贴到内存 DC 上（不清屏、不缩放）。
-func (ov *overlay) paintScreen(w, h int) {
-	if ov.memDC == 0 || len(ov.bgra) == 0 {
-		return
-	}
-	// StretchDIBits 的参数顺序是"目标在前、源在后"：
-	// (hdc, xDst, yDst, wDst, hDst, xSrc, ySrc, wSrc, hSrc, bits, bmi, usage, rop)
-	// 源矩形用 (0,0,屏幕宽,屏幕高)：bgra 里存的就是整个虚拟桌面，
-	// 而客户区坐标 0,0 正好对应虚拟桌面左上角 vs.Min，所以是严格 1:1。
-	// 传 SRCCOPY 而不是 HALFTONE，避免 DPI 不匹配时被系统做一次重采样把二维码糊掉。
-	// 【必须 1:1，不能拉伸】目标尺寸用源尺寸（虚拟桌面），而不是客户区尺寸。
-	//
-	// 这里曾经是"把源图拉伸铺满客户区"，而 paintClearSelection（挖出选区）是 1:1
-	// 拷贝 —— 只要客户区尺寸 ≠ 截图尺寸（DPI 缩放就会出现），两种映射就不一致，
-	// 表现为"挖出来的选区跟背景对不上、像分辨率错位"（用户实报）。
-	// 客户区比截图大的部分留黑（它本来也不该存在；真出现了说明窗口尺寸没对齐）。
-	pStretchDIBits.Call(
-		ov.memDC,
-		0, 0, uintptr(ov.vs.Dx()), uintptr(ov.vs.Dy()),
-		0, 0, uintptr(ov.vs.Dx()), uintptr(ov.vs.Dy()),
-		uintptr(unsafe.Pointer(&ov.bgra[0])),
-		uintptr(unsafe.Pointer(&ov.bmi)),
-		uintptr(dibRGBColors),
-		uintptr(srcCopy),
-	)
-}
-
 // paintSelection 画选区：2 像素红色实线边框 + 左上角的尺寸文字。
 // ---------------------------------------------------------------------------
 // 遮罩（压暗 / 挖空）
 // ---------------------------------------------------------------------------
-
-// paintDim 把整个客户区压上一层半透明黑。
-//
-// 实现用的是 msimg32 的 AlphaBlend：源是一块 1x1 的纯黑位图（dimDC），
-// 靠 SourceConstantAlpha 给出固定透明度再被拉伸到整个客户区。
-// 1x1 就够 —— 源是纯色，拉伸不会失真，还省掉一整张 16MB 的暗色副本
-// （那样每帧都要多一次 400 万像素的换算，纯属浪费）。
-func (ov *overlay) paintDim(w, h int) {
-	if ov.memDC == 0 || ov.dimDC == 0 {
-		return
-	}
-	// BLENDFUNCTION 是 4 个字节，直接按位打包成一个 uintptr 传给 syscall。
-	//   BlendOp = AC_SRC_OVER(0)、BlendFlags = 0、
-	//   SourceConstantAlpha = 压暗程度、AlphaFormat = 0（不用逐像素 alpha）
-	blend := uintptr(acSrcOver) |
-		uintptr(0)<<8 |
-		uintptr(dimAlpha)<<16 |
-		uintptr(0)<<24
-	pAlphaBlend.Call(
-		ov.memDC, 0, 0, uintptr(w), uintptr(h),
-		ov.dimDC, 0, 0, 1, 1,
-		blend)
-}
-
-// paintClearSelection 把选区那块从原始截图里"重新贴一遍"（不压暗）。
-//
-// 客户区坐标与虚拟桌面是严格 1:1（见 paintScreen 的说明），所以源矩形与
-// 目标矩形用同一个值。
-func (ov *overlay) paintClearSelection() {
-	if ov.memDC == 0 || !ov.haveSel || ov.sel.Empty() || len(ov.bgra) == 0 {
-		return
-	}
-	r := ov.sel
-	pStretchDIBits.Call(
-		ov.memDC,
-		uintptr(int32(r.Min.X)), uintptr(int32(r.Min.Y)),
-		uintptr(r.Dx()), uintptr(r.Dy()),
-		uintptr(int32(r.Min.X)), uintptr(int32(r.Min.Y)),
-		uintptr(r.Dx()), uintptr(r.Dy()),
-		uintptr(unsafe.Pointer(&ov.bgra[0])),
-		uintptr(unsafe.Pointer(&ov.bmi)),
-		uintptr(dibRGBColors), uintptr(srcCopy))
-}
 
 func (ov *overlay) paintSelection() {
 	if ov.memDC == 0 || !ov.haveSel || ov.sel.Empty() {

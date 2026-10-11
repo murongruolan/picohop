@@ -278,13 +278,6 @@ func (a *API) notifyMinimisedToTray() {
 	})
 }
 
-// warnShortcutFailed 快捷键注册失败时记一条告警（后端就绪后会在界面上显示）。
-func (a *API) warnShortcutFailed(accel, desc string, err error) {
-	a.shortcutWarned.Do(func() {
-		a.warnShell(fmt.Sprintf("%s（%s）可能被其它程序占用了：%v", accel, desc, err))
-	})
-}
-
 // clipboardText 读系统剪贴板（对应 v2 的 runtime.ClipboardGetText）。
 //
 // 签名与 v2 不同：v3 返回 (string, bool)，没有 error —— 拿不到就是 false。
@@ -301,13 +294,6 @@ func (a *API) setClipboard(text string) bool {
 		return false
 	}
 	return a.wapp.Clipboard.SetText(text)
-}
-
-// windowHide 隐藏主窗口（圈选二维码前要先把窗口收起来，否则会挡住屏幕）。
-func (a *API) windowHide() {
-	if a.mainWin != nil {
-		a.mainWin.Hide()
-	}
 }
 
 // windowRestore 把主窗口显示回来并取消最小化。

@@ -28,7 +28,6 @@ var (
 	procGetWindowTextW           = user32.NewProc("GetWindowTextW")
 	procGetWindowThreadProcessID = user32.NewProc("GetWindowThreadProcessId")
 	procDwmSetWindowAttribute    = dwmapi.NewProc("DwmSetWindowAttribute")
-	procSetWindowDisplayAffinity = user32.NewProc("SetWindowDisplayAffinity")
 	procDwmFlush                 = dwmapi.NewProc("DwmFlush")
 	procGetWindowRect            = user32.NewProc("GetWindowRect")
 	procSetForegroundWindow      = user32.NewProc("SetForegroundWindow")
@@ -42,10 +41,7 @@ var (
 // WDA_EXCLUDEFROMCAPTURE（0x11，Windows 10 2004+）：窗口在屏幕捕获里直接不可见。
 // 圈选前把主窗口排除掉，就不用隐藏它、也不用等它消失 ——
 // 那 280ms 的等待是用户能明显感觉到的卡顿（实测从 ~340ms 降到 ~60ms）。
-const (
-	wdaNone               = 0x00000000
-	wdaExcludeFromCapture = 0x00000011
-)
+const ()
 
 // 把浮动窗口设为主窗口的附属窗口要用到的常量。
 const (
@@ -168,25 +164,6 @@ func systemIsDark() bool {
 		return false
 	}
 	return val == 0
-}
-
-// setWindowCaptureExclusion 把窗口从**屏幕捕获**里排除/恢复。
-//
-// 用 WDA_EXCLUDEFROMCAPTURE：被排除的窗口在 BitBlt 之类的屏幕捕获里直接看不见。
-// 圈选前把主窗口排除掉，就**不用把它隐藏起来**，于是也没有"等窗口真的消失"
-// 那 280ms —— 用户感觉是"点了就有反应"。
-//
-// 返回 false 表示系统不支持，调用方应退回"隐藏窗口"的老路。
-func setWindowCaptureExclusion(hwnd uintptr, exclude bool) bool {
-	if hwnd == 0 {
-		return false
-	}
-	v := uintptr(wdaNone)
-	if exclude {
-		v = wdaExcludeFromCapture
-	}
-	r, _, _ := procSetWindowDisplayAffinity.Call(hwnd, v)
-	return r != 0
 }
 
 // raiseMainWindowOnce 把主窗口**临时**提到最前，但**不做置顶**。

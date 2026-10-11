@@ -10,10 +10,6 @@ func applyImmersiveDarkMode(string, bool) bool { return false }
 
 func systemIsDark() bool { return false }
 
-// 圈选时把主窗口从屏幕捕获里排除（Windows 才有；其它平台直接返回 false，
-// 调用方会退回"隐藏窗口"的老路）。
-func setWindowCaptureExclusion(uintptr, bool) bool { return false }
-
 // 把主窗口临时提到最前（其它平台空实现）。
 func raiseMainWindowOnce() bool { return false }
 

@@ -51,8 +51,7 @@ type API struct {
 	devOpen string
 
 	// 以下两个 Once 用于"只提示一次"的场景：收进托盘、快捷键注册失败。
-	trayHintOnce   sync.Once
-	shortcutWarned sync.Once
+	trayHintOnce sync.Once
 
 	// 外壳（托盘/快捷键）的初始化结果。
 	//
