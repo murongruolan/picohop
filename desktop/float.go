@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -92,7 +93,9 @@ func (a *API) OpenFloatDialog(kind, payloadJSON, devOpen string) (string, error)
 	}
 	fx, fy := a.floatPosition(size[0], size[1])
 
-	// 无边框 + 置顶：这就是"比主窗口高一级、能满屏乱跑"的体现。
+	// 不是 AlwaysOnTop：用户明确说过"它只比主窗口优先级高就行，现在是比任何应用
+	// 优先级都高"。所以改成把浮动窗口设成**主窗口的附属窗口**：
+	// 永远在主窗口之上，但不会盖住别的程序（见 setWindowOwner 的注释）。
 	// 拖动由前端在标题栏上设 CSS `--wails-draggable: drag` 实现（见 styles.css）。
 	win := a.wapp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:             "float-" + kind,
@@ -102,7 +105,7 @@ func (a *API) OpenFloatDialog(kind, payloadJSON, devOpen string) (string, error)
 		MinWidth:         560,
 		MinHeight:        360,
 		Frameless:        true,
-		AlwaysOnTop:      true,
+		AlwaysOnTop:      false,
 		InitialPosition:  application.WindowXY,
 		X:                fx,
 		Y:                fy,
@@ -115,6 +118,28 @@ func (a *API) OpenFloatDialog(kind, payloadJSON, devOpen string) (string, error)
 		},
 	})
 	sess.window = win
+
+	// 把浮动窗口挂到主窗口名下（附属窗口）。
+	// 窗口是异步建出来的，句柄要等一下才有，所以放到 goroutine 里重试几次。
+	// 这一步失败不影响功能（只是层级退化成普通窗口），所以只记日志。
+	go func() {
+		for i := 0; i < 40; i++ {
+			time.Sleep(50 * time.Millisecond)
+			child := findOwnWindow(title)
+			if child == 0 {
+				continue
+			}
+			owner := findOwnWindow(mainWindowTitle)
+			if owner == 0 {
+				continue
+			}
+			if !setWindowOwner(child, owner) {
+				log.Printf("浮动窗口设为附属窗口失败（不影响使用，只是层级退化成普通窗口）")
+			}
+			return
+		}
+		log.Printf("浮动窗口句柄未能定位，未设为附属窗口（其标题为 %q）", title)
+	}()
 
 	// 用户直接点浮动窗口的关闭（或 Esc）→ 按"取消"处理。
 	//

@@ -454,22 +454,49 @@ body.cp-float-window .el-dialog.cp-dialog {
   height: 100vh;
 }
 /* 窗口没有系统标题栏，所以对话框的标题栏同时兼任"窗口拖动把手"。
-   v3 用 CSS 变量标记可拖动区域（runtime 的 appregion/drag 模块读它）。 */
+   这里把它做成**紧凑标题栏**：左侧标题、右侧关闭按钮、34px 高 ——
+   和主窗口的标题栏同一个观感。之前是 Element Plus 的对话框头部
+   （16px+12px 内边距 + 大字号），用户形容为"一个大额头"，确实难看。 */
 body.cp-float-window .cp-dialog .el-dialog__header {
   --wails-draggable: drag;
   background: var(--cp-panel-2);
+  height: 34px;
+  display: flex;
+  align-items: center;
+  /* 右侧留出关闭按钮的位置 */
+  padding: 0 6px 0 14px;
+  margin: 0;
+  border-bottom: 1px solid var(--cp-border);
   /* 拖动时不要触发浏览器原生的文字选中/元素拖拽（那会拖出一个"幽灵"跟着鼠标）
      —— 配合 NodeDialog 关掉 Element Plus 的 draggable，标题栏只负责移动窗口。 */
   user-select: none;
   -webkit-user-select: none;
   -webkit-user-drag: none;
 }
+body.cp-float-window .cp-dialog .el-dialog__title {
+  font-size: 13px;
+  font-weight: 600;
+}
+body.cp-float-window .cp-dialog .el-dialog__headerbtn {
+  /* 从"绝对定位在右上角"改成标题栏里的普通元素，紧跟标题右侧 */
+  position: static;
+  width: 30px;
+  height: 30px;
+  margin-left: auto;
+  top: auto;
+  right: auto;
+  --wails-draggable: no-drag;
+}
 body.cp-float-window .cp-dialog .el-dialog__header * {
   -webkit-user-drag: none;
 }
-/* 但标题栏里的关闭按钮要排除，否则点它会变成拖窗口 */
-body.cp-float-window .cp-dialog .el-dialog__headerbtn {
-  --wails-draggable: no-drag;
+/* 关闭时不要淡出动画：窗口马上就没了，动画只会留下一帧"内容已清空、
+   只剩一个空架子"的画面（用户报过"内容先消失、过一秒才整个消失"）。 */
+body.cp-float-window .dialog-fade-enter-active,
+body.cp-float-window .dialog-fade-leave-active,
+body.cp-float-window .el-overlay-dialog {
+  animation: none !important;
+  transition: none !important;
 }
 
 /* --------------------------------------------------------------------------

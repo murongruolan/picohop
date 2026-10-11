@@ -39,16 +39,24 @@ import (
 var (
 	user32 = syscall.NewLazyDLL("user32.dll")
 
-	procEnumWindows      = user32.NewProc("EnumWindows")
-	procGetWindowTextW   = user32.NewProc("GetWindowTextW")
-	procGetWindowRect    = user32.NewProc("GetWindowRect")
-	procGetClientRect    = user32.NewProc("GetClientRect")
-	procClientToScreen   = user32.NewProc("ClientToScreen")
-	procIsWindowVisible  = user32.NewProc("IsWindowVisible")
-	procSetForegroundWin = user32.NewProc("SetForegroundWindow")
-	procShowWindow       = user32.NewProc("ShowWindow")
-	procPostMessageW     = user32.NewProc("PostMessageW")
+	procEnumWindows       = user32.NewProc("EnumWindows")
+	procGetWindowTextW    = user32.NewProc("GetWindowTextW")
+	procGetWindowRect     = user32.NewProc("GetWindowRect")
+	procGetClientRect     = user32.NewProc("GetClientRect")
+	procClientToScreen    = user32.NewProc("ClientToScreen")
+	procIsWindowVisible   = user32.NewProc("IsWindowVisible")
+	procSetForegroundWin  = user32.NewProc("SetForegroundWindow")
+	procShowWindow        = user32.NewProc("ShowWindow")
+	procPostMessageW      = user32.NewProc("PostMessageW")
+	procGetWindow         = user32.NewProc("GetWindow")
+	procGetWindowLongPtrW = user32.NewProc("GetWindowLongPtrW")
 )
+
+// exStyle 读窗口的扩展样式（GWL_EXSTYLE = -20）。
+func exStyle(hwnd uintptr) uintptr {
+	v, _, _ := procGetWindowLongPtrW.Call(hwnd, ^uintptr(19)) // -20
+	return v
+}
 
 const swRestore = 9
 
@@ -189,9 +197,21 @@ func main() {
 
 	if *list {
 		for _, w := range enumWindows() {
-			fmt.Printf("%-10x  %4dx%-4d  @(%d,%d)  %s\n", w.hwnd,
+			// 顺带报出"是否置顶 / 所有者是谁"：验证浮动弹窗的层级关系要用它 ——
+			// 只要它不再带 WS_EX_TOPMOST、并且所有者是主窗口，就说明
+			// "只比主窗口高一级、不压过别的程序"这条要求真的成立
+			// （靠肉眼看 z 序是测不准的）。
+			topmost := "     "
+			if exStyle(w.hwnd)&0x8 != 0 {
+				topmost = "TOP  "
+			}
+			owner := ""
+			if o, _, _ := procGetWindow.Call(w.hwnd, 4 /*GW_OWNER*/); o != 0 {
+				owner = fmt.Sprintf(" owner=%x", o)
+			}
+			fmt.Printf("%-10x  %4dx%-4d  @(%d,%d)  %s%s%s  %s\n", w.hwnd,
 				w.rect.Right-w.rect.Left, w.rect.Bottom-w.rect.Top,
-				w.rect.Left, w.rect.Top, w.title)
+				w.rect.Left, w.rect.Top, topmost, w.title, owner, "")
 		}
 		return
 	}
