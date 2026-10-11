@@ -223,8 +223,9 @@ watch(
     <div v-if="open" class="cp-bottom-grip" @mousedown="onGripDown" />
 
     <div class="cp-bottom-head" :style="{ height: HEAD_H + 'px' }">
-      <button class="cp-bottom-chevron" :title="open ? '收起' : '展开'" @click="toggle()">
+      <button class="cp-bottom-chevron" @click="toggle()">
         <el-icon><component :is="open ? ArrowDown : ArrowUp" /></el-icon>
+        <span>{{ open ? '收起' : '展开' }}</span>
       </button>
 
       <div class="cp-bottom-tabs">

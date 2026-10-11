@@ -672,19 +672,61 @@ async function handleDevOpen(name) {
       break
     }
 
+    // 浮动窗口：把"标题栏上方那条白边"的来源查出来（量计算样式，不猜）
+    case 'floatlook': {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      await wait(1200)
+      const g = (el, ...props) =>
+        el ? props.map((p) => `${p}=${getComputedStyle(el)[p]}`).join(' ') : '(无)'
+      const rect = (el) => {
+        if (!el) return '(无)'
+        const r = el.getBoundingClientRect()
+        return `top=${Math.round(r.top)} left=${Math.round(r.left)} h=${Math.round(r.height)} w=${Math.round(r.width)}`
+      }
+      const body = document.body
+      const overlayDialog = document.querySelector('.el-overlay-dialog')
+      const dlg = document.querySelector('.el-dialog.cp-dialog')
+      const head = document.querySelector('.el-dialog.cp-dialog .el-dialog__header')
+      const lines = [
+        `body: margin=${getComputedStyle(body).margin} padding=${getComputedStyle(body).padding} ${rect(body)}`,
+        `#app: ${rect(document.getElementById('app'))}`,
+        `.el-overlay-dialog: ${g(overlayDialog, 'display', 'padding', 'alignItems')} ${rect(overlayDialog)}`,
+        `.el-dialog: ${g(dlg, 'padding', 'margin', 'background')} ${rect(dlg)}`,
+        `.el-dialog__header: ${g(head, 'margin', 'padding', 'background', 'height')} ${rect(head)}`,
+      ]
+      notify('info', '浮动窗口尺寸诊断', lines.join('\n'), 0)
+      break
+    }
+
     // 连开两次浮动对话框：第一次是新建（要建 WebView2 + 加载前端），
     // 第二次应该走**复用**（窗口已在、不重新加载）。
     // 这是用户报的“打开还是卡”那条，两边的耗时在 Go 日志里（"~前端就绪 Xms"~
     case 'floatreuse': {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
       const payload = JSON.stringify({ mode: 'add', node: null })
       const out = []
       for (let i = 1; i <= 2; i++) {
         const t0 = performance.now()
         // devopen=floatsubmit：浮动窗口里的前端会自动提交，所以这一次能自己结束
         const r = await api.openFloatDialog('node', payload, 'floatsubmit')
-        out.push(`第 ${i} 次：${Math.round(performance.now() - t0)}ms → ${String(r).slice(0, 60)}`)
+        out.push(`第 ${i} 次：${Math.round(performance.now() - t0)}ms → ${String(r).slice(0, 40)}`)
+        if (i === 1) {
+          // 第一次结束后把窗口挪到左上角，看看第二次打开会不会复位到主窗口中央。
+          // 用户实报："关闭后再次打开，不要在上次关闭的位置打开"。
+          await api.moveFloatWindow(60, 60)
+          await wait(400)
+          const moved = await api.floatWindowBounds()
+          out.push(`  挪到：(${moved.x},${moved.y})`)
+        }
       }
-      notify('success', '浮动窗口复用测试', out.join('\n'), 0)
+      const main = await api.mainWindowBounds()
+      const f = await api.floatWindowBounds()
+      const wantX = Math.round(main.x + (main.width - f.width) / 2)
+      const wantY = Math.round(main.y + (main.height - f.height) / 2)
+      const ok = Math.abs(f.x - wantX) <= 2 && Math.abs(f.y - wantY) <= 2
+      out.push(`主窗口：(${main.x},${main.y}) ${main.width}x${main.height}`)
+      out.push(`最终位置：(${f.x},${f.y})，居中应为：(${wantX},${wantY})`)
+      notify(ok ? 'success' : 'error', '浮动窗口复用 + 居中', out.join('\n'), 0)
       break
     }
 

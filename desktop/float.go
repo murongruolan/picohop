@@ -100,6 +100,10 @@ func (a *API) OpenFloatDialog(kind, payloadJSON, devOpen string) (string, error)
 	floatCurrent = sess
 	floatMu.Unlock()
 
+	// 位置每次重算（下面复用分支也要用）：用户要求"每次都在主界面中间打开"，
+	// 而窗口是**复用**的 —— 不复位就会停在上次关闭的地方。
+	fx, fy := a.floatPosition(size[0], size[1])
+
 	// 【复用：已经有建好的同类型窗口就直接唤醒它】
 	//
 	// 放在 payload/会话登记之后、建窗口之前 —— 会话必须先生效，
@@ -117,6 +121,8 @@ func (a *API) OpenFloatDialog(kind, payloadJSON, devOpen string) (string, error)
 		// 而那正是我们要省掉的开销。
 		// ExecJS 没有返回值（v3 里它在窗口未就绪时会静默忽略），所以只调不问结果；
 		// 真正的确认靠前端：它一被唤醒就会来取 payload（见 GetFloatPayload 的计时日志）。
+		// 复位到主窗口中央：窗口是复用的，不搬回来就会停在用户上次拖到的位置
+		reused.SetPosition(fx, fy)
 		reused.ExecJS("window.__cpFloatReopen && window.__cpFloatReopen()")
 		reused.Show()
 		reused.Focus()
@@ -127,8 +133,6 @@ func (a *API) OpenFloatDialog(kind, payloadJSON, devOpen string) (string, error)
 	if title == "" {
 		title = "ChainProxy · " + kind
 	}
-	fx, fy := a.floatPosition(size[0], size[1])
-
 	// 不是 AlwaysOnTop：用户明确说过"它只比主窗口优先级高就行，现在是比任何应用
 	// 优先级都高"。所以改成把浮动窗口设成**主窗口的附属窗口**：
 	// 永远在主窗口之上，但不会盖住别的程序（见 setWindowOwner 的注释）。
@@ -208,8 +212,8 @@ func (a *API) OpenFloatDialog(kind, payloadJSON, devOpen string) (string, error)
 
 // floatPosition 算浮动窗口的初始位置。
 //
-// 默认贴着主窗口右下角一点，像"从主窗口里弹出来的"，而不是凭空出现在屏幕角落；
-// 然后再夹进屏幕工作区 —— 主窗口贴着屏幕右/下边缘时，浮动窗口不能跑到屏幕外面。
+// 默认**居中在主窗口上**（用户要求），然后再夹进屏幕工作区 ——
+// 主窗口贴着屏幕边缘、或者屏幕比浮动窗口还小时，不能跑到屏幕外面。
 //
 // 注意这只是**初始**位置：它是独立窗口，用户随时可以把它拖到主窗口之外，
 // 甚至拖到另一个显示器上，主窗口不会把它裁剪掉。
@@ -217,8 +221,12 @@ func (a *API) floatPosition(w, h int) (int, int) {
 	x, y := 240, 180
 	if a.mainWin != nil {
 		mx, my := a.mainWin.Position()
-		// Position() 拿不到时会返回 0,0，那种情况下用默认值更自然
-		if mx != 0 || my != 0 {
+		mw, mh := a.mainWin.Size()
+		// 居中在主窗口上。原先是从主窗口左上角偏移一点（"像从里面弹出来"），
+		// 但用户明确要"在主界面中间打开" —— 居中更像原生弹窗，视线也不用找。
+		if mw > 0 && mh > 0 {
+			x, y = mx+(mw-w)/2, my+(mh-h)/2
+		} else if mx != 0 || my != 0 {
 			x, y = mx+80, my+60
 		}
 	}

@@ -433,7 +433,10 @@ body.cp-float-window {
 }
 body.cp-float-window .cp-toolbar,
 body.cp-float-window .cp-filterbar,
-body.cp-float-window .cp-table-wrap {
+body.cp-float-window .cp-table-wrap,
+/* 底栏也要藏：它是后来加的，最初这份清单里漏了它 —— 于是浮动窗口里照样渲染出
+   "端口号 + 前置绿点"，用户看到后以为串台了（实报"弹窗上部出现了绿点和两个端口号"）。 */
+body.cp-float-window .cp-bottom {
   display: none !important;
 }
 /* 遮罩不再是"遮住主界面"，它自己就是窗口背景 */
@@ -455,6 +458,9 @@ body.cp-float-window .el-dialog.cp-dialog {
   /* 窗口自己就是对话框的容器，高度用满 */
   max-height: 100vh;
   height: 100vh;
+  /* 对话框自身的内边距必须清零：留着的话标题栏上方会出现一条白边，
+     用户形容成"感觉没有到顶"（像素实测：标题栏上方约 14px 是纯白）。 */
+  padding: 0;
 }
 /* 窗口没有系统标题栏，所以对话框的标题栏同时兼任"窗口拖动把手"。
    这里把它做成**紧凑标题栏**：左侧标题、右侧关闭按钮、34px 高 ——
@@ -462,7 +468,9 @@ body.cp-float-window .el-dialog.cp-dialog {
    （16px+12px 内边距 + 大字号），用户形容为"一个大额头"，确实难看。 */
 body.cp-float-window .cp-dialog .el-dialog__header {
   --wails-draggable: drag;
-  background: var(--cp-panel-2);
+  /* 用 --cp-bg 而不是 --cp-panel-2：亮色下 panel-2(#fafbfc) 与正文(#ffffff)
+     几乎同色，标题栏等于看不出来（用户实报"颜色区分不明显"）。 */
+  background: var(--cp-bg);
   height: 34px;
   display: flex;
   align-items: center;
@@ -598,21 +606,27 @@ body.cp-float-window .el-overlay-dialog {
 }
 
 .cp-bottom-chevron {
-  width: 22px;
-  height: 22px;
+  /* 比原来宽：原来是 22×22 的纯图标，点起来费劲（用户要求"弄大点/宽一点"） */
+  height: 24px;
+  padding: 0 10px 0 8px;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  border: 0;
+  gap: 4px;
+  border: 1px solid transparent;
   border-radius: var(--cp-radius-sm);
   background: transparent;
   color: var(--cp-text-2);
   cursor: default;
-  font-size: 13px;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.cp-bottom-chevron span {
+  line-height: 1;
 }
 .cp-bottom-chevron:hover {
   background: var(--cp-brand-soft);
   color: var(--cp-brand);
+  border-color: var(--cp-brand-soft);
 }
 
 .cp-bottom-tabs {
@@ -785,9 +799,14 @@ body.cp-float-window .el-overlay-dialog {
 .cp-logs-line {
   font-family: var(--cp-mono, ui-monospace, Consolas, monospace);
   font-size: 11.5px;
-  line-height: 1.6;
+  line-height: 1.5;
   color: var(--cp-text-2);
-  white-space: pre;
+  /* 过长的一行折行显示（原先 pre 不折行、只能横向滚）。
+     折行后的续行属于**同一条**日志，所以间距只加在条目之间。 */
+  white-space: pre-wrap;
+  word-break: break-all;
+  /* 条间距：太挤时两条日志糊成一片，分不出哪儿是下一条（用户实报） */
+  margin-bottom: 5px;
 }
 .cp-logs-empty {
   color: var(--cp-text-3);
