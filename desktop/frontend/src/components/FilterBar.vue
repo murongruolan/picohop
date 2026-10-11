@@ -122,7 +122,10 @@ watch(
         </el-checkbox>
       </el-checkbox-group>
       <div class="cp-col-foot">
-        <span class="cp-hint">默认显示产品要求的 8 列；表头右边缘可拖拽调列宽（最小 56px，约两个汉字）。</span>
+        <span class="cp-hint">
+          默认显示产品要求的 8 列；表头右边缘可拖拽调列宽（最小 56px，约两个汉字）。
+          最右边那一列是<b>填充列</b>，会自动占满右侧剩余空间，所以拖它改的是它的最小宽度。
+        </span>
         <el-button link size="small" @click="store.resetColumnWidths()">重置列宽</el-button>
       </div>
     </el-popover>

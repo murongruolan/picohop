@@ -149,80 +149,81 @@ async function handleDevOpen(name) {
       }
       break
 
-    // 验证"拖拽列宽 + 下限钳制"。
+    // 验证「拖拽列宽 + 下限钳制 + 右端不留白」。
     //
-    // 手法：在表头右边缘（拖拽热区是右边缘 8px 内）派发一串**合成鼠标事件**，
-    // 把某一列往左拖 400px —— 远超该列宽度，不钳制的话会被拖成 30px 甚至更窄。
-    // Element Plus 内部只保证不低于 30px，我们自己钳到 56px，
-    // 所以期望结果是 56px。测完把实际宽度打到通知里，方便看截图核对。
+    // 手法：在表头右边缘（拖拽热区就是右边缘 8px 内）派发一串**合成鼠标事件**，
+    // 走一遍真实代码路径。三次操作都要在截图里看到可核对的数字：
+    //
+    //   1. 把「别名」往左拖 400px  → 验证下限被钳到 56px（库内只保证 30px）
+    //   2. 再拖「填充列」往左 60px → 验证它松手后仍然铺满右端（右侧留白 = 0）
+    //   3. 全程量「右侧留白」= 表格容器右边缘 − 最后一列表头右边缘，期望 0px
     case 'resize': {
-      await new Promise((r) => setTimeout(r, 400))
-      const ths = [...document.querySelectorAll('.cp-table-wrap .el-table__header th')]
-      const th = ths[1] // 第二列 = 别名
-      if (!th) {
-        notify('error', '列宽拖拽测试', '找不到表头单元格', 0)
-        break
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      await sleep(400)
+      const wrap = document.querySelector('.cp-table-wrap')
+      const ths = () => [...document.querySelectorAll('.cp-table-wrap .el-table__header th')]
+      // 右侧留白：容器右边 − 最后一列表头右边。>0 就说明右端空了一条。
+      const gapRight = () => {
+        const list = ths()
+        if (!wrap || !list.length) return -1
+        return Math.round(wrap.getBoundingClientRect().right - list[list.length - 1].getBoundingClientRect().right)
       }
-      const before = Math.round(th.getBoundingClientRect().width)
-      const rect = th.getBoundingClientRect()
-      const y = Math.round(rect.top + rect.height / 2)
-      const startX = Math.round(rect.right - 3)
-      const fire = (type, x, target) =>
-        target.dispatchEvent(
-          new MouseEvent(type, {
-            clientX: x,
-            clientY: y,
-            bubbles: true,
-            cancelable: true,
-            button: 0,
-            buttons: type === 'mouseup' ? 0 : 1,
-          }),
-        )
-      fire('mousemove', startX, th) // 让库把 draggingColumn 记上
-      fire('mousedown', startX, th)
-      fire('mousemove', startX - 400, document) // 往左拖 400px
-      fire('mouseup', startX - 400, document)
-      await new Promise((r) => setTimeout(r, 400))
-      const after = Math.round(th.getBoundingClientRect().width)
-      const saved = store.columnWidths?.name
-
-      // 再试**最后一列**：Element Plus 默认不允许拖最后一列（allowDragLastColumn），
-      // 我们显式开了它，所以这里应该也能变窄。
-      const lastTh = ths[ths.length - 1]
-      const lastKey = lastTh?.querySelector('.cell')?.textContent?.trim() || '最后一列'
-      let lastBefore = 0
-      let lastAfter = 0
-      if (lastTh) {
-        const lr = lastTh.getBoundingClientRect()
-        lastBefore = Math.round(lr.width)
-        const ly = Math.round(lr.top + lr.height / 2)
-        const lx = Math.round(lr.right - 3)
-        const fire2 = (type, x, target) =>
+      const dragHeader = async (th, dx) => {
+        const r = th.getBoundingClientRect()
+        const y = Math.round(r.top + r.height / 2)
+        const x0 = Math.round(r.right - 3)
+        const fire = (type, x, target) =>
           target.dispatchEvent(
             new MouseEvent(type, {
               clientX: x,
-              clientY: ly,
+              clientY: y,
               bubbles: true,
               cancelable: true,
               button: 0,
               buttons: type === 'mouseup' ? 0 : 1,
             }),
           )
-        fire2('mousemove', lx, lastTh)
-        fire2('mousedown', lx, lastTh)
-        fire2('mousemove', lx - 60, document) // 只缩 60px，验证"正常拖拽"也能用
-        fire2('mouseup', lx - 60, document)
-        await new Promise((r) => setTimeout(r, 400))
-        lastAfter = Math.round(lastTh.getBoundingClientRect().width)
+        fire('mousemove', x0, th)
+        fire('mousedown', x0, th)
+        fire('mousemove', x0 + dx, document)
+        fire('mouseup', x0 + dx, document)
+        await sleep(400)
       }
 
-      const ok = after >= 56 && after <= 80 && lastTh && lastAfter < lastBefore
+      let list = ths()
+      if (list.length < 3) {
+        notify('error', '列宽拖拽测试', '表头列数不足', 0)
+        break
+      }
+
+      // 1) 中间列往左拖 400px（远超列宽）→ 下限钳制
+      const midTh = list[1]
+      const midName = midTh.querySelector('.cell')?.textContent?.trim() || '第2列'
+      const midBefore = Math.round(midTh.getBoundingClientRect().width)
+      await dragHeader(midTh, -400)
+      list = ths()
+      const midAfter = Math.round(midTh.getBoundingClientRect().width)
+      const gapAfterMid = gapRight()
+
+      // 2) 填充列（最右一列）往左拖 60px → 松手后应当仍然铺满
+      const tailTh = list[list.length - 1]
+      const tailName = tailTh.querySelector('.cell')?.textContent?.trim() || '最后一列'
+      const tailBefore = Math.round(tailTh.getBoundingClientRect().width)
+      await dragHeader(tailTh, -60)
+      list = ths()
+      const tailAfter = Math.round(tailTh.getBoundingClientRect().width)
+      const gapAfterTail = gapRight()
+
+      const ok = midAfter >= 56 && midAfter <= 80 && gapAfterMid === 0 && gapAfterTail === 0
       notify(
         ok ? 'success' : 'error',
         '列宽拖拽测试',
-        `别名列：${before}px → 往左拖 400px 后 ${after}px\n` +
-          `（库内下限 30px，我们钳到 56px；store 记录 = ${saved}）\n` +
-          `最后一列「${lastKey}」：${lastBefore}px → ${lastAfter}px（验证 allow-drag-last-column）`,
+        `1) 「${midName}」${midBefore}px → 往左拖 400px 后 ${midAfter}px` +
+          `（库内下限仅 30px，我们钳到 56px）\n` +
+          `2) 填充列「${tailName}」${tailBefore}px → 拖后再量 ${tailAfter}px` +
+          `（松手后回到"占满剩余"，所以宽度基本不变）\n` +
+          `3) 右侧留白：拖中间列后 ${gapAfterMid}px，拖填充列后 ${gapAfterTail}px（都应为 0）\n` +
+          `store 记录：${JSON.stringify(store.columnWidths)}`,
         0,
       )
       break

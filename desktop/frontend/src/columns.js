@@ -4,11 +4,14 @@
  * 默认显示的就是产品要求的 8 列（类型、别名、本地端口、地址、远程端口、
  * 传输协议、延迟、速度）；其余的通过「列显示」多选打开。
  *
- * 宽度有两套：
- *   - `width`     固定初始宽度（可拖拽调整）
- *   - `minWidth`  弹性列：不写死宽度，而是吸收窗口多出来的空间
- *                 （地址/备注/前置这类内容长度差异大的列适合弹性）
- * 两者都不写死的话表格右侧会留一大片空白，所以每列至少要有一个。
+ * 【宽度模型】
+ *   - 每一列都有 `width`（初始宽度，可拖拽调整）
+ *   - `min` 是拖拽下限（保证至少能看到一个汉字）
+ *   - **最右边那一列是"填充列"**：它不吃 `width`，而是自动占满右侧剩余空间。
+ *     这样任何一列被拖窄省出来的空间都会被它吸收，永远不会在表格右边
+ *     冒出一条留白（见 NodeTable.vue 里的 widthOf / minWidthOf）。
+ *     代价是"把它自己拖窄"在空间还有富余时看不出变化 —— 这是刻意的，
+ *     拖它实际改的是它的最小宽度。
  */
 
 /**
@@ -41,18 +44,18 @@ export const ALL_COLUMNS = [
   { key: 'protocol', label: '类型', width: 106, min: 56 },
   { key: 'name', label: '别名', width: 208, min: 72 },
   { key: 'listenPort', label: '本地端口', width: 100, min: 64, align: 'right' },
-  { key: 'server', label: '地址', minWidth: 300, min: 80 },
+  { key: 'server', label: '地址', width: 300, min: 80 },
   { key: 'port', label: '远程端口', width: 96, min: 64, align: 'right' },
   { key: 'transport', label: '传输协议', width: 122, min: 64 },
   { key: 'latency', label: '延迟(ms)', width: 94, min: 64, align: 'right' },
   { key: 'real', label: '真连接(ms)', width: 106, min: 64, align: 'right' },
-  { key: 'speed', label: '速度(MB/s)', width: 106, min: 64, align: 'right' },
+  { key: 'speed', label: '速度(MB/s)', width: 116, min: 64, align: 'right' },
   { key: 'exitIp', label: '出口 IP', width: 134, min: 72 },
   { key: 'today', label: '今日统计', width: 106, min: 64, align: 'right' },
   { key: 'lastUsed', label: '最近使用', width: 152, min: 76 },
   { key: 'createdAt', label: '创建时间', width: 152, min: 76 },
-  { key: 'remark', label: '备注', minWidth: 180, min: 72 },
-  { key: 'front', label: '前置', minWidth: 200, min: 72 },
+  { key: 'remark', label: '备注', width: 180, min: 72 },
+  { key: 'front', label: '前置', width: 200, min: 72 },
   { key: 'tls', label: 'TLS', width: 64, min: 56, align: 'center' },
   { key: 'activeConn', label: '活动连接', width: 94, min: 64, align: 'right' },
   { key: 'totalConn', label: '累计连接', width: 94, min: 64, align: 'right' },

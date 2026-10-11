@@ -52,6 +52,7 @@
 | 014 | `docs: 更新项目介绍、架构、使用说明、开发进度与提交说明` | 2026-10-11 | README / ARCHITECTURE / USER_GUIDE 全面改写为 v2；PROJECT_PROGRESS 追加 v2 专节；本文件追加 007-014 | [详情](#014) |
 | 015 | `fix(desktop): 通知重叠 / WebView2 数据目录越界 / 端口框宽度 + 补充运行时验证` | 2026-10-11 | 自己实现通知（ElNotification 同一 tick 连发会重叠）、WebView2 配置目录改到 data\webview、uishot 改用 PrintWindow 不抢焦点；补验需求 (4)(5)(7)(8)(10)(11) | [详情](#015) |
 | 016 | `feat(desktop): 列表改通栏 + 表头可拖拽调列宽（带最小宽度保护）` | 2026-10-11 | 列表左右不留白；列宽拖拽需要 border、库内下限仅 30px 会切字故自行钳到 56px、最后一列默认不可拖需 allow-drag-last-column；列宽持久化 + 重置入口 | [详情](#016) |
+| 017 | `fix(desktop): 最右一列作为填充列，右端永远不留白` | 2026-10-11 | 根因是"拖拽会把内部 column.width 写成数字→不再有弹性列"（table-layout.mjs 用 !isNumber(column.width) 判定弹性）；改为让最右列只吃 min-width 并在 dragend 清空其 width；地址/备注/前置改回固定列；验证右侧留白 0px | [详情](#017) |
 
 ---
 
@@ -1660,3 +1661,65 @@ F:\chain_proxy 内"（`scripts/env.ps1` 连 Go 的工具链都重定向进来了
 
 ARCHITECTURE.md 在"界面层"一节补了这三条坑；
 PROJECT_PROGRESS.md 追加"界面微调（第 3 轮）"。
+
+---
+
+## 017
+
+**`fix(desktop): 最右一列作为填充列，右端永远不留白`**
+
+### 现象与根因
+
+016 做完"任意拖拽列宽"之后，缩短某一列时右端会冒出一条留白。
+翻源码定位到根因：
+
+  - `table-layout.mjs` 的 `updateColumnsWidth` 用
+    `flattenColumns.filter((column) => !isNumber(column.width))` 找出**弹性列**，
+    弹性列负责吸收"容器宽 − 各列宽之和"的差值。
+  - `table-header/event-helper.mjs` 的 `handleMouseUp` 在拖拽结束时执行
+    `column.width = column.realWidth = 拖出来的数字`。
+
+两件事合起来：**只要用户拖过那个唯一的弹性列，它就变成固定列，
+整个表格不再有弹性列，右端立刻空出一条留白**；之后拖任何列都只会更明显。
+
+### 解决
+
+让**最右边那一列**当"填充列"：
+
+  - 不绑 `width`，只绑 `min-width`（= 用户拖出来的值，或它自己的默认宽度）。
+    于是它的实际宽度 = `minWidth + 剩余空间`（`table-layout.mjs` 第 109 行：
+    `flexColumns.length === 1` 时 `realWidth = minWidth + totalFlexWidth`），
+    永远铺满右端。
+  - 在 `header-dragend` 里把它的 `column.width` / `column.realWidth`
+    清成 `undefined`，它才会在拖完之后重新回到弹性状态。
+    紧随其后的重排不用我们手动排 —— `watcher-helper.mjs` 第 24-32 行对
+    `min-width` 的 watcher 会调 `store.scheduleLayout`。
+  - `el-table-column` 的宽度是以 `prop` 绑定的响应式值，所以切换「列显示」时
+    填充列会自动变成当前最右的那一列。
+
+顺带把"地址/备注/前置"从弹性列改回普通固定列 —— 否则会出现两个弹性列，
+剩余空间按 min-width 比例分摊，语义反而变复杂、也不好解释。
+
+### 取舍
+
+在空间还有富余时，**把填充列拖窄看不出变化**。这正是需求要的
+（"缩短它就让它在剩余空间里自己铺满"），拖它改的是它的*最小宽度*：
+只有窗口窄到放不下时这个下限才体现（触发横向滚动，而不是把列挤成一条线）。
+「列显示」面板底部的提示里写明了这一点，免得被当成拖拽失效。
+
+### 验证
+
+`-open resize` 依次做三件事，并量出"右侧留白"
+（= 表格容器右边缘 − 最后一列表头右边缘）：
+
+    1) 「别名」208px → 往左拖 400px 后 56px（库内下限仅 30px，我们钳到 56px）
+    2) 填充列「速度(MB/s)」290px → 拖 60px 后再量 290px（松手后回到"占满剩余"）
+    3) 右侧留白：拖中间列后 0px，拖填充列后 0px（都应为 0）
+    store 记录：{"name":56,"speed":230}
+
+第 2 条尤其能说明设计：视觉宽度没变，而 store 里记的下限从 116 变成了 230。
+
+### 文档
+
+ARCHITECTURE.md 的"界面层"补上第 4 条（为什么要填充列、以及清 width 的原因）；
+PROJECT_PROGRESS.md 追加"填充列：右端永远不留白（第 4 轮）"。
