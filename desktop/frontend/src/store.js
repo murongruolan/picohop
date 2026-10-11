@@ -58,6 +58,10 @@ export const useStore = defineStore('cp', {
     settings: {},
     front: {},
     logs: [],
+    // 网络日志（sing-box 连接流水）与它的拉取游标。
+    // 游标只增不减：后端序号单调递增，回退会把清空前的日志又拉回来。
+    netLogs: [],
+    netSeq: 0,
 
     // 筛选
     searchText: '',
@@ -184,6 +188,32 @@ export const useStore = defineStore('cp', {
       } catch {
         /* 忽略 */
       }
+    },
+
+    // 网络日志：**游标式增量拉取**。日志每秒可能进来十几条，
+    // 每次都把整段重新传一遍是不可接受的。
+    async refreshNetworkLogs() {
+      try {
+        const [lines, seq] = await api.getNetworkLogs(this.netSeq)
+        if (seq) this.netSeq = seq
+        if (lines && lines.length) {
+          const merged = this.netLogs.concat(lines)
+          // 显示上限与后端保留条数一致，避免界面无限增长
+          this.netLogs = merged.length > 2000 ? merged.slice(-2000) : merged
+        }
+      } catch {
+        /* 忽略 */
+      }
+    },
+
+    async clearNetworkLogs() {
+      try {
+        await api.clearNetworkLogs()
+      } catch {
+        /* 忽略 */
+      }
+      this.netLogs = []
+      // 注意不改 netSeq：后端序号继续递增，新的条目照样能拉进来
     },
 
     // -----------------------------------------------------------------

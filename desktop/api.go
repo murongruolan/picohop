@@ -220,6 +220,22 @@ func (a *API) GetNodes() []app.NodeView {
 	return a.app.Nodes()
 }
 
+// GetNetworkLogs 返回序号大于 afterSeq 的网络日志（游标式增量拉取），
+// 第二个返回值是当前最大序号。
+func (a *API) GetNetworkLogs(afterSeq int64) ([]app.NetLogEntry, int64) {
+	if a.app == nil {
+		return nil, 0
+	}
+	return a.app.NetworkLogs(afterSeq)
+}
+
+// ClearNetworkLogs 清空网络日志。
+func (a *API) ClearNetworkLogs() {
+	if a.app != nil {
+		a.app.ClearNetworkLogs()
+	}
+}
+
 // GetTrafficHistory 返回最近 seconds 秒的每秒速率样本（流量统计画曲线用）。
 //
 // 放在 Go 侧留历史的原因见 internal/app/stats.go 的 TrafficSample 注释。

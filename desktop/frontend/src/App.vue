@@ -580,6 +580,16 @@ async function handleDevOpen(name) {
       await new Promise((r) => setTimeout(r, 1500))
       break
 
+    // 底部栏：展开到「日志 → 网络日志」（截图核对用）
+    case 'netlogpanel':
+      ui.bottomPanelView = 'traffic'
+      await new Promise((r) => setTimeout(r, 400))
+      ui.bottomPanelView = 'logs'
+      await new Promise((r) => setTimeout(r, 300))
+      ui.bottomLogTab = 'net'
+      await new Promise((r) => setTimeout(r, 1500))
+      break
+
     // 连开两次浮动对话框：第一次是新建（要建 WebView2 + 加载前端），
     // 第二次应该走**复用**（窗口已在、不重新加载）。
     // 这是用户报的“打开还是卡”那条，两边的耗时在 Go 日志里（"~前端就绪 Xms"~

@@ -17,6 +17,9 @@ export const useUi = defineStore('cp-ui', {
      * 因为两套位移叠加在一起。详见 NodeDialog 里 :draggable 的注释。
      */
     floatMode: false,
+  // 由外部（自测入口）指定底部栏要展开到哪个视图 / 日志页签；
+  // 组件内部状态没法从外面驱动，所以走"意向"再让组件消费一次。
+  bottomLogTab: '',
     /** 添加/编辑节点对话框 */
     nodeDialog: { open: false, mode: 'add', node: null, fromImport: false },
     /**

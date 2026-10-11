@@ -225,7 +225,14 @@ func BuildConfigJSON(n config.Node, front config.Front) ([]byte, error) {
 	}
 
 	cfg := map[string]any{
-		// 关掉 sing-box 自己的日志输出（我们通过 PlatformLogWriter 收警告以上级别）。
+		// 级别保持 warn。曾经为了拿"连接流水"改成 info，实测**一条都没有** ——
+		// 我们的 sing-box 只当出口、且绕过它的路由器直连 outbound，
+		// 那条 "outbound connection to" 是路由器在路由时才打的（详见 proxy/connlog.go）。
+		// 连接流水改由我们自己的 handler 上报。
+		//
+		// 另一条路仍然有效：PlatformLogWriter 收了**全部级别**（sing-box 的
+		// observableLogger 只要挂了 platform writer 就不再按级别提前返回），
+		// 由它决定哪些进网络日志、哪些进用户日志。
 		"log": map[string]any{
 			"disabled": false,
 			"level":    "warn",
@@ -472,10 +479,43 @@ type platformWriter struct {
 }
 
 func (w *platformWriter) WriteMessage(level log.Level, message string) {
+	// 【两条路，用途不同】
+	//
+	//   - 网络日志：**全部级别**都喂过去。连接流水（inbound connection from / to、
+	//     outbound connection to）在 info 级，正是底部"网络日志"要展示的东西。
+	//   - 用户日志：仍然只收 warn 以上 —— info 级会混进一堆
+	//     "updated default interface" 之类的噪音，对操作日志没有价值。
+	if sink := networkLogSink(); sink != nil {
+		sink(w.name, log.FormatLevel(level), message)
+	}
 	if level < log.LevelWarn {
 		return
 	}
 	w.logf("[sing-box][%s] %s", w.name, message)
+}
+
+// netSink 是"网络日志"的接收器（进程内唯一）。
+var (
+	netSinkMu sync.Mutex
+	netSink   func(node, level, msg string)
+)
+
+// SetNetworkLogSink 注册网络日志接收器；传 nil 取消。
+//
+// 为什么不把它做成 New 的第四个参数：那要顺着
+// app → proxy.NewServer → NewUpstream → engine.New 改四层签名（还有一批测试），
+// 而这个接收器与"哪个节点"无关 —— 它最终落到 app 的一个环形缓冲里，
+// 是**进程级唯一**的东西，一次注册比层层透传更贴切。
+func SetNetworkLogSink(fn func(node, level, msg string)) {
+	netSinkMu.Lock()
+	netSink = fn
+	netSinkMu.Unlock()
+}
+
+func networkLogSink() func(node, level, msg string) {
+	netSinkMu.Lock()
+	defer netSinkMu.Unlock()
+	return netSink
 }
 
 // ------------------------------------------------------------------

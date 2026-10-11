@@ -8,7 +8,7 @@
  *
  * 文案规则（同一份文档）：只放标签与值，解释一律进 tooltip，不写说明句。
  */
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { ArrowDown, ArrowUp, Search, Delete } from '@element-plus/icons-vue'
 import { useStore } from '../store'
 import { useUi } from '../ui'
@@ -121,8 +121,21 @@ const filter = ref('')
 const autoScroll = ref(true)
 const logBox = ref(null)
 
+// 网络日志按流水格式展示：时间 [节点] 内容（主流客户端那种）。
+function fmtNetLine(e) {
+  const d = new Date(e.at || 0)
+  const p = (n) => String(n).padStart(2, '0')
+  const t = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+  return `${t} [${e.node || '—'}] ${e.text || ''}`
+}
+
+// 当前页签对应的原始行
+const sourceLines = computed(() =>
+  logTab.value === 'net' ? (store.netLogs || []).map(fmtNetLine) : store.logs || [],
+)
+
 const filteredLogs = computed(() => {
-  const lines = store.logs || []
+  const lines = sourceLines.value
   const q = filter.value.trim()
   if (!q) return lines
   try {
@@ -141,10 +154,11 @@ function applyFilter() {
 
 function clearCurrent() {
   if (logTab.value === 'user') store.logs = []
+  else store.clearNetworkLogs()
 }
 
 watch(
-  () => store.logs?.length,
+  () => sourceLines.value.length,
   () => {
     if (!autoScroll.value) return
     nextTick(() => {
@@ -153,13 +167,36 @@ watch(
   },
 )
 
-// 日志视图一露出来就拉一次：数据在 store 里，面板自己不去轮询
+// 日志视图一露出来就拉一次；网络日志在被查看时按秒增量拉取。
+//
+// 网络日志走**游标式增量**（见 store.refreshNetworkLogs）：内核每秒可能吐十几条，
+// 每次重传整段是不可接受的。
+let netTimer = null
 watch(
   [open, view, logTab],
   () => {
-    if (open.value && view.value === 'logs' && logTab.value === 'user') store.refreshLogs()
+    const viewing = open.value && view.value === 'logs'
+    clearInterval(netTimer)
+    netTimer = null
+    if (!viewing) return
+    if (logTab.value === 'net') {
+      store.refreshNetworkLogs()
+      netTimer = setInterval(() => store.refreshNetworkLogs(), 1000)
+    } else {
+      store.refreshLogs()
+    }
   },
   { immediate: true },
+)
+onBeforeUnmount(() => clearInterval(netTimer))
+
+watch(
+  () => ui.bottomLogTab,
+  (v) => {
+    if (!v) return
+    logTab.value = v
+    ui.bottomLogTab = ''
+  },
 )
 
 watch(
@@ -230,9 +267,9 @@ watch(
           <button class="cp-logs-tab" :class="{ 'is-active': logTab === 'user' }" @click="logTab = 'user'">
             用户日志
           </button>
-          <el-tooltip content="待接入内核日志流" placement="right" :show-after="300">
-            <button class="cp-logs-tab is-disabled" disabled>网络日志</button>
-          </el-tooltip>
+          <button class="cp-logs-tab" :class="{ 'is-active': logTab === 'net' }" @click="logTab = 'net'">
+            网络日志
+          </button>
         </div>
 
         <div class="cp-logs-main">

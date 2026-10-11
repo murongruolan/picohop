@@ -204,6 +204,7 @@ func (h *Handler) socksConnect(client net.Conn, br *bufio.Reader, host string, p
 		remote.Close()
 		return
 	}
+	h.connLog("socks5", target)
 	h.logf("SOCKS5 隧道建立 → %s", target)
 	Relay(&bufConn{Conn: client, r: br}, remote, h.Stats, h.Idle)
 }
@@ -246,6 +247,7 @@ func (h *Handler) socksUDPAssociate(tcp net.Conn, br *bufio.Reader) {
 	if err := writeSocksUDPReply(tcp, relayIP.String(), pc.LocalAddr().(*net.UDPAddr).Port); err != nil {
 		return
 	}
+	h.connLog("udp", describeAddrUDP(relayIP.String(), pc.LocalAddr().(*net.UDPAddr).Port))
 	h.logf("UDP ASSOCIATE 已建立，中继 %s", describeAddrUDP(relayIP.String(), pc.LocalAddr().(*net.UDPAddr).Port))
 
 	done := make(chan struct{})
@@ -393,6 +395,7 @@ func (h *Handler) httpConnect(client net.Conn, br *bufio.Reader, head *httpHead)
 		remote.Close()
 		return
 	}
+	h.connLog("http", target)
 	h.logf("HTTP CONNECT 隧道建立 → %s", target)
 	Relay(&bufConn{Conn: client, r: br}, remote, h.Stats, h.Idle)
 }

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"chainproxy/internal/config"
+	"chainproxy/internal/engine"
 	"chainproxy/internal/proxy"
 )
 
@@ -70,6 +71,12 @@ type App struct {
 	upRate   atomic.Int64
 	downRate atomic.Int64
 
+	// 网络日志（内嵌 sing-box 的连接流水）。
+	// 单独一把锁：它由内核的日志回调高频写入，不该和主锁互相等。
+	netLogMu  sync.Mutex
+	netLog    []NetLogEntry
+	netLogSeq int64
+
 	// traffic 是每秒速率的历史环形缓冲（受 mu 保护），给"流量统计"画图用。
 	// 由 Socialticks 写入，见 TrafficHistory。
 	traffic []TrafficSample
@@ -105,6 +112,7 @@ func New(cfgPath string) (*App, error) {
 		baseDown: map[string]int64{},
 		// 预分配：1 秒一个样本，够 1 小时
 		traffic: make([]TrafficSample, 0, trafficHistorySeconds),
+		netLog:  make([]NetLogEntry, 0, netLogCap),
 		logs:    newRingBuffer(1000),
 		closing: make(chan struct{}),
 		lastDay: config.Today(),
@@ -119,6 +127,18 @@ func New(cfgPath string) (*App, error) {
 
 	a.rollDayLocked()
 	go a.statsLoop()
+	// 把"连接流水"接进网络日志缓冲。
+	//
+	// 两个来源：
+	//   1. 我们自己的代理 handler —— **主要来源**，它才知道"谁连了哪儿"；
+	//   2. 内嵌 sing-box 的日志 —— 补充（例如握手失败、配置告警）。
+	//
+	// 都放在 app 这边注册，因为缓冲归 app 所有；引擎与 handler 只提供进程级接收器。
+	proxy.SetConnLogSink(func(ev proxy.ConnEvent) {
+		a.appendNetworkLog(ev.Node, ev.Protocol, ev.Protocol+" → "+ev.Target)
+	})
+	engine.SetNetworkLogSink(a.appendNetworkLog)
+
 	return a, nil
 }
 
