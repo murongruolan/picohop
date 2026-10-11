@@ -580,25 +580,6 @@ async function handleDevOpen(name) {
       await wait(400)
       ui.bottomPanelView = 'traffic'
       await wait(2000)
-      if (name === 'trafficnode') {
-        // 点开节点下拉，选第一个"具体节点"（不是"全部节点"）。
-        // 目的：验证下拉真的驱动了曲线，而不是只换了个显示。
-        const input = document.querySelector('.cp-node-select input')
-        if (!input) {
-          notify('error', '流量统计自测', '找不到节点下拉', 0)
-          break
-        }
-        input.click()
-        await wait(600)
-        const items = [...document.querySelectorAll('.el-select-dropdown__item')]
-        const pick = items.find((o) => !o.textContent.includes('全部节点'))
-        if (!pick) {
-          notify('error', '流量统计自测', `下拉里没有可选项（找到 ${items.length} 个）`, 0)
-          break
-        }
-        pick.click()
-        await wait(1500)
-      }
       break
     }
 

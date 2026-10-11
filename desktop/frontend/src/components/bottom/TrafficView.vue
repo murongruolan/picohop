@@ -149,10 +149,23 @@ const chart = computed(() => {
     anchor: f === 0 ? 'start' : f === 1 ? 'end' : 'middle',
   }))
 
+  // 悬浮时要用：每个采样点的像素坐标与数值
+  const points = s.map((x, i) => ({
+    x: px(i),
+    yUp: py(x.up || 0),
+    yDown: py(x.down || 0),
+    up: x.up || 0,
+    down: x.down || 0,
+    at: x.at || 0,
+  }))
+
   return {
     w,
     h,
     max,
+    x0: PAD.left,
+    iw,
+    points,
     upLine: smooth('up'),
     downLine: smooth('down'),
     upArea: area('up'),
@@ -160,6 +173,45 @@ const chart = computed(() => {
     ticks,
     xLabels,
   }
+})
+
+// ---- 鼠标悬浮：竖线 + 圆点 + 数值块（主流客户端的浮层数值 是同一套）----
+const hover = ref(-1)
+const hoverAt = ref({ x: 0, y: 0 })
+
+function onChartMove(e) {
+  const c = chart.value
+  if (!c || !c.points.length) return
+  const rect = e.currentTarget.getBoundingClientRect()
+  const mx = e.clientX - rect.left
+  // 找最近的采样点（点数可能上千，按 x 距离线性扫一遍够快）
+  let best = 0
+  let bestD = Infinity
+  for (let i = 0; i < c.points.length; i++) {
+    const d = Math.abs(c.points[i].x - mx)
+    if (d < bestD) {
+      bestD = d
+      best = i
+    }
+  }
+  hover.value = best
+  // 数值块贴着光标上方，靠近右边缘时往左收，别被裁掉
+  const p = c.points[best]
+  const boxW = 132
+  let left = p.x + 12
+  if (left + boxW > c.w) left = p.x - boxW - 12
+  if (left < 2) left = 2
+  hoverAt.value = { x: left, y: 6 }
+}
+
+function onChartLeave() {
+  hover.value = -1
+}
+
+const hoverPoint = computed(() => {
+  const c = chart.value
+  if (!c || hover.value < 0 || hover.value >= c.points.length) return null
+  return c.points[hover.value]
 })
 
 const rateText = (v) => `${formatBytes(v || 0)}/s`
@@ -218,7 +270,7 @@ const ranking = computed(() => {
         </div>
       </div>
 
-      <div ref="boxEl" class="cp-chart">
+      <div ref="boxEl" class="cp-chart" @mousemove="onChartMove" @mouseleave="onChartLeave">
         <svg v-if="chart" :width="chart.w" :height="chart.h" :viewBox="`0 0 ${chart.w} ${chart.h}`">
           <defs>
             <linearGradient id="cpTrafficUp" x1="0" y1="0" x2="0" y2="1">
@@ -253,6 +305,18 @@ const ranking = computed(() => {
           <path :d="chart.downLine" class="cp-line down" />
           <path :d="chart.upLine" class="cp-line up" />
 
+          <!-- 悬浮：竖线 + 两条曲线上的圆点 -->
+          <g v-if="hoverPoint" class="cp-hover">
+            <line
+              :x1="hoverPoint.x"
+              :x2="hoverPoint.x"
+              :y1="PAD.top"
+              :y2="chart.h - PAD.bottom"
+            />
+            <circle :cx="hoverPoint.x" :cy="hoverPoint.yDown" r="3" class="dot down" />
+            <circle :cx="hoverPoint.x" :cy="hoverPoint.yUp" r="3" class="dot up" />
+          </g>
+
           <!-- X 轴时间 -->
           <g class="cp-axis-x">
             <text
@@ -267,6 +331,17 @@ const ranking = computed(() => {
           </g>
         </svg>
         <div v-else class="cp-chart-empty">—</div>
+
+        <!-- 悬浮数值块：用 HTML 画（文字更清晰，也不用管 SVG 缩放） -->
+        <div
+          v-if="hoverPoint"
+          class="cp-hover-box"
+          :style="{ left: hoverAt.x + 'px', top: hoverAt.y + 'px' }"
+        >
+          <div class="cp-hover-time">{{ fmtClock(hoverPoint.at, 0) }}</div>
+          <div class="cp-hover-row"><span class="cp-up">↑</span>{{ rateText(hoverPoint.up) }}</div>
+          <div class="cp-hover-row"><span class="cp-down">↓</span>{{ rateText(hoverPoint.down) }}</div>
+        </div>
       </div>
     </div>
 
@@ -279,7 +354,6 @@ const ranking = computed(() => {
       </div>
 
       <div class="cp-rank">
-        <div class="cp-rank-title">按节点流量</div>
         <div v-for="r in ranking.rows" :key="r.id" class="cp-rank-row">
           <span class="cp-rank-name">{{ r.name }}</span>
           <span class="cp-rank-bar"><i :style="{ width: (r.total / ranking.max) * 100 + '%' }" /></span>
@@ -369,6 +443,7 @@ const ranking = computed(() => {
 }
 
 .cp-chart {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
   border: 1px solid var(--cp-border);
@@ -379,10 +454,18 @@ const ranking = computed(() => {
 .cp-chart svg {
   display: block;
 }
+/* 网格要看得清（用户："背景的线条不是很清楚"）：原来的 --cp-border 在亮色下
+   几乎和底色一样淡，改成用文字色 + 透明度，两种主题下都够清楚 */
 .cp-grid line {
-  stroke: var(--cp-border);
+  stroke: var(--cp-text-3);
+  stroke-opacity: 0.45;
   stroke-width: 1;
-  stroke-dasharray: 3 4;
+  stroke-dasharray: 4 4;
+}
+/* 0 那条基线画实线，给曲线一个明确的落脚点 */
+.cp-grid line:last-child {
+  stroke-opacity: 0.7;
+  stroke-dasharray: none;
 }
 .cp-axis-y text {
   fill: var(--cp-text-3);
@@ -405,6 +488,46 @@ const ranking = computed(() => {
 .cp-line.down {
   stroke: var(--cp-down);
 }
+/* ---- 悬浮 ---- */
+.cp-hover line {
+  stroke: var(--cp-text-3);
+  stroke-opacity: 0.8;
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.cp-hover .dot {
+  stroke: var(--cp-panel);
+  stroke-width: 1.5;
+}
+.cp-hover .dot.up {
+  fill: var(--cp-up);
+}
+.cp-hover .dot.down {
+  fill: var(--cp-down);
+}
+.cp-hover-box {
+  position: absolute;
+  min-width: 118px;
+  padding: 5px 8px;
+  border: 1px solid var(--cp-border);
+  border-radius: var(--cp-radius-sm);
+  background: var(--cp-panel);
+  box-shadow: var(--cp-shadow);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--cp-text);
+  pointer-events: none;
+  z-index: 2;
+}
+.cp-hover-time {
+  color: var(--cp-text-3);
+}
+.cp-hover-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .cp-chart-empty {
   height: 100%;
   display: flex;
@@ -458,10 +581,6 @@ const ranking = computed(() => {
   display: flex;
   flex-direction: column;
   gap: 4px;
-}
-.cp-rank-title {
-  font-size: 11.5px;
-  color: var(--cp-text-3);
 }
 .cp-rank-row {
   display: flex;
