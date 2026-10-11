@@ -61,36 +61,42 @@ if ($buildCli) {
 }
 
 # ---------------------------------------------------------------------------
-# 图形界面版（Wails 会自己调 npm 构建前端）
+# 图形界面版
+#
+# 【v3 起不再用 wails build】
+# `wails build` 是一条 Taskfile 驱动的流水线（根 Taskfile.yml → build/windows/
+# Taskfile.yml），需要额外装 `task` 这个 Taskfile 执行器，而它做的事情本质上就是：
+#   前端 npm run build → go build -tags production,<EXTRA_TAGS> -ldflags "-H windowsgui"
+# 我们直接调这条命令，好处是：不依赖 wails3 CLI 与 task、构建过程可见可控、
+# 和命令行版走完全一样的编译路径。
+#
+# **production 标签不能忘**：v3 用它区分 production/dev 两套实现文件
+# （roles_production.go / roles_dev.go 等），漏了会构建出 dev 行为。
 # ---------------------------------------------------------------------------
 if ($buildGui) {
     $desktop = Join-Path $Root 'desktop'
-    Set-Location $desktop
 
     if (-not $SkipFrontend) {
-        Write-Host "[ChainProxy] 安装前端依赖……"
+        Write-Host "[ChainProxy] 构建前端……"
         Push-Location (Join-Path $desktop 'frontend')
-        npm install --no-audit --no-fund
-        if ($LASTEXITCODE -ne 0) { Pop-Location; throw "npm install 失败" }
+        if (-not (Test-Path 'node_modules')) {
+            Write-Host "[ChainProxy] 安装前端依赖……"
+            npm install --no-audit --no-fund
+            if ($LASTEXITCODE -ne 0) { Pop-Location; throw "npm install 失败" }
+        }
+        npm run build
+        if ($LASTEXITCODE -ne 0) { Pop-Location; throw "前端构建失败" }
+        # Vite 每次构建都会清空 dist，占位文件要补回来，
+        # 否则下次 go build ./... / go test ./... 会因为 //go:embed 找不到文件而失败。
+        New-Item -ItemType File -Force (Join-Path $desktop 'frontend\dist\.keep') | Out-Null
         Pop-Location
     }
 
-    $wailsArgs = @('build', '-tags', $Tags, '-platform', 'windows/amd64')
-    if ($SkipFrontend) { $wailsArgs += '-s' }   # -s: 跳过前端构建
-    $wailsArgs += @('-ldflags', "-s -w -X main.Version=$Version")
-
-    Write-Host "[ChainProxy] 用 Wails 打包图形界面（version=$Version, tags=$Tags）……"
-    & wails @wailsArgs
-    if ($LASTEXITCODE -ne 0) { throw "Wails 打包失败" }
-
-    # Vite 每次构建都会清空 dist，占位文件要补回来，
-    # 否则下次 go build ./... / go test ./... 会因为 //go:embed 找不到文件而失败。
-    $keep = Join-Path $desktop 'frontend\dist\.keep'
-    if (-not (Test-Path $keep)) { New-Item -ItemType File -Force $keep | Out-Null }
-
-    $built = Join-Path $desktop 'build\bin\ChainProxy.exe'
-    if (-not (Test-Path $built)) { throw "没有找到打包产物：$built" }
-    Copy-Item -Force $built (Join-Path $OutDir 'ChainProxy.exe')
+    Write-Host "[ChainProxy] 编译图形界面（version=$Version, tags=production,$Tags）……"
+    $guiLdflags = "-s -w -H windowsgui -X main.Version=$Version"
+    go build -tags "production,$Tags" -trimpath -buildvcs=false `
+        -ldflags $guiLdflags -o (Join-Path $OutDir 'ChainProxy.exe') ./desktop
+    if ($LASTEXITCODE -ne 0) { throw "图形界面编译失败" }
 
     $size = (Get-Item (Join-Path $OutDir 'ChainProxy.exe')).Length
     Write-Host "[ChainProxy] 完成：dist\ChainProxy.exe  ($([math]::Round($size/1MB,2)) MB)"

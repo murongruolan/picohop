@@ -56,6 +56,7 @@
 | 018 | `test: 端口相关测试不再依赖机器的端口占用状态` | 2026-10-11 | 写死 10810/10815 导致"开发机上开着 ChainProxy 时测试变红"，极易被误判成回归；改为动态找连续空闲端口作为基准，其余断言改为相对基准 | [详情](#018) |
 | 019 | `feat(desktop): 对话框可拖动不裁切 + 长表单内部滚动 + 按钮做大居中 + 取消改警告色` | 2026-10-11 | 去掉弹窗顶部的导入区块；el-dialog draggable 默认即"可拖但被钳制在视口内"；长表单靠 max-height + body 滚动；修 `.cp-dialog .el-dialog` 选择器不匹配的坑；关闭图标 20px、按钮 36px 居中、取消橙色 | [详情](#019) |
 | 020 | `docs(migration): Wails v3 迁移技术验证（试点实测通过，GO）` | 2026-10-11 | 在 .cache 建试点工程真机验证：裸 `go build -tags production` 可构建、第二窗口(无边框+置顶)可用、托盘/全局快捷键/系统通知均通过、`Call.ByName` 免绑定生成器、WebviewUserDataPath 可留项目内；wails3 CLI 装入项目内；v2 打 tag v2.0-wails2 可回退 | [详情](#020) |
+| 021 | `feat(desktop)!: 桌面外壳从 Wails v2 迁移到 v3（托盘常驻/多窗口/全局快捷键/系统通知）` | 2026-10-11 | main.go 全重写 + 新增 shell.go/theme_*.go；API 改 v3 服务钩子；前端桥换 @wailsio/runtime（只改 api.js）；删 wailsjs 与 wails.json；构建改裸 go build（不依赖 wails3 CLI/task）；实测托盘/快捷键/关窗常驻/数据目录全部通过 | [详情](#021) |
 
 ---
 
@@ -1912,3 +1913,91 @@ PROJECT_PROGRESS.md 追加"对话框体验调整（第 5 轮）"。
 - 试点有告警 `Error saving icon: … resource with id 3`（未生成 `.syso` 图标资源），
   正式迁移时处理。
 - 运行期切换标题栏明暗在 v3 未找到 setter（v2 有 `WindowSetDarkTheme`），待验证。
+
+---
+
+## 021
+
+**`feat(desktop)!: 桌面外壳从 Wails v2 迁移到 v3（托盘常驻/多窗口/全局快捷键/系统通知）`**
+
+> 带 `!`：这是架构级的替换，不是增量功能。v2 的最终状态已打 tag
+> **`v2.0-wails2`**，本次在分支 **`wails-v3`** 上进行，随时可回退。
+
+### 为什么
+
+需求是"对话框能飘到主窗口之外"，这需要**第二个真正的 OS 窗口**。
+Wails v2 没有任何创建窗口的 API（`pkg/application` 只有
+`New/NewWithOptions/Run/Quit/Bind/On/SetApplicationMenu`），而 v3 把窗口做成了一等对象。
+经与用户对比 v2/v3 后决定升级，顺带拿到托盘常驻、全局快捷键、系统通知。
+**成熟度是这次决策里唯一的减分项**：v3 当时最新是 `v3.0.0-beta.28`（发布 6 天），
+所以版本被**锁死**在 beta.28，不跟 `latest`。
+
+### 改动
+
+| 文件 | 改动 |
+|---|---|
+| `desktop/main.go` | 全部重写：`application.New` + 主窗口 + 托盘 + 全局快捷键 + 通知服务 + `DisableQuitOnLastWindowClosed` + 关窗钩子 |
+| `desktop/shell.go` | 新增：v3 胶水层（事件/剪贴板/对话框/窗口/通知），以及托盘与快捷键的动作实现 |
+| `desktop/theme_windows.go` · `theme_other.go` | 新增：**v3 没有运行期改标题栏明暗的 setter**，直接调 `DwmSetAttribute`（只匹配本进程窗口） |
+| `desktop/api.go` | `startup/shutdown(ctx)` → `ServiceStartup/ServiceShutdown`；去 `ctx` 字段；`runtime.*` → v3 对象方法；新增外壳状态上报 |
+| `desktop/api_import.go` | 剪贴板 / 隐藏恢复窗口 / 保存文件对话框改用 v3 |
+| `desktop/frontend/src/api.js` | 桥换成 `@wailsio/runtime`（`Call.ByName` + `Events.On`）——**只改了这一个文件** |
+| `desktop/frontend/package.json` | 加 `@wailsio/runtime`，锁 `3.0.0-beta.28` |
+| `desktop/frontend/wailsjs/` | 删除（v2 自动生成的绑定，v3 不需要） |
+| `desktop/wails.json` | 删除，换成 v3 的 `desktop/build/config.yml` |
+| `scripts/build.ps1` | `wails build` → `go build -tags production,...` |
+| `cmd/uishot` | 新增 `-rect x,y,w,h`：截屏幕区域（拍托盘这种不属于任何窗口的东西） |
+
+### 三个改变了工作量估计的结论
+
+1. **构建不需要 wails3 CLI，也不需要 Taskfile。** `wails3 build` 是 Taskfile 驱动的
+   （本机没有 `task`），而官方 Windows 任务里真正的命令就是一条 `go build`，
+   外加 **`production` 标签**（v3 用它区分 production/dev 两套实现文件）。
+   所以构建脚本改成直接调 `go build`，命令行版走的还是同一条路。
+2. **前端可完全绕开绑定生成器。** `@wailsio/runtime` 的 `Call.ByName('包.类型.方法', args)`
+   按名字调用服务；因为所有调用早就收敛在 `api.js` 的一个 `call()` 里，换桥只改一处。
+   事件也一样，`Events.On` 的回调收到 `{name, data, sender}`，在 `onEvent` 里统一解包，
+   下游 handler 签名不变。
+   判定"是否在 Wails 里"必须用宿主通道 `window.chrome.webview.postMessage`，
+   **不能用 `window._wails`** —— 后者被 runtime 包在导入时就赋成了 `{}`，永远为真，
+   那样"后端未连接"的提示就永远不会出现。
+3. **数据目录仍能留在项目内**：`application.Options.Windows.WebviewUserDataPath`。
+
+### 验收（每条都有程序外的证据）
+
+| 项 | 证据 |
+|---|---|
+| 界面在 v3 下正常 | 截图：节点 2/2、今日流量、通栏表格与填充列都正常 |
+| WebView2 数据目录 | `data\webview\EBWebView` 存在；`%APPDATA%\ChainProxy`、`\chainproxy`、`\wails` **都不存在** |
+| 托盘已建立 | 日志 `外壳：托盘已就绪（图标 21017 字节）` |
+| 全局快捷键 | 日志 `外壳：已注册全局快捷键 Ctrl+Alt+C（…）、Ctrl+Alt+A（…）` |
+| **关窗不退出** | 关窗前：窗口可见（hwnd 1411250）、`MainWindowHandle=21041744`；关窗后：**可见窗口列表里已无它**、`MainWindowHandle=0`、**进程仍在**、**10810/10811 仍由同一 pid 监听**；日志 `窗口关闭被拦下：已收进托盘，进程与代理继续运行` |
+| **托盘菜单动作** | 自测直接调菜单背后的方法：复制本地地址 → 程序外用 `Get-Clipboard` 读到 `socks5://127.0.0.1:10810`；停止全部 → 0/2；激活全部 → 2/2 |
+| 全量校验 | `gofmt`/`go vet` 干净、8 个测试包全过、`lint.ps1` 4/4 |
+
+### 一处必须记下来的可观测性设计
+
+托盘与快捷键是在 `app.Run()` **之前**建立的，那时后端还没加载、界面还没起来，
+而 GUI 版用 `-H windowsgui` 构建、**没有控制台** —— 这类信息不记下来就等于凭空消失。
+所以 `api` 里存下"托盘/快捷键的建立结果"与"后端就绪前的告警"，
+等 `ServiceStartup` 起来后写进 `data\chainproxy.log` 并把告警补投成界面通知。
+上面那两条日志就是这么来的。
+
+### 诚实说明
+
+- **托盘图标本身没截到图**：Windows 11 把新注册的托盘图标放进 `^` 折叠区，
+  拖出来需要点鼠标，而本项目已彻底禁用输入注入。"托盘已建立"的证据是日志
+  与"关窗常驻"行为成立（两者共用同一段外壳代码）。
+- **收进托盘时的 Windows 通知**只验证到"调用成功、无报错"，没抓到 toast 截图。
+
+### 还没做
+
+对话框仍是主窗口内的 `<el-dialog>`。v3 已经把"独立窗口"这条路打开了，
+但改成独立窗口要再引入"第二个前端入口 + 窗口生命周期 + 结果回传"，是独立的一步。
+
+### 文档
+
+README（产物与构建说明，顺带修掉"图形界面写成 chainproxy-cli.exe"的笔误）、
+ARCHITECTURE 第 7 节重写为 v3 外壳 + 已知限制更新（改成"托盘图标默认在折叠区"）、
+USER_GUIDE 新增"托盘常驻/全局快捷键"（并修掉同一处笔误）、
+PROJECT_PROGRESS 追加迁移实录、`MIGRATION_wails_v3.md` 更新为已完成。

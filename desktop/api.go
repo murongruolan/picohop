@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,7 +11,8 @@ import (
 	"sync"
 	"time"
 
-	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 
 	"chainproxy/internal/app"
 	"chainproxy/internal/config"
@@ -29,8 +31,15 @@ var Version = "dev"
 //     今日流量的可读文本），协议细节不出后端
 //   - 所有可能失败的操作都返回 error，前端用统一的方式弹通知
 type API struct {
-	ctx context.Context
+	// app 是后端状态机（internal/app）。名字保持不变，免得改动散落到每个方法里。
 	app *app.App
+
+	// wapp 是 Wails v3 的应用对象：事件、剪贴板、对话框都从它上面取。
+	wapp *application.App
+	// notif 是系统通知服务（v3 的 pkg/services/notifications）。
+	notif *notifications.NotificationService
+	// mainWin 是主窗口。托盘/快捷键的"显示窗口"、导入时的隐藏/恢复都靠它。
+	mainWin application.Window
 
 	unsub func()
 
@@ -40,28 +49,43 @@ type API struct {
 	// devOpen 是开发期的自测开关（-open 启动参数），
 	// 让界面启动后直接打开某个面板，方便截图检查排版。
 	devOpen string
+
+	// 以下两个 Once 用于"只提示一次"的场景：收进托盘、快捷键注册失败。
+	trayHintOnce   sync.Once
+	shortcutWarned sync.Once
+
+	// 外壳（托盘/快捷键）的初始化结果。
+	//
+	// 为什么要记：托盘与快捷键是在 app.Run() 之前建立的，那时后端还没加载、
+	// 界面也还没起来，而 GUI 版用 -H windowsgui 构建、没有控制台，
+	// 于是这类信息不记下来就等于凭空消失。ServiceStartup 起来后会把它
+	// 写进日志文件并（失败的）补一条界面通知。
+	trayReady    bool
+	trayIconSize int
+	shortcutOK   []string
+	shortcutFail []string
+
+	// pendingWarnings 是"后端还没就绪时"产生的告警，等 ServiceStartup 补投。
+	pendingWarnings []string
 }
 
 // NewAPI 创建 API 实例。devOpen 为空表示正常运行。
 func NewAPI(devOpen string) *API { return &API{devOpen: devOpen} }
 
-// startup 由 Wails 在窗口创建后调用。
-func (a *API) startup(ctx context.Context) {
-	a.ctx = ctx
-
+// ServiceStartup 是 Wails v3 的服务启动钩子（v2 里是 OnStartup + ctx 字段）。
+//
+// 注意它由 app.Run() 内部调用，所以此时窗口已经创建、wapp/notif/mainWin 都已就位。
+func (a *API) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
 	inst, err := app.New(config.ConfigPath())
 	if err != nil {
 		// 配置坏了也得让界面起来，否则用户没有办法修
-		wruntime.LogErrorf(ctx, "读取配置失败：%v", err)
+		log.Printf("读取配置失败：%v", err)
 	}
 	a.app = inst
 	if inst == nil {
-		wruntime.MessageDialog(ctx, wruntime.MessageDialogOptions{
-			Type:    wruntime.ErrorDialog,
-			Title:   "ChainProxy 启动失败",
-			Message: fmt.Sprintf("无法读取配置：%v\n\n请检查 %s", err, config.ConfigPath()),
-		})
-		return
+		a.dialogError("ChainProxy 启动失败",
+			fmt.Sprintf("无法读取配置：%v\n\n请检查 %s", err, config.ConfigPath()))
+		return nil
 	}
 
 	// 把后端事件转发到前端。
@@ -69,7 +93,7 @@ func (a *API) startup(ctx context.Context) {
 	// 注意：这个回调可能在持有 App 内部锁时被调用，所以这里**只做转发**，
 	// 绝不能再回头调用 a.app 的任何方法。
 	a.unsub = inst.Subscribe(func(e app.Event) {
-		wruntime.EventsEmit(ctx, "cp:"+e.Kind, e.Text)
+		a.Emit("cp:"+e.Kind, e.Text)
 	})
 
 	if err := engine.BuildCheck(); err != nil {
@@ -78,25 +102,55 @@ func (a *API) startup(ctx context.Context) {
 	}
 
 	inst.Logf("ChainProxy %s 已启动，配置文件：%s", Version, config.ConfigPath())
+
+	// 把外壳（托盘/快捷键）的初始化结果写进日志，并把后端就绪前攒下的告警补投给界面。
+	a.reportShellStatus(inst)
+
 	inst.AutoActivate()
+	return nil
 }
 
-// shutdown 由 Wails 在退出前调用。
-func (a *API) shutdown(ctx context.Context) {
+// ServiceShutdown 是 Wails v3 的服务关闭钩子（v2 里是 OnShutdown）。
+func (a *API) ServiceShutdown() error {
 	if a.unsub != nil {
 		a.unsub()
 	}
 	if a.app != nil {
 		a.app.Close()
 	}
+	return nil
 }
 
-// Quit 退出程序（界面上的"退出"按钮）。
+// reportShellStatus 把托盘/快捷键的初始化结果写进日志，并补投攒下的告警。
+//
+// 这是"GUI 版没有控制台"这一约束下的取证手段：结果写进 data\chainproxy.log，
+// 出问题时能直接读到托盘与快捷键到底有没有建起来。
+func (a *API) reportShellStatus(inst *app.App) {
+	if inst == nil {
+		return
+	}
+	if a.trayReady {
+		inst.Logf("外壳：托盘已就绪（图标 %d 字节）", a.trayIconSize)
+	} else {
+		inst.Logf("外壳：⚠️ 托盘未建立")
+	}
+	if len(a.shortcutOK) > 0 {
+		inst.Logf("外壳：已注册全局快捷键 %s", strings.Join(a.shortcutOK, "、"))
+	}
+	for _, f := range a.shortcutFail {
+		inst.Logf("外壳：⚠️ %s", f)
+	}
+	a.flushWarnings()
+}
+
+// Quit 退出程序（界面上的"退出"按钮、托盘菜单的"退出"）。
 func (a *API) Quit() {
 	if a.app != nil {
 		a.app.Close()
 	}
-	wruntime.Quit(a.ctx)
+	if a.wapp != nil {
+		a.wapp.Quit()
+	}
 }
 
 // ------------------------------------------------------------------
@@ -255,7 +309,7 @@ func (a *API) TestFront() map[string]any {
 	if a.app == nil {
 		return map[string]any{"ok": false, "error": "应用尚未就绪"}
 	}
-	ctx, cancel := context.WithTimeout(a.ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	r := a.app.TestFront(ctx)
 	if !r.OK {
@@ -514,19 +568,11 @@ func (a *API) OpenLogFile() error { return a.OpenPath(config.LogPath()) }
 
 // SetWindowTheme 同步窗口标题栏的明暗，避免"内容深色、标题栏白色"的割裂感。
 //
-// 说明：Wails v2 没有多窗口 API，标题栏只能这样整体切换。
-func (a *API) SetWindowTheme(theme string) {
-	if a.ctx == nil {
-		return
-	}
-	switch theme {
-	case "dark":
-		wruntime.WindowSetDarkTheme(a.ctx)
-	case "light":
-		wruntime.WindowSetLightTheme(a.ctx)
-	default:
-		wruntime.WindowSetSystemDefaultTheme(a.ctx)
-	}
+// 【v3 与 v2 的差别】v2 有 runtime.WindowSetDarkTheme/LightTheme/SystemDefaultTheme，
+// v3 **没有运行期 setter**（明暗只能在创建窗口时用 WindowsWindow{Theme:...} 指定）。
+// 所以这里直接调 Win32 的 DwmSetWindowAttribute，实现见 theme_windows.go。
+func (a *API) SetWindowTheme(theme string) bool {
+	return setTitleBarTheme(theme)
 }
 
 // ------------------------------------------------------------------

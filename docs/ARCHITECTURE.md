@@ -1,6 +1,6 @@
 # ChainProxy 架构设计
 
-本文记录 v2（Wails + Vue 3 + 内嵌 sing-box）的模块划分、数据流与关键取舍。
+本文记录 v2（Wails v3 + Vue 3 + 内嵌 sing-box）的模块划分、数据流与关键取舍。
 v1（纯 Win32 界面）的架构说明已随那次重构一起过时，
 对应的代码可以在 git 的 `v0.1-win32-gui` 标签处找回。
 
@@ -49,7 +49,7 @@ v1（纯 Win32 界面）的架构说明已随那次重构一起过时，
 | `internal/tester` | TCP 延迟 / 真连接延迟 / 测速 / 出口 IP | 纯函数式的测试能力，与状态机解耦 |
 | `internal/share` | 分享链接编解码 + 二维码生成 | 参考主流客户端的格式细节，和主流客户端互通 |
 | `internal/qrscan` | GDI 截图 + 屏幕圈选 + 二维码识别 | 纯 syscall 的 Win32 代码集中隔离 |
-| `desktop/` | Wails 应用（前端 Vue 3 + 绑定层） | 界面层不碰 proxy/engine，只通过 API 与 `internal/app` 交互 |
+| `desktop/` | Wails v3 应用（前端 Vue 3 + 绑定层 + 托盘/快捷键/通知） | 界面层不碰 proxy/engine，只通过 API 与 `internal/app` 交互 |
 | `cmd/chainproxy` | 无界面命令行 | 排障与自动化测试；也是"界面出问题时还能用"的兜底 |
 | `cmd/uishot` | 开发期界面截图工具 | 桌面程序的界面排版必须靠截图验证 |
 
@@ -203,6 +203,35 @@ PlanActivation(["C"])  ──►  Order = [A, B, C], Auto = [A, B]
 
 ## 7. 界面层（desktop）
 
+桌面外壳用的是 **Wails v3（beta.28）**。v2 → v3 的完整对照与验证过程见
+[`MIGRATION_wails_v3.md`](MIGRATION_wails_v3.md)，这里只写结论性的东西。
+
+### 7.1 v3 的外壳长什么样
+
+- **构建不走 `wails3 build`**：那条链是 Taskfile 驱动的（需要额外装 `task`），
+  而它本质上就是"前端 `npm run build` → `go build -tags production,...`"。
+  `scripts/build.ps1` 直接调这条 `go build`，于是**不依赖 wails3 CLI 与 task**，
+  构建过程可见可控。**`production` 标签不能漏**（v3 用它区分 production/dev 两套实现文件）。
+- **前端桥换成 `@wailsio/runtime`**：调用是 `Call.ByName('main.API.方法名', ...args)`，
+  不再有 v2 那种 `window.go.main.API.*` 全局对象。因为**所有调用都收敛在
+  `src/api.js` 的一个 `call()`** 里，这次换桥只改了这一个文件；
+  事件同理，`Events.On` 的回调收到的是 `{name, data, sender}`，在 `onEvent` 里统一解包。
+  判定"是否在 Wails 里"用的是宿主通道 `window.chrome.webview.postMessage`，
+  **不能用 `window._wails`** —— 后者被 runtime 包在导入时就赋成了 `{}`，永远为真。
+- **窗口是一等对象**：`application.New()` → `app.Window.NewWithOptions(...)` → `app.Run()`。
+  主窗口、托盘、快捷键在 `Run()` 之前建好；后端加载走服务的 `ServiceStartup/ServiceShutdown`
+  钩子（v2 是 `OnStartup/OnShutdown` + 一个 ctx 字段）。
+- **关窗不退出**：`WindowsOptions.DisableQuitOnLastWindowClosed` + 主窗口的
+  `RegisterHook(events.Common.WindowClosing, ...)` 里 `e.Cancel()` 后 `Hide()`。
+  真正的退出走托盘菜单或界面上那个退出按钮。
+- **托盘与全局快捷键**：
+  `app.SystemTray.New()` 配 `SetIcon/SetTooltip/SetMenu/OnClick/Run`，
+  菜单项直接调 API 方法（所以不依赖界面是否打开）；
+  快捷键 `Ctrl+Alt+C` 显隐主窗口、`Ctrl+Alt+A` 全开/全停，注册失败只提示不阻断启动。
+  托盘图标用 `//go:embed build/windows/icon.ico` 嵌进二进制 ——
+  它是"关窗后仍然活着"的那部分，不该依赖磁盘上的文件。
+- **系统通知**：`pkg/services/notifications` 作为服务注册，
+  "已收进托盘""快捷键被占用"这类场景下发真正的 Windows 通知。
 - **前端只通过 `desktop/api*.go` 暴露的方法访问后端**，
   拿到的都是"已经算好、已经格式化"的数据（协议显示名、今日流量的可读文本、
   前置的描述），协议细节不出后端。
@@ -210,10 +239,17 @@ PlanActivation(["C"])  ──►  Order = [A, B, C], Auto = [A, B]
   绑定层转成 Wails 事件推给前端。有一条硬约定写在了 `internal/app` 的注释里：
   订阅回调必须快速返回，且**不允许再同步调用 App 的方法** ——
   因为事件可能在持有 App 内部锁时发出。
+- **"外壳初始化结果"必须落日志**：托盘、快捷键都是在 `app.Run()` 之前建立的，
+  那时后端还没加载、界面也没起来，而 GUI 版用 `-H windowsgui` 构建、**没有控制台** ——
+  不记下来就等于凭空消失。所以 `api` 里存下托盘/快捷键的建立结果与"后端就绪前的告警"，
+  等 `ServiceStartup` 起来后写进 `data\chainproxy.log` 并把告警补投成界面通知。
 - **刷新策略**：stats 事件每秒一次，前端做了 700ms 去抖合并，
   不会因为事件风暴把 IPC 打满。
-- **主题**：以配置文件里的 `settings.theme` 为准（localStorage 只是缓存），
-  切换时同步 Windows 标题栏的明暗。
+- **主题**：以配置文件里的 `settings.theme` 为准（localStorage 只是缓存）。
+  标题栏明暗在创建窗口时用 `WindowsWindow{Theme: ...}` 指定；
+  **运行期切换 v3 没有 setter**（v2 有 `WindowSetDarkTheme`），
+  所以 `SetWindowTheme` 直接调 Win32 的 `DwmSetWindowAttribute`
+  （`theme_windows.go`，只匹配本进程窗口，不致误改别的程序）。
 - **通知是自己实现的**（`src/notify.js` + `components/Notifications.vue`），
   没有用 Element Plus 的 `ElNotification`。原因：它的垂直位置由**每条通知自己的
   `offset`** 决定，而同一个 tick 里连发多条时它们互相看不到对方，
@@ -251,9 +287,10 @@ PlanActivation(["C"])  ──►  Order = [A, B, C], Auto = [A, B]
   而 `overflow` 的默认值就是假，所以**默认就是"能拖但不会被边界裁切"**。
   注意它的文档注释写的是 "draggable Dialog can overflow the viewport"，
   那是显式打开 `overflow` 时的行为，默认并非如此。
-  **真正的"独立窗口"做不到**：Wails v2 没有多窗口 API
-  （`options.App` 描述的是唯一那个窗口），要在窗口外再开一个窗口得换 Wails v3
-  或自己托管 WebView2 —— 代价过大，所以这里只提供"窗口内自由拖动 + 不裁切"。
+  **对话框仍然是主窗口里的 `<el-dialog>`**：v3 已经支持多窗口，"飘到主窗口之外"
+  在技术上没有障碍了，但把它改成独立窗口需要再引入一套"第二个前端入口 +
+  窗口生命周期 + 结果回传"，属于独立的一步（见 `MIGRATION_wails_v3.md` 的待办）。
+  当前形态是"窗口内自由拖动 + 永不被裁切"。
 - **对话框本体的样式必须写 `.el-dialog.cp-dialog`**，不能写 `.cp-dialog .el-dialog`。
   `el-dialog` 上的 `class` 会**透传到 `.el-dialog` 自身**（不是外面那层 overlay），
   所以祖先-后代选择器匹配不到。踩过一次：给对话框加高度上限的规则没生效，
@@ -262,17 +299,15 @@ PlanActivation(["C"])  ──►  Order = [A, B, C], Auto = [A, B]
   `max-height: calc(96vh - 32px)` 并成为 flex 列，`.el-dialog__body` 设
   `flex:1; min-height:0; overflow-y:auto`（少了 `min-height:0` 会被内容撑破），
   这样标题栏和底部按钮永远可见。另配 `top="4vh"` + `margin-bottom:24px`
-  保证 `4vh + 上限 + 24px ≤ 100vh`。：让界面启动后直接打开某个面板。：让界面启动后直接打开某个面板。
-  这是给"界面自测"用的：桌面程序的排版必须真的看一眼，
-  而模拟鼠标点击会去动用户的鼠标（甚至点到别的程序上），不可接受。
+  保证 `4vh + 上限 + 24px ≤ 100vh`。
 
-### 为什么圈选窗口是纯 Win32 而不是第二个 Webview
+### 为什么圈选窗口是纯 Win32（而不是 Wails 的第二个窗口）
 
-Wails v2 **没有多窗口 API**（`options.App` 描述的是唯一那个窗口）。
-要在"无边框 + 全屏置顶 + 自定义光标"的前提下做圈选，用纯 Win32 反而更直接：
-`WS_POPUP + WS_EX_TOPMOST`，先截图再建窗口（避免把自己拍进去），
-红色十字准星由自己画（`ShowCursor(FALSE)` + 在 `WM_PAINT` 里画十字线，
-比构造自定义光标位图可靠得多）。
+v3 已经能开多个窗口了，但圈选那一刻需要的是"**全屏置顶、无边框、自定义十字准星**"
+这一种很特殊的东西：`WS_POPUP + WS_EX_TOPMOST`，先截图再建窗口（避免把自己拍进去），
+准星由自己画（`ShowCursor(FALSE)` + 在 `WM_PAINT` 里画十字线，
+比构造自定义光标位图可靠得多）。用 Win32 直接做比"再起一个 WebView 再去藏边框和光标"
+更短、更可控。**"能不能多窗口"与"这件事该不该用 WebView 做"是两个问题。**
 
 ### 界面自测怎么截图（怎么不打扰用户）
 
@@ -311,7 +346,8 @@ Wails v2 **没有多窗口 API**（`options.App` 描述的是唯一那个窗口�
   Reality / Hysteria2 等在部分网络下也可能被运营商 QoS，浏览器会回落到 TCP。
 - **单实例内存**：每个 sing-box 出口是一个独立实例（带自己的 router），
   节点很多时（几十个）会有一点固定开销。
-- **没有托盘图标**：Wails v2 不做托盘，本项目也不为此引入 cgo 依赖。
+- **托盘图标在 Windows 11 上默认落在折叠区**：新注册的托盘图标会被系统放进
+  `^` 折叠区，需要用户自己拖出来固定。功能不受影响，但"怎么没看到图标"多半是这个原因。
 - **无障碍未适配**：界面是自用的桌面工具，没有做完整的键盘导航与读屏支持。
 - **端到端验证的边界**：本机对"真实 Reality / Hysteria2 服务器"只验证到
   「生成的配置能被 sing-box 接受、实例能启动、拨号能发出去」这一层；

@@ -6,6 +6,8 @@
  * 所有对话框由 ui store 控制显隐，业务动作在 actions.js。
  */
 import { onMounted, onBeforeUnmount } from 'vue'
+// v3 运行时：这个自测入口要真去请求关窗，验证"关窗收进托盘"的钩子生效
+import { Window } from '@wailsio/runtime'
 import { useStore } from './store'
 import { useUi } from './ui'
 import { useActions } from './actions'
@@ -303,6 +305,53 @@ async function handleDevOpen(name) {
 
       notify(inside && footerVisible ? 'success' : 'error', '对话框拖动 + 长表单测试',
         `${line1}\n${line2}\n${line3}`, 0)
+      break
+    }
+
+    // 验证"托盘菜单那几个动作"。
+    //
+    // 为什么不直接点托盘菜单：那需要真的去动鼠标，而输入注入早就因为会误点到
+    // 用户的其它程序而被彻底删掉了。菜单项本身只是一行 wrapper，
+    // 背后就是这几个 API 方法 —— 直接调它们，等价于验证了菜单的功能。
+    case 'trayactions': {
+      const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms))
+      const lines = []
+
+      // 1) 「复制本地代理地址」——内容我随后从程序外面用 Get-Clipboard 核对
+      try {
+        await api.copyFirstLocalAddress()
+        lines.push('① 复制本地代理地址：已调用（剪贴板内容由外部核对）')
+      } catch (e) {
+        lines.push(`① 复制本地代理地址失败：${String(e?.message || e)}`)
+      }
+
+      // 2) 「停止全部节点」→「激活全部节点」
+      try {
+        await api.deactivateAll()
+        await sleepMs(900)
+        const s1 = await api.getSummary()
+        await api.activateAll()
+        await sleepMs(1500)
+        const s2 = await api.getSummary()
+        lines.push(`② 停止全部 → 运行中 ${s1.running}/${s1.total}`)
+        lines.push(`③ 激活全部 → 运行中 ${s2.running}/${s2.total}`)
+      } catch (e) {
+        lines.push(`②③ 激活/停止失败：${String(e?.message || e)}`)
+      }
+
+      notify('primary', '托盘菜单动作测试', lines.join('\n'), 0)
+      break
+    }
+
+    // 验证"关窗不退出（收进托盘）"：真心请求关闭窗口，然后由 Go 侧的
+    // WindowClosing 钩子拦下、改成隐藏。预期结果是"窗口没了、进程还在、
+    // 代理端口仍在监听" —— 这三件事从窗口外面都能查。
+    case 'closetotray': {
+      const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms))
+      notify('info', '关窗测试',
+        '6 秒后向系统请求关闭窗口。若托盘常驻生效：窗口会消失，但进程与代理继续运行。', 0)
+      await sleepMs(6000)
+      await Window.Close()
       break
     }
   }

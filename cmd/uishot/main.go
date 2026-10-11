@@ -27,6 +27,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -135,7 +136,31 @@ func main() {
 	list := flag.Bool("list", false, "只列出可见窗口标题")
 	wait := flag.Int("wait", 0, "等待窗口出现的秒数")
 	pad := flag.Int("pad", 0, "截图时四周留白像素")
+	rect := flag.String("rect", "", "截取屏幕区域，格式 x,y,w,h（用于拍摄任务栏托盘等不属于任何窗口的东西）")
 	flag.Parse()
+
+	if *rect != "" {
+		r, err := parseRect(*rect)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "解析 -rect 失败：%v\n", err)
+			os.Exit(2)
+		}
+		if *out == "" {
+			fmt.Fprintln(os.Stderr, "需要 -out 指定输出路径")
+			os.Exit(2)
+		}
+		img, err := qrscan.CaptureRect(r)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "截屏失败：%v\n", err)
+			os.Exit(1)
+		}
+		if err := savePNG(*out, img); err != nil {
+			fmt.Fprintf(os.Stderr, "写文件失败：%v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("已截取屏幕区域 %v → %s（%dx%d）\n", r, *out, img.Bounds().Dx(), img.Bounds().Dy())
+		return
+	}
 
 	if *list {
 		for _, w := range enumWindows() {
@@ -215,4 +240,34 @@ func main() {
 	}
 
 	fmt.Printf("已截图：%s\n  窗口：%s\n  尺寸：%dx%d\n", *out, target.title, img.Bounds().Dx(), img.Bounds().Dy())
+}
+
+// parseRect 解析 "x,y,w,h"。给 -rect 用。
+func parseRect(s string) (image.Rectangle, error) {
+	parts := strings.Split(s, ",")
+	if len(parts) != 4 {
+		return image.Rectangle{}, fmt.Errorf("需要 4 个数字 x,y,w,h，收到 %q", s)
+	}
+	var v [4]int
+	for i, p := range parts {
+		n, err := strconv.Atoi(strings.TrimSpace(p))
+		if err != nil {
+			return image.Rectangle{}, fmt.Errorf("第 %d 个不是整数：%q", i+1, p)
+		}
+		v[i] = n
+	}
+	return image.Rect(v[0], v[1], v[0]+v[2], v[1]+v[3]), nil
+}
+
+// savePNG 写 PNG，并自动建好上级目录。
+func savePNG(path string, img image.Image) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return png.Encode(f, img)
 }

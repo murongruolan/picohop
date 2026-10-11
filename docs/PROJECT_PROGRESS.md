@@ -627,3 +627,59 @@ setter，没有创建新窗口的接口）。要做到真正的独立窗口得�
 
 硬拖到边界时正好停在 `right=1164 / bottom=701`（等于视口尺寸），
 说明钳制是精确的，不是"大概不出界"。
+
+---
+
+## 迁移到 Wails v3：外壳换掉（2026-10-11）
+
+### 为什么
+
+需求是"对话框能飘到主窗口之外"，而这需要**第二个真正的 OS 窗口** ——
+Wails v2 没有任何创建窗口的 API。经对比 v2/v3（见 `MIGRATION_wails_v3.md`），
+选择升级 v3，顺带拿到托盘常驻、全局快捷键、系统通知。
+
+### 做了什么
+
+| 文件 | 改动 |
+|---|---|
+| `desktop/main.go` | 全部重写：`application.New` + 主窗口 + 托盘 + 全局快捷键 + 通知服务 + `DisableQuitOnLastWindowClosed` + 关窗钩子 |
+| `desktop/shell.go` | **新增**：v3 胶水层（事件/剪贴板/对话框/窗口/通知/主题），托盘与快捷键的动作实现 |
+| `desktop/theme_windows.go` · `theme_other.go` | **新增**：v3 没有运行期改标题栏明暗的 setter，直接调 `DwmSetWindowAttribute` |
+| `desktop/api.go` | `startup/shutdown(ctx)` → `ServiceStartup/ServiceShutdown`；`runtime.*` → v3 对象方法；新增外壳状态上报 |
+| `desktop/api_import.go` | 剪贴板/隐藏窗口/保存文件对话框改用 v3 |
+| `desktop/frontend/src/api.js` | 桥换成 `@wailsio/runtime` 的 `Call.ByName` + `Events.On`（**只改了这一个文件**） |
+| `desktop/frontend/package.json` | 加 `@wailsio/runtime`，锁 `3.0.0-beta.28` |
+| `desktop/frontend/wailsjs/` | **删除**（v2 自动生成的绑定，v3 不需要） |
+| `desktop/wails.json` | **删除**，换成 v3 的 `desktop/build/config.yml` |
+| `scripts/build.ps1` | `wails build` → `go build -tags production,...`（不再依赖 wails3 CLI 与 task） |
+| `cmd/uishot` | 新增 `-rect x,y,w,h`：截取屏幕区域（拍托盘等不属于任何窗口的东西） |
+
+### 逐条验收（都有程序外的证据）
+
+| 项 | 证据 |
+|---|---|
+| 界面在 v3 下正常工作 | 截图：节点 2/2、今日流量、通栏表格、填充列全部正常 |
+| 前端桥 `Call.ByName` | 界面能拉到数据、能激活节点 —— 说明服务调用通了 |
+| **构建不依赖 wails3 CLI / Taskfile** | `.\scripts\build.ps1` 成功产出 `dist\ChainProxy.exe`（46.23 MB） |
+| **WebView2 数据目录留在项目内** | `data\webview\EBWebView` 存在；`%APPDATA%\ChainProxy`、`\chainproxy`、`\wails` **都不存在** |
+| **托盘已建立** | 日志：`外壳：托盘已就绪（图标 21017 字节）` |
+| **全局快捷键已注册** | 日志：`外壳：已注册全局快捷键 Ctrl+Alt+C（显示/隐藏主窗口）、Ctrl+Alt+A（激活全部节点 / 停止全部）` |
+| **关窗不退出（托盘常驻）** | 关窗前：窗口可见（hwnd 1411250）、`MainWindowHandle=21041744`；关窗后：**可见窗口列表里已无该窗口**、`MainWindowHandle=0`、**进程仍在**、**10810/10811 仍由同一 pid 监听**；日志：`窗口关闭被拦下：已收进托盘，进程与代理继续运行` |
+| **托盘菜单动作** | 自测直接调菜单背后的方法：复制本地地址 → 程序外用 `Get-Clipboard` 读出 `socks5://127.0.0.1:10810`；停止全部 → 运行中 0/2；激活全部 → 运行中 2/2 |
+| `-open` 自测钩子 | 新增 `closetotray` / `trayactions` 两项并实际使用；原有各项沿用 |
+| sing-box 构建标签透传 | `chainproxy engines` 自检通过；节点真实启动、端口真实监听 |
+| 全量校验 | `gofmt` 干净、`go vet` 干净、8 个测试包全过、`lint.ps1` 4/4 |
+
+### 诚实说明的两点
+
+1. **托盘图标本身没有截到图**：Windows 11 会把新注册的托盘图标放进 `^` 折叠区，
+   而把它拖出来需要点鼠标（本项目已彻底禁用输入注入）。
+   "托盘已建立"的证据是日志 + 关窗常驻行为成立（两者共用同一段外壳代码）。
+2. **点 × 收进托盘那一刻的 Windows 通知只是"调用成功、无报错"**，
+   没有抓到 toast 的截图（toast 会自动消失，抓取时机不稳）。
+
+### 还没做
+
+- 对话框仍是主窗口内的 `<el-dialog>`。v3 的多窗口已经打开了这条路，
+  但把对话框改成独立窗口需要再引入"第二个前端入口 + 窗口生命周期 + 结果回传"，
+  是独立的一步。当前形态：窗口内自由拖动 + 永不被裁切。

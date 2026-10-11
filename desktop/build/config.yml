@@ -1,0 +1,26 @@
+# Wails v3 工程配置（v2 的 wails.json 在 v3 里换成了这个文件）。
+#
+# 【本项目的构建并不读它】为了不依赖 wails3 CLI 与 Taskfile，构建走的是
+# scripts/build.ps1 里那条 go build（v3 的 `wails3 build` 本质也只是 Taskfile
+# 包着同一条命令）。这个文件的意义是：
+#   - 留住产品元信息（公司、版本、标识），将来要用 wails3 做图标/打包时直接可用
+#   - 让 `wails3` 的文档/工具链认得这是一个 v3 工程
+#
+# 注意：**不要**在这里或代码里碰 autostart —— 本程序明确不注册开机自启。
+version: '3'
+
+info:
+  companyName: "chainproxy-dev"
+  productName: "ChainProxy"
+  productIdentifier: "com.chainproxy.desktop"
+  description: "链式代理：本地多端口 → 前置代理 → 出口节点"
+  copyright: "(c) chainproxy-dev"
+  comments: "链式代理：本地多端口 → 前置代理 → 出口节点。不会注册开机自启动。"
+  version: "1.0.0"
+
+# 开发模式的说明（本项目的日常调试走 -open 自测参数 + 截图，
+# 不依赖 wails3 dev；保留默认值即可）
+dev_mode:
+  root_path: .
+  log_level: warn
+  debounce: 1000

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"chainproxy/internal/config"
 	"chainproxy/internal/qrscan"
@@ -49,9 +49,9 @@ func (a *API) ImportFromClipboard() ImportResult {
 	if a.app == nil {
 		return ImportResult{Message: "应用尚未就绪"}
 	}
-	text, err := wruntime.ClipboardGetText(a.ctx)
-	if err != nil {
-		return ImportResult{Source: "clipboard", Message: "读取剪贴板失败：" + err.Error()}
+	text, ok := a.clipboardText()
+	if !ok {
+		return ImportResult{Source: "clipboard", Message: "读取剪贴板失败：系统剪贴板暂时不可用"}
 	}
 	if strings.TrimSpace(text) == "" {
 		return ImportResult{Source: "clipboard", Message: "剪贴板是空的"}
@@ -141,11 +141,8 @@ func (a *API) BeginScreenScan() ImportResult {
 
 	// 无论中途出什么问题，都必须把主界面恢复出来，
 	// 否则用户会面对一个"程序还在跑但窗口没了"的状态。
-	wruntime.WindowHide(a.ctx)
-	defer func() {
-		wruntime.WindowShow(a.ctx)
-		wruntime.WindowUnminimise(a.ctx)
-	}()
+	a.windowHide()
+	defer a.windowRestore()
 
 	// 等窗口真的从屏幕上消失再去截图。
 	// WindowHide 只是投递消息，立刻截图有可能把还没隐掉的窗口拍进去。
@@ -248,13 +245,14 @@ func (a *API) SaveShareImage(id string) (string, error) {
 		return "", fmt.Errorf("生成二维码失败：%w", err)
 	}
 
-	path, err := wruntime.SaveFileDialog(a.ctx, wruntime.SaveDialogOptions{
-		Title:           "保存二维码图片",
-		DefaultFilename: safeFileName(n.Name) + ".png",
-		Filters: []wruntime.FileFilter{
+	path, err := a.wapp.Dialog.SaveFileWithOptions(&application.SaveFileDialogOptions{
+		Title:    "保存二维码图片",
+		Filename: safeFileName(n.Name) + ".png",
+		Filters: []application.FileFilter{
 			{DisplayName: "PNG 图片 (*.png)", Pattern: "*.png"},
 		},
-	})
+		Window: a.mainWin,
+	}).PromptForSingleSelection()
 	if err != nil {
 		return "", err
 	}
@@ -273,8 +271,8 @@ func (a *API) CopyText(text string) error {
 	if strings.TrimSpace(text) == "" {
 		return fmt.Errorf("没有可复制的内容")
 	}
-	if err := wruntime.ClipboardSetText(a.ctx, text); err != nil {
-		return fmt.Errorf("写入剪贴板失败：%w", err)
+	if !a.setClipboard(text) {
+		return fmt.Errorf("写入剪贴板失败：系统剪贴板暂时不可用")
 	}
 	return nil
 }

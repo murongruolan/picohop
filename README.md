@@ -133,10 +133,19 @@ ChainProxy 做的事：**把前置和出口拆开，各自绑定一个本地端�
 
 产物：
 
-- `dist\chainproxy-cli.exe` —— 图形界面（Wails + Vue 3）
+- `dist\ChainProxy.exe` —— 图形界面（Wails v3 + Vue 3），**双击运行**
 - `dist\chainproxy-cli.exe` —— 命令行（排障与自动化测试）
 
-构建**必须**带 `-tags "with_utls,with_quic"`（脚本里已写死）。
+> 两者文件名**不能**只靠大小写区分：NTFS 不区分文件名大小写，
+> `ChainProxy.exe` 与 `chainproxy.exe` 是同一个文件 —— 早先就因为这样，
+> 图形界面版把命令行版静默覆盖了（表现是"想用命令行却弹出界面"）。
+
+图形界面版的构建**不使用 `wails3 build`**：那条链是 Taskfile 驱动的，
+需要额外装 `task`，而它本质就是"前端 `npm run build` → `go build -tags production,...`"。
+`scripts/build.ps1` 直接调这条 `go build`，于是不依赖 wails3 CLI 与 task。
+注意其中的 **`production` 标签不能漏**（v3 用它区分 production/dev 两套实现文件）。
+
+除此之外构建**必须**带 `-tags "with_utls,with_quic"`（脚本里已写死）。
 缺了它编译照样通过，但运行时 Reality / Hysteria2 会失败 —— 所以命令行里
 专门有一个子命令帮你确认：
 

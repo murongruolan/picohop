@@ -1,32 +1,42 @@
 /**
  * 与 Go 后端的桥接层。
  *
- * 前端只通过这里访问后端，好处是：
- *  - 组件里不出现 window.go.xxx 这种路径，改名只需改一处
- *  - 后端未就绪 / 不在 Wails 里运行时，能给出明确错误而不是 undefined 崩一片
- *  - 通知、事件订阅这类"通用行为"集中在一处
+ * 前端只通过这里访问后端，好处是：组件里不出现任何 Wails 路径，改名只需改一处
+ * —— 这一点在 v2 → v3 迁移时兑现了：v2 是 window.go.main.API.*，
+ * v3 换成了 @wailsio/runtime 的 Call.ByName，本文件之外一行都没改。
+ *
+ * v3 的桥与 v2 的差别：
+ *   - 调用：Call.ByName('main.API.方法名', ...args)（v3 用 <包>.<类型>.<方法>）
+ *   - 事件：Events.On(name, e => ...)，回调收到的是 {name, data, sender} 对象，
+ *     所以这里统一解包出 e.data，下游处理函数签名保持不变
+ *   - 判定"是否在 Wails 里"：v3 的宿主通道是 window.chrome.webview.postMessage
  */
-/** 后端绑定的命名空间（Wails 自动生成在 window.go.main.API）。 */
-function bridge() {
-  return window?.go?.main?.API
-}
+import { Call, Events } from '@wailsio/runtime'
 
-/** 是否运行在 Wails 里。 */
+/** 后端服务的全限定名前缀：v3 的格式是 `<包名>.<类型名>.<方法名>`。 */
+const SERVICE = 'main.API'
+
+/** 是否运行在 Wails v3 宿主里。
+ *
+ * 判据用宿主通道本身，而不是 window._wails —— 后者被 runtime 包在导入时就
+ * 赋成了 {}，拿它判断会永远为真，那样"后端未连接"的提示就永远不会出现了。
+ */
 export function hasBridge() {
-  return !!bridge()
+  return typeof window !== 'undefined' && !!window.chrome?.webview?.postMessage
 }
 
-/** 调用后端方法；失败时把后端的 error 原样抛出（Wails 会把 Go 的 error 变成 reject）。 */
+/** 调用后端方法；失败时把后端的 error 原样抛出（v3 会把 Go 的 error 变成 RuntimeError）。 */
 async function call(name, ...args) {
-  const b = bridge()
-  if (!b) {
-    throw new Error('后端未连接：请通过桌面程序运行（或在 Wails dev 模式下打开）')
+  if (!hasBridge()) {
+    throw new Error('后端未连接：请通过桌面程序运行')
   }
-  const fn = b[name]
-  if (typeof fn !== 'function') {
-    throw new Error(`后端方法不存在：${name}`)
+  try {
+    return await Call.ByName(`${SERVICE}.${name}`, ...args)
+  } catch (e) {
+    // v3 抛的是 RuntimeError（继承自 Error），message 就是 Go 的 error 文本。
+    // 上层统一用 String(e?.message || e) 展示，这里不用额外加工。
+    throw e
   }
-  return await fn(...args)
 }
 
 /* -------------------------------------------------------------------------
@@ -51,9 +61,10 @@ export { notify } from './notify'
  * notify 的文本用 NUL 分隔成 "level\0title\0text"。
  */
 export function onEvent(kind, handler) {
-  const rt = window?.runtime
-  if (!rt?.EventsOn) return () => {}
-  return rt.EventsOn(`cp:${kind}`, handler)
+  if (!hasBridge()) return () => {}
+  // v3 的回调收到 {name, data, sender}，这里解包出 data，
+  // 于是所有 handler 仍然只拿到后端 Emit 的那个字符串。
+  return Events.On(`cp:${kind}`, (e) => handler(e?.data))
 }
 
 /** 统一注册全部后端事件。 */
@@ -149,6 +160,10 @@ export const api = {
   openLogFile: () => call('OpenLogFile'),
   openPath: (p) => call('OpenPath', p),
   quit: () => call('Quit'),
+
+  // 托盘菜单里那几个动作。托盘回调直接调同名 Go 方法，
+  // 这里暴露出来是为了能在自测里验证"菜单动作本身是对的"。
+  copyFirstLocalAddress: () => call('CopyFirstLocalAddress'),
 }
 
 export default api
