@@ -71,6 +71,12 @@ type App struct {
 	upRate   atomic.Int64
 	downRate atomic.Int64
 
+	// 连接表：活动连接与最近关闭的连接（"连接"视图用）。
+	// 与网络日志一样单独一把锁 —— 它们都由转发的 goroutine 高频触发。
+	connMu      sync.Mutex
+	conns       map[uint64]ConnRecord
+	closedConns []ConnRecord
+
 	// 网络日志（内嵌 sing-box 的连接流水）。
 	// 单独一把锁：它由内核的日志回调高频写入，不该和主锁互相等。
 	netLogMu  sync.Mutex
@@ -113,6 +119,7 @@ func New(cfgPath string) (*App, error) {
 		// 预分配：1 秒一个样本，够 1 小时
 		traffic: make([]TrafficSample, 0, trafficHistorySeconds),
 		netLog:  make([]NetLogEntry, 0, netLogCap),
+		conns:   make(map[uint64]ConnRecord),
 		logs:    newRingBuffer(1000),
 		closing: make(chan struct{}),
 		lastDay: config.Today(),
@@ -134,9 +141,7 @@ func New(cfgPath string) (*App, error) {
 	//   2. 内嵌 sing-box 的日志 —— 补充（例如握手失败、配置告警）。
 	//
 	// 都放在 app 这边注册，因为缓冲归 app 所有；引擎与 handler 只提供进程级接收器。
-	proxy.SetConnLogSink(func(ev proxy.ConnEvent) {
-		a.appendNetworkLog(ev.Node, ev.Protocol, ev.Protocol+" → "+ev.Target)
-	})
+	proxy.SetConnSink(a.trackConnEvent)
 	engine.SetNetworkLogSink(a.appendNetworkLog)
 
 	return a, nil

@@ -609,6 +609,30 @@ async function handleDevOpen(name) {
       break
     }
 
+    // 底部栏：展开到「连接」（截图核对用）。
+    // 参数 closeall 时再点一下"关闭全部"，验证按钮真的会关连接而不只是清列表。
+    case 'connpanel':
+    case 'connpanel-closeall': {
+      ui.bottomPanelView = 'logs'
+      await new Promise((r) => setTimeout(r, 400))
+      ui.bottomPanelView = 'connections'
+      await new Promise((r) => setTimeout(r, 4000))
+      if (name === 'connpanel-closeall') {
+        const btn = [...document.querySelectorAll('.cp-conn-bar button')].find((b) =>
+          b.textContent.includes('关闭全部'),
+        )
+        if (btn) btn.click()
+        await new Promise((r) => setTimeout(r, 2500))
+        // 关完之后切到「已关闭」，看看最终字节与时长有没有落下来
+        const closedTab = [...document.querySelectorAll('.cp-conn-tab')].find((b) =>
+          b.textContent.includes('已关闭'),
+        )
+        if (closedTab) closedTab.click()
+        await new Promise((r) => setTimeout(r, 2500))
+      }
+      break
+    }
+
     // 连开两次浮动对话框：第一次是新建（要建 WebView2 + 加载前端），
     // 第二次应该走**复用**（窗口已在、不重新加载）。
     // 这是用户报的“打开还是卡”那条，两边的耗时在 Go 日志里（"~前端就绪 Xms"~

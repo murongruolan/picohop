@@ -27,6 +27,15 @@ const netLogCap = 2000
 func (a *App) appendNetworkLog(node, level, text string) {
 	a.netLogMu.Lock()
 	defer a.netLogMu.Unlock()
+	a.appendNetworkLogLocked(node, level, text)
+}
+
+// appendNetworkLogLocked 是 appendNetworkLog 的"已持锁"版本。
+//
+// 为什么需要：连接事件里同时要更新连接表（connMu）与写网络日志（netLogMu），
+// 分开加锁容易写出锁顺序问题，所以让连接表那条路径先拿 connMu、
+// 再用这个版本写日志，两步都只加一次锁。
+func (a *App) appendNetworkLogLocked(node, level, text string) {
 	a.netLogSeq++
 	a.netLog = append(a.netLog, NetLogEntry{
 		Seq:   a.netLogSeq,

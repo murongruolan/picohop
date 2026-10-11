@@ -52,11 +52,21 @@ const relayBuffers = 32 * 1024
 //     这样"客户端发完了但还想继续收"（典型：HTTP 请求结束、响应还在来）不会被误杀；
 //   - 两侧都结束后才真正关闭连接；
 //   - idle > 0 时对读操作加空闲超时，避免死连接长期占用。
-func Relay(client, remote net.Conn, stats *Stats, idle time.Duration) {
+//
+// Relay 双向中继，直到任一侧结束；返回 (上行字节, 下行字节)。
+//
+// 把字节数**返回**出去而不是另外包一层计数连接：这里的拷贝本来就是手动循环，
+// 计数点已经有了（stats.Up/Down），顺手带回即可 —— 包一层反而会丢掉
+// 底层的读写优化，还要多一次接口转换。
+func Relay(client, remote net.Conn, stats *Stats, idle time.Duration, live *ConnCounter) (up, down int64) {
 	if stats != nil {
 		stats.Conns.Add(1)
 		stats.TotalConn.Add(1)
 		defer stats.Conns.Add(-1)
+	}
+
+	if live == nil {
+		live = &ConnCounter{}
 	}
 
 	var wg sync.WaitGroup
@@ -74,6 +84,7 @@ func Relay(client, remote net.Conn, stats *Stats, idle time.Duration) {
 				if _, werr := remote.Write(buf[:n]); werr != nil {
 					break
 				}
+				live.AddUp(int64(n))
 				if stats != nil {
 					stats.Up.Add(int64(n))
 				}
@@ -97,6 +108,7 @@ func Relay(client, remote net.Conn, stats *Stats, idle time.Duration) {
 				if _, werr := client.Write(buf[:n]); werr != nil {
 					break
 				}
+				live.AddDown(int64(n))
 				if stats != nil {
 					stats.Down.Add(int64(n))
 				}
@@ -111,6 +123,7 @@ func Relay(client, remote net.Conn, stats *Stats, idle time.Duration) {
 	wg.Wait()
 	_ = client.Close()
 	_ = remote.Close()
+	return live.Up(), live.Down()
 }
 
 // writeTimeout 是单次写操作的兜底超时（正常情况下写不会阻塞）。

@@ -220,6 +220,22 @@ func (a *API) GetNodes() []app.NodeView {
 	return a.app.Nodes()
 }
 
+// GetConnections 返回连接表（活动的在前，随后是最近关闭的）。
+func (a *API) GetConnections() []app.ConnRecord {
+	if a.app == nil {
+		return nil
+	}
+	return a.app.Connections()
+}
+
+// CloseAllConnections 关闭全部活动连接，返回请求关闭的条数。
+func (a *API) CloseAllConnections() int {
+	if a.app == nil {
+		return 0
+	}
+	return a.app.CloseAllConnections()
+}
+
 // GetIPInfo 查一次本机直连 IP 信息（底部栏「网站测试」右侧那块）。
 func (a *API) GetIPInfo() app.IPInfo {
 	if a.app == nil {

@@ -16,6 +16,7 @@ import { api } from '../api'
 import { formatBytes } from '../columns'
 import TrafficView from './bottom/TrafficView.vue'
 import SiteTestView from './bottom/SiteTestView.vue'
+import ConnectionsView from './bottom/ConnectionsView.vue'
 
 const store = useStore()
 const ui = useUi()
@@ -303,6 +304,9 @@ watch(
 
       <!-- 网站测试 -->
       <SiteTestView v-else-if="view === 'sites'" />
+
+      <!-- 连接 -->
+      <ConnectionsView v-else-if="view === 'connections'" />
 
       <!-- 其余视图：骨架先占位，按施工顺序逐个补 -->
       <div v-else class="cp-bottom-placeholder">{{ TABS.find((t) => t.key === view)?.label }}</div>
