@@ -633,6 +633,45 @@ async function handleDevOpen(name) {
       break
     }
 
+    // 底部栏：展开到「网络设置」，改一项并保存（验证真的写进配置了）
+    case 'netpanel': {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      ui.bottomPanelView = 'logs'
+      await wait(400)
+      ui.bottomPanelView = 'network'
+      await wait(1500)
+
+      const inputs = [...document.querySelectorAll('.cp-net-form input')]
+      if (inputs.length < 2) {
+        notify('error', '网络设置自测', `只找到 ${inputs.length} 个输入框`, 0)
+        break
+      }
+      // 用原生 setter 再派发 input 事件 —— 直接改 .value 的话 Vue 的 v-model 收不到
+      const setVal = (el, v) => {
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+        setter.call(el, String(v))
+        el.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+      // 注意取**最后一个**输入框：el-switch 内部也有一个 input（勾选框），
+      // 所以 inputs[0] 是它、inputs[1] 是起始端口、最后一个才是空闲自动断开。
+      // 我第一版就打在了起始端口上 —— 反倒验证了后端的校验会拦住非法端口。
+      const idleInput = inputs[inputs.length - 1]
+      const before = idleInput.value
+      setVal(idleInput, 240)
+      await wait(400)
+      const btn = [...document.querySelectorAll('.cp-net-form button')].find((b) =>
+        b.textContent.includes('保存'),
+      )
+      if (!btn) {
+        notify('error', '网络设置自测', '找不到保存按钮', 0)
+        break
+      }
+      notify('info', '网络设置自测', `空闲超时 ${before} → 240，正在保存…`, 0)
+      btn.click()
+      await wait(2000)
+      break
+    }
+
     // 连开两次浮动对话框：第一次是新建（要建 WebView2 + 加载前端），
     // 第二次应该走**复用**（窗口已在、不重新加载）。
     // 这是用户报的“打开还是卡”那条，两边的耗时在 Go 日志里（"~前端就绪 Xms"~

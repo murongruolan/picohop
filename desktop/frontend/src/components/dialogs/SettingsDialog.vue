@@ -331,29 +331,10 @@ const meta = computed(() => store.meta || {})
         </el-form>
 
         <div class="cp-section">本地监听</div>
-        <el-form class="cp-form" label-width="96px">
-          <el-form-item label="允许局域网">
-            <el-switch v-model="form.allowLan" />
-            <span class="cp-hint" style="margin-left: 10px">
-              打开后节点会监听 0.0.0.0，局域网内其它设备也能用
-            </span>
-          </el-form-item>
-          <el-alert
-            v-if="form.allowLan"
-            type="warning"
-            :closable="false"
-            show-icon
-            title="注意安全"
-            description="打开后局域网内任何人都能通过你的电脑上网。建议在「编辑节点 → 高级」里给本地端口加上用户名密码。同时 Windows 防火墙可能会弹出提示。"
-            style="margin-bottom: 12px"
-          />
-          <el-form-item label="起始端口">
-            <el-input v-model="form.portStart" type="number" style="width: 132px" />
-            <span class="cp-hint" style="margin-left: 10px">
-              新增节点时的默认端口从这里开始排（默认 10810）
-            </span>
-          </el-form-item>
-        </el-form>
+        <div class="cp-moved">
+          允许局域网、起始端口、空闲自动断开已移到
+          <a @click="ui.bottomPanelView = 'network'">底部栏 → 网络设置</a>
+        </div>
       </el-tab-pane>
 
       <!-- ------------------------------------------------------------ -->
@@ -399,11 +380,6 @@ const meta = computed(() => store.meta || {})
       <el-tab-pane label="运行与界面" name="appearance">
         <div class="cp-section">运行</div>
         <el-form class="cp-form" label-width="140px">
-          <el-form-item label="空闲自动断开">
-            <el-input v-model="form.idleTimeoutSec" type="number" style="width: 120px">
-              <template #append>秒</template>
-            </el-input>
-          </el-form-item>
           <el-form-item label="启动时自动激活">
             <el-switch v-model="form.autoActivateOnLaunch" />
             <span class="cp-hint" style="margin-left: 10px">

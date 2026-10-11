@@ -20,6 +20,13 @@ Write-Host '[check] go vet …'
 & go vet -tags "with_utls,with_quic" -unsafeptr=false ./... 2>&1 | Out-Host
 if ($LASTEXITCODE -ne 0) { $failed += 'go vet 失败' }
 
+Write-Host '[check] 前端构建（vite）…'
+Push-Location 'desktop/frontend'
+& npm run build 2>&1 | Select-Object -Last 3 | Out-Host
+$feCode = $LASTEXITCODE
+Pop-Location
+if ($feCode -ne 0) { $failed += '前端构建失败' }
+
 Write-Host '[check] go test（全部包）…'
 & go test -tags "with_utls,with_quic" -count=1 ./... 2>&1 | Out-Host
 if ($LASTEXITCODE -ne 0) { $failed += 'go test 未全绿' }
@@ -31,4 +38,4 @@ if ($failed.Count) {
   exit 1
 }
 Write-Host ''
-Write-Host '[check] ✅ 全部通过（gofmt / go vet / go test）' -ForegroundColor Green
+Write-Host '[check] ✅ 全部通过（gofmt / 前端构建 / go vet / go test）' -ForegroundColor Green

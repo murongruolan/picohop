@@ -17,6 +17,7 @@ import { formatBytes } from '../columns'
 import TrafficView from './bottom/TrafficView.vue'
 import SiteTestView from './bottom/SiteTestView.vue'
 import ConnectionsView from './bottom/ConnectionsView.vue'
+import NetworkView from './bottom/NetworkView.vue'
 
 const store = useStore()
 const ui = useUi()
@@ -307,6 +308,9 @@ watch(
 
       <!-- 连接 -->
       <ConnectionsView v-else-if="view === 'connections'" />
+
+      <!-- 网络设置 -->
+      <NetworkView v-else-if="view === 'network'" />
 
       <!-- 其余视图：骨架先占位，按施工顺序逐个补 -->
       <div v-else class="cp-bottom-placeholder">{{ TABS.find((t) => t.key === view)?.label }}</div>

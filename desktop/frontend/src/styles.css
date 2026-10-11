@@ -502,6 +502,17 @@ body.cp-float-window .el-overlay-dialog {
   transition: none !important;
 }
 
+/* 设置项搬到别处之后留的指路行（避免用户在两处找同一个开关） */
+.cp-moved {
+  padding: 6px 0 10px;
+  font-size: 12.5px;
+  color: var(--cp-text-3);
+}
+.cp-moved a {
+  color: var(--cp-brand);
+  cursor: default;
+}
+
 /* --------------------------------------------------------------------------
  * 设置面板：真正的垂直居中
  *
