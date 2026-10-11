@@ -417,6 +417,54 @@ html.dark .cp-tag {
  * ------------------------------------------------------------------------ */
 
 /* --------------------------------------------------------------------------
+ * 浮动窗口模式（body.cp-float-window）
+ *
+ * 同一个前端被两种方式挂载：主窗口显示整套界面，
+ * 带 ?float=<kind> 的窗口只显示那一个对话框。这里做三件事：
+ *   1. 把主界面藏起来
+ *   2. 让对话框铺满整个窗口（去掉卡片感与遮罩）
+ *   3. 给标题栏打开无边框窗口的拖动区（v3 的 --wails-draggable: drag）
+ * ------------------------------------------------------------------------ */
+body.cp-float-window {
+  background: var(--cp-panel);
+}
+body.cp-float-window .cp-toolbar,
+body.cp-float-window .cp-filterbar,
+body.cp-float-window .cp-table-wrap {
+  display: none !important;
+}
+/* 遮罩不再是"遮住主界面"，它自己就是窗口背景 */
+body.cp-float-window .el-overlay {
+  position: static;
+  background: transparent;
+  padding: 0;
+}
+body.cp-float-window .el-overlay-dialog {
+  padding: 0;
+}
+body.cp-float-window .el-dialog.cp-dialog {
+  width: 100% !important;
+  max-width: none;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  /* 窗口自己就是对话框的容器，高度用满 */
+  max-height: 100vh;
+  height: 100vh;
+}
+/* 窗口没有系统标题栏，所以对话框的标题栏同时兼任"窗口拖动把手"。
+   v3 用 CSS 变量标记可拖动区域（runtime 的 appregion/drag 模块读它）。 */
+body.cp-float-window .cp-dialog .el-dialog__header {
+  --wails-draggable: drag;
+  background: var(--cp-panel-2);
+}
+/* 但标题栏里的关闭按钮要排除，否则点它会变成拖窗口 */
+body.cp-float-window .cp-dialog .el-dialog__headerbtn {
+  --wails-draggable: no-drag;
+}
+
+/* --------------------------------------------------------------------------
  * 对话框：表单紧凑一点，标签右对齐
  * ------------------------------------------------------------------------ */
 /* --------------------------------------------------------------------------

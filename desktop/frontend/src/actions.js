@@ -100,15 +100,41 @@ export function useActions() {
   // -----------------------------------------------------------------
   // 增删改
   // -----------------------------------------------------------------
+  /**
+   * 打开「添加/编辑节点」对话框。
+   *
+   * 它现在开在**独立的浮动窗口**里：可以拖到主窗口之外、永远压在主窗口上面
+   * （Wails v3 的多窗口能力，v2 做不到）。主窗口这边 await 到用户确定/取消，
+   * 期间主界面依然可用 —— 不再是"模态挡住一切"。
+   *
+   * 复用同一个对话框组件，所以校验、端口检测、保存逻辑都没变。
+   */
+  async function openNodeDialogFloating(payload) {
+    try {
+      const result = await api.openFloatDialog('node', JSON.stringify(payload || {}))
+      if (result) {
+        try {
+          const r = JSON.parse(result)
+          if (r.submitted) await store.refresh()
+        } catch {
+          /* 结果不是 JSON 就当没发生 */
+        }
+      }
+    } catch (e) {
+      // 已经开着一个浮动窗口时会走到这里，提示一下就够，不必当成错误弹窗
+      fail('打开节点对话框失败', e)
+    }
+  }
+
   function addNode() {
-    ui.openNodeDialog('add')
+    openNodeDialogFloating({ mode: 'add' })
   }
 
   async function editNode(node) {
     if (!node) return
     try {
       const full = await api.getNode(node.id)
-      ui.openNodeDialog('edit', full)
+      await openNodeDialogFloating({ mode: 'edit', node: full })
     } catch (e) {
       fail('读取节点失败', e)
     }

@@ -164,8 +164,9 @@ func main() {
 
 	if *list {
 		for _, w := range enumWindows() {
-			fmt.Printf("%-10x  %4dx%-4d  %s\n", w.hwnd,
-				w.rect.Right-w.rect.Left, w.rect.Bottom-w.rect.Top, w.title)
+			fmt.Printf("%-10x  %4dx%-4d  @(%d,%d)  %s\n", w.hwnd,
+				w.rect.Right-w.rect.Left, w.rect.Bottom-w.rect.Top,
+				w.rect.Left, w.rect.Top, w.title)
 		}
 		return
 	}

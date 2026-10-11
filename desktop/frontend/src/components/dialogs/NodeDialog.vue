@@ -301,7 +301,8 @@ async function save() {
   try {
     if (isEdit.value) await api.updateNode(payload)
     else await api.addNode(payload)
-    ui.closeNodeDialog()
+    // 把结果一并交出去：浮动窗口模式下要靠它告诉 Go"用户确认了"
+    ui.closeNodeDialog({ submitted: true, edit: isEdit.value, name: payload.name })
   } catch (e) {
     notify('error', isEdit.value ? '保存失败' : '添加失败', String(e?.message || e))
   } finally {

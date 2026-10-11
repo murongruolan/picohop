@@ -164,6 +164,20 @@ export const api = {
   // 托盘菜单里那几个动作。托盘回调直接调同名 Go 方法，
   // 这里暴露出来是为了能在自测里验证"菜单动作本身是对的"。
   copyFirstLocalAddress: () => call('CopyFirstLocalAddress'),
+
+  // ---- 浮动对话框（独立窗口）----
+  // OpenFloatDialog 会一直阻塞到用户在浮动窗口里确定/取消，
+  // 所以主窗口这边就是一个普通的 await。
+  openFloatDialog: (kind, payload, devOpen) =>
+    call('OpenFloatDialog', kind, payload || '', devOpen || ''),
+  getFloatPayload: () => call('GetFloatPayload'),
+  submitFloatDialog: (resultJSON) => call('SubmitFloatDialog', resultJSON || ''),
+  // 几何信息由 Go 侧回答：从前端查"另一个窗口"会拿到当前窗口自己的数据
+  floatWindowBounds: () => call('FloatWindowBounds'),
+  mainWindowBounds: () => call('MainWindowBounds'),
+  moveFloatWindow: (x, y) => call('MoveFloatWindow', x, y),
+  // 把主窗口叫到前台（托盘单击、全局快捷键也走同一个 Go 方法）
+  showWindow: () => call('ShowWindow'),
 }
 
 export default api

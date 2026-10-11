@@ -57,6 +57,7 @@
 | 019 | `feat(desktop): 对话框可拖动不裁切 + 长表单内部滚动 + 按钮做大居中 + 取消改警告色` | 2026-10-11 | 去掉弹窗顶部的导入区块；el-dialog draggable 默认即"可拖但被钳制在视口内"；长表单靠 max-height + body 滚动；修 `.cp-dialog .el-dialog` 选择器不匹配的坑；关闭图标 20px、按钮 36px 居中、取消橙色 | [详情](#019) |
 | 020 | `docs(migration): Wails v3 迁移技术验证（试点实测通过，GO）` | 2026-10-11 | 在 .cache 建试点工程真机验证：裸 `go build -tags production` 可构建、第二窗口(无边框+置顶)可用、托盘/全局快捷键/系统通知均通过、`Call.ByName` 免绑定生成器、WebviewUserDataPath 可留项目内；wails3 CLI 装入项目内；v2 打 tag v2.0-wails2 可回退 | [详情](#020) |
 | 021 | `feat(desktop)!: 桌面外壳从 Wails v2 迁移到 v3（托盘常驻/多窗口/全局快捷键/系统通知）` | 2026-10-11 | main.go 全重写 + 新增 shell.go/theme_*.go；API 改 v3 服务钩子；前端桥换 @wailsio/runtime（只改 api.js）；删 wailsjs 与 wails.json；构建改裸 go build（不依赖 wails3 CLI/task）；实测托盘/快捷键/关窗常驻/数据目录全部通过 | [详情](#021) |
+| 022 | `feat(desktop): 添加/编辑节点改为独立置顶浮动窗口（可拖到主窗口之外）` | 2026-10-11 | 新增 float.go：OpenFloatDialog 建无边框置顶窗口并阻塞等结果；复用同一份前端（?float=kind + body class），无需第二个入口；结果经 ui.onNodeDialogClosed → SubmitFloatDialog 回传；实测超出主窗口右 270px/下 94px 且不被裁剪 | [详情](#022) |
 
 ---
 
@@ -2001,3 +2002,77 @@ README（产物与构建说明，顺带修掉"图形界面写成 chainproxy-cli.
 ARCHITECTURE 第 7 节重写为 v3 外壳 + 已知限制更新（改成"托盘图标默认在折叠区"）、
 USER_GUIDE 新增"托盘常驻/全局快捷键"（并修掉同一处笔误）、
 PROJECT_PROGRESS 追加迁移实录、`MIGRATION_wails_v3.md` 更新为已完成。
+
+---
+
+## 022
+
+**`feat(desktop): 添加/编辑节点改为独立置顶浮动窗口（可拖到主窗口之外）`**
+
+### 这是什么
+
+用户要的效果：对话框**能跑到主窗口之外、永远压在主窗口上面、鼠标拖着满屏跑**。
+DOM 浮层做不到 —— 元素只能画在所属窗口的客户区里，到边界就被裁掉。
+所以「添加 / 编辑节点」现在开在**独立的、无边框、置顶的 OS 窗口**里。
+
+### 怎么实现的（关键：复用同一份前端）
+
+不做第二个前端入口，浮动窗口加载的还是同一个 SPA，只是带 `?float=node`：
+
+    Go 侧 desktop/float.go
+      OpenFloatDialog(kind, payload, devOpen)
+        → 建无边框 + AlwaysOnTop 窗口，URL = /?float=<kind>
+        → 阻塞在 <-result 上，前端一个 await 就能拿到用户在浮动窗口里的操作结果
+
+    前端
+      main.js      见到 ?float= 就加 body.cp-float-window，并把 kind 传给 App
+      App.vue      enterFloatMode()：打开那个对话框 + 接上 ui.onNodeDialogClosed
+      styles.css   藏掉主界面、让对话框铺满窗口、标题栏设 --wails-draggable: drag
+
+于是对话框的校验、端口检测、保存逻辑**一行都不用重写**；
+代价是"关掉时把结果回传"得显式接上（就是那个 onNodeDialogClosed）。
+
+会话一定被结束（等待方不会永久挂着），因为三条路都会走到 finishFloat：
+提交、取消、以及用户直接关窗（WindowClosing 钩子按取消处理 ——
+**必须先 e.Cancel()**，否则窗口被销毁、等待方就永远醒不来了）。
+
+### 三个踩过的坑（都留了注释与文档）
+
+1. **别从主窗口的前端查另一个窗口的几何信息。**
+   v3 的 Window.Get(name) 是相对**当前窗口**的，从主窗口调它会拿到主窗口自己的
+   位置与尺寸。我第一次的"越界测试"就是被它骗了，报出 1180x740（主窗口尺寸）——
+   如果我当时信了这个数，就会得出"浮动窗口尺寸不对"的错误结论。
+   窗口名册在 Go 侧，所以 FloatWindowBounds / MainWindowBounds / MoveFloatWindow
+   都由 Go 回答。
+2. **JS 的 switch 里重复 case 名只有第一个会命中**，后一个是死代码、而且**不报错**。
+   我给"主窗口发起测试"和"浮动窗口自行结束"两处都起了 floatsubmit，
+   结果主窗口那段永远不执行，表现是"跑完什么也没发生、也没有报错"。
+3. **自测用例出错必须看得见。** onMounted 里 await 一个失败的自测会静默 reject，
+   表现成"界面起来了但什么也没发生"。给自测套了 try/catch，把错误弹成通知。
+
+### 验收
+
+    独立窗口（进程外枚举）
+      820x680  @(1000,300)  ChainProxy · 添加 / 编辑节点     ← 浮动窗口
+     1180x740  @(370,146)   ChainProxy · 链式代理            ← 主窗口
+
+    越界（主窗口右 1550 / 下 886；浮动窗口右 1820 / 下 980）
+      右边缘超出主窗口 = true；下边缘超出主窗口 = true
+      整框仍在屏幕内 = true（1920x1080）
+      → 没被主窗口裁剪，因为它是独立 OS 窗口，不是浮层
+      （同一组数字在主窗口的通知里也打印了一份，两处互相印证）
+
+    结果回传（-open floatpassthrough）
+      主窗口 await 收到的结果 = {"submitted":false,"via":"float-self-test"}
+      浮动窗口是否已关闭 = true
+      → 结果回传 + 自动关窗都正常
+      （链路：对话框关闭 → ui.onNodeDialogClosed → SubmitFloatDialog → Go 唤醒等待方）
+
+另外给 `uishot -list` 加了窗口位置输出（拿越界证据用的），
+并在 `-rect` 之外补了屏幕区域截图能力（上一轮加的，用于拍托盘）。
+
+### 还没做
+
+其余对话框（导入 / 分享 / 设置 / 仅端口小窗）仍是窗口内浮层。
+机制是通用的：`OpenFloatDialog` 只认 `floatSizes` 表里的类型，
+要推广只需把它们纳入这张表、并在 `enterFloatMode` 里加一个分支。

@@ -29,8 +29,51 @@ const store = useStore()
 const ui = useUi()
 const actions = useActions()
 
+/**
+ * 浮动窗口模式：非空表示"这个窗口是某个对话框的独立窗口"。
+ *
+ * 同一个 App 组件被两种方式挂载（见 main.js）：
+ *   - 主窗口：floatKind 为空，显示整套界面
+ *   - 浮动窗口：floatKind = 'node' 之类，只打开那一个对话框，
+ *     并由 CSS（body.cp-float-window）把主界面藏起来、让对话框铺满窗口
+ */
+const props = defineProps({
+  floatKind: { type: String, default: '' },
+})
+
 let unbind = null
 let mediaQuery = null
+
+/**
+ * 浮动窗口模式下的初始化：只做"打开指定对话框 + 结束时把结果交回 Go"。
+ *
+ * 之所以能这么短，是因为复用了同一个对话框组件 —— 它的校验、端口检测、
+ * 保存逻辑统统不用重写，差别只有"关掉时通知 Go"这一步。
+ */
+async function enterFloatMode(kind) {
+  let payload = {}
+  try {
+    const raw = await api.getFloatPayload()
+    if (raw) payload = JSON.parse(raw)
+  } catch (e) {
+    // 没有初始数据也能开（例如"新增"）
+    console.warn('读取浮动对话框初始数据失败：', e)
+  }
+
+  if (kind !== 'node') {
+    // 未知类型：立刻回传，别让主窗口那侧一直 await 着
+    api.submitFloatDialog('').catch(() => {})
+    return
+  }
+
+  // 对话框只要一关（确定或取消）就回传结果。
+  // 必须"两条路都回传"，否则 Go 侧的 <-result 会永远挂着。
+  ui.onNodeDialogClosed = (result) => {
+    const payloadOut = result || { submitted: false }
+    api.submitFloatDialog(JSON.stringify(payloadOut)).catch(() => {})
+  }
+  ui.openNodeDialog(payload.mode === 'edit' ? 'edit' : 'add', payload.node || null)
+}
 
 onMounted(async () => {
   if (!hasBridge()) {
@@ -53,10 +96,34 @@ onMounted(async () => {
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('blur', () => ui.closeContextMenu())
 
+  // 浮动窗口：只打开那一个对话框就够了
+  if (props.floatKind) {
+    await enterFloatMode(props.floatKind)
+    // 自测参数（由主窗口透传过来）：等对话框挂好之后跑一遍，
+    // 用来验证"在浮动窗口里结束对话框 → 结果回传 → Go 唤醒等待方"这条链路。
+    const devParam = new URLSearchParams(window.location.search).get('devopen')
+    if (devParam) {
+      await new Promise((r) => setTimeout(r, 900))
+      try {
+        await handleDevOpen(devParam)
+      } catch (e) {
+        notify('error', '浮动窗口自测出错', `${devParam}：${String(e?.message || e)}`, 0)
+      }
+    }
+    return
+  }
+
   // 开发期自测（-open <面板名>）放在**最后**：它可能依赖上面刚注册的监听器。
   // 踩过一次：enterkey 那一项要在合成回车事件之前就装好 keydown 监听，
   // 放前面会导致事件派发出去却没有任何人接。
-  await handleDevOpen(store.meta?.devOpen)
+  //
+  // 自测出错必须**看得见**：否则 onMounted 的 promise 静默 reject，
+  // 表现成"界面起来了但什么也没发生"，排查起来毫无线索。真踩过。
+  try {
+    await handleDevOpen(store.meta?.devOpen)
+  } catch (e) {
+    notify('error', '自测用例出错', `${store.meta?.devOpen}：${String(e?.message || e)}`, 0)
+  }
 })
 
 /**
@@ -70,7 +137,8 @@ async function handleDevOpen(name) {
   const first = store.nodes[0]
   switch (name) {
     case 'addnode':
-      ui.openNodeDialog('add')
+      // 走真实路径：现在「添加节点」是开在**独立浮动窗口**里的
+      actions.addNode()
       break
     case 'edit':
       if (first) actions.editNode(first)
@@ -362,6 +430,81 @@ async function handleDevOpen(name) {
       }
 
       notify('primary', '托盘菜单动作测试', lines.join('\n'), 0)
+      break
+    }
+
+    // 【在浮动窗口里跑】模拟用户点了对话框的"取消"：
+    // 走的是对话框自己的关闭路径 → ui.onNodeDialogClosed → SubmitFloatDialog。
+    // 主窗口那边应当立刻收到结果，并且这个窗口会自己关掉。
+    case 'floatsubmit':
+      ui.closeNodeDialog({ submitted: false, via: 'float-self-test' })
+      break
+
+    // 验证「浮动弹窗的结果回传」。
+    //
+    // 注意名字必须和浮动窗口里那个自测项区分开（那边叫 floatsubmit）：
+    // JS 的 switch 里**重复的 case 只有第一个会命中**，两处同名会让这里变成死代码
+    // —— 实测踩过，表现是"跑完什么也没发生、也没有报错"。
+    //
+    // 主窗口发起浮动对话框，并把自测参数 floatsubmit 透传给浮动窗口；
+    // 浮动窗口加载后会自己按参数跑一遍"取消"，于是：
+    //   浮动窗口的对话框关闭 → ui.onNodeDialogClosed → SubmitFloatDialog
+    //   → Go 唤醒这里 await 的调用 → 关掉浮动窗口
+    // 这三步全走真实代码路径，最后这里检查"有没有收到结果 + 窗口有没有关掉"。
+    case 'floatpassthrough': {
+      const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms))
+      const got = []
+      api
+        .openFloatDialog('node', JSON.stringify({ mode: 'add' }), 'floatsubmit')
+        .then((r) => got.push(r))
+        .catch((e) => got.push('ERR:' + String(e?.message || e)))
+      await sleepMs(4000)
+      const b = await api.floatWindowBounds()
+      const closed = Object.keys(b).length === 0
+      const result = got[0]
+      const ok = closed && !!result && result.includes('float-self-test')
+      notify(ok ? 'success' : 'error', '浮动窗口结果回传测试',
+        `主窗口 await 收到的结果 = ${result === undefined ? '（没收到，可能还挂着）' : result}\n` +
+        `浮动窗口是否已关闭 = ${closed}${closed ? '' : ' 仍在：' + JSON.stringify(b)}\n` +
+        `→ ${ok ? '结果回传 + 自动关窗都正常 ✓' : '有问题，看上面两项'}\n` +
+        `（链路：对话框关闭 → ui.onNodeDialogClosed → SubmitFloatDialog → Go 唤醒等待方）`, 0)
+      break
+    }
+
+    // 验证「浮动弹窗能跑到主窗口之外」。
+    //
+    // 做法：打开浮动节点对话框，然后**把它挪到明显超出主窗口右/下边缘的位置**，
+    // 再整屏截图 —— 如果它还被主窗口裁剪，就不可能出现在主窗口之外。
+    // 挪窗用的是 v3 runtime 的 Window.Get('名字').SetPosition()，
+    // 也就是主窗口可以直接操作另一个窗口 —— 这正是 v2 做不到的那件事。
+    case 'floatoutside': {
+      const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms))
+      // 不 await：这个调用会一直挂着直到用户在浮动窗口里确定/取消
+      actions.addNode()
+      await sleepMs(2200)
+      // 把主窗口叫到前台，好让整屏截图里两个窗口都看得见
+      await api.showWindow()
+      await sleepMs(400)
+      // 挪到"明显超出主窗口右下角、但仍在屏幕内"的位置。
+      // 几何信息一律由 Go 侧回答：从主窗口用前端 Window.Get(name) 去查另一个窗口
+      // 会拿到主窗口自己的数据（实测踩过），不能作为证据。
+      await api.moveFloatWindow(1000, 300)
+      await sleepMs(500)
+      const m = await api.mainWindowBounds()
+      const f = await api.floatWindowBounds()
+      if (!f.width) {
+        notify('error', '浮动窗口越界测试', '没有浮动窗口（FloatWindowBounds 返回空）', 0)
+        break
+      }
+      const outsideRight = f.x + f.width > m.x + m.width
+      const outsideBottom = f.y + f.height > m.y + m.height
+      const onScreen = f.x + f.width <= screen.width && f.y + f.height <= screen.height
+      notify(outsideRight && outsideBottom && onScreen ? 'success' : 'error', '浮动窗口越界测试',
+        `主窗口：位置 (${m.x},${m.y}) 尺寸 ${m.width}x${m.height}\n` +
+        `浮动窗口：位置 (${f.x},${f.y}) 尺寸 ${f.width}x${f.height}\n` +
+        `右边缘超出主窗口 = ${outsideRight}；下边缘超出主窗口 = ${outsideBottom}\n` +
+        `整框仍在屏幕内 = ${onScreen}（视口 ${screen.width}x${screen.height}）\n` +
+        `→ 它没被主窗口裁剪，因为它是独立 OS 窗口，不是主窗口里的浮层`, 0)
       break
     }
 

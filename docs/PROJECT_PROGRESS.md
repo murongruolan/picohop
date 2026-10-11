@@ -684,3 +684,52 @@ Wails v2 没有任何创建窗口的 API。经对比 v2/v3（见 `MIGRATION_wail
 - 对话框仍是主窗口内的 `<el-dialog>`。v3 的多窗口已经打开了这条路，
   但把对话框改成独立窗口需要再引入"第二个前端入口 + 窗口生命周期 + 结果回传"，
   是独立的一步。当前形态：窗口内自由拖动 + 永不被裁切。
+
+---
+
+## 浮动弹窗：对话框跑到主窗口之外（第 2 轮，2026-10-11）
+
+### 做了什么
+
+`添加 / 编辑节点` 不再开在主窗口里，而是开在一个**独立的、无边框、置顶的 OS 窗口**里。
+它可以被拖到主窗口之外、永远压在主窗口上面 —— 这是 DOM 浮层永远做不到的事
+（DOM 元素只能画在所属窗口的客户区里）。
+
+| 文件 | 改动 |
+|---|---|
+| `desktop/float.go` | **新增**：`OpenFloatDialog`（建窗 + 阻塞等结果）、`GetFloatPayload`、`SubmitFloatDialog`、`FloatWindowBounds` / `MainWindowBounds` / `MoveFloatWindow` |
+| `desktop/frontend/src/main.js` | 见到 `?float=<kind>` 就加 `body.cp-float-window` 并把 kind 传给 App |
+| `desktop/frontend/src/App.vue` | 新增 `floatKind` prop 与 `enterFloatMode()`；自测新增 `floatsubmit` / `floatpassthrough` / `floatoutside` |
+| `desktop/frontend/src/actions.js` | 「添加节点」/「编辑」改走 `openFloatDialog` |
+| `desktop/frontend/src/ui.js` | `closeNodeDialog(result)` 增加 `onNodeDialogClosed` 回调（放在 store 顶层，避免被 `openNodeDialog` 覆盖） |
+| `desktop/frontend/src/styles.css` | `body.cp-float-window` 一段：藏主界面、对话框铺满窗口、标题栏设 `--wails-draggable: drag` |
+| `cmd/uishot` | `-list` 增加窗口位置输出（拿越界证据用） |
+
+**没有引入第二个前端入口**：浮动窗口加载的还是同一个 SPA，只是带参数。
+于是对话框的校验、端口检测、保存逻辑一行都没重写，差别只有"关掉时把结果回传"。
+
+### 验收（数字都能在进程外复核）
+
+| 项 | 证据 |
+|---|---|
+| 弹窗是独立窗口 | `uishot -list`：`820x680 @(1000,300) ChainProxy · 添加 / 编辑节点` 与 `1180x740 @(370,146) ChainProxy · 链式代理` 是两个窗口 |
+| **它确实跑到主窗口之外** | 主窗口右边缘 1550、下边缘 886；浮动窗口右边缘 **1820**、下边缘 **980** → 分别超出 **270px / 94px**，且整框仍在屏幕内（1920x1080） |
+| 视觉佐证 | 整屏截图里它压在别的程序上面，并明显伸出主窗口右/下边界 |
+| **结果回传 + 自动关窗** | `-open floatpassthrough`：主窗口 `await` 收到 `{"submitted":false,"via":"float-self-test"}`，且浮动窗口自动关闭（可见窗口列表里消失）。链路：对话框关闭 → `ui.onNodeDialogClosed` → `SubmitFloatDialog` → Go 唤醒等待方 |
+| 全量校验 | `gofmt` / `go vet` 干净、8 个测试包全过 |
+
+### 三个踩过的坑（都写进 ARCHITECTURE 了）
+
+1. **别从主窗口的前端查另一个窗口的几何信息**：v3 的 `Window.Get(name)` 是相对
+   **当前窗口**的，我第一次的越界测试因此报出 `1180x740`（主窗口的尺寸）这种
+   明显不对的数字。窗口名册在 Go 侧，改由 `FloatWindowBounds` 回答后才对上。
+2. **JS 的 `switch` 里重复 case 名只有第一个会命中**，后一个是死代码且**不报错** ——
+   我给两处不同用途都起了 `floatsubmit`，导致主窗口那段测试永远不执行。
+3. **自测用例出错必须看得见**：`onMounted` 里 `await` 一个失败的自测会静默 reject，
+   表现成"界面起来了但什么也没发生"。给自测套了 try/catch，把错误弹成通知。
+
+### 还没做
+
+其余对话框（导入 / 分享 / 设置 / 仅端口小窗）仍是窗口内浮层。
+机制是通用的（`OpenFloatDialog(kind, ...)` 只认 `floatSizes` 表里的类型），
+要推广只需要把它们也纳入这张表、并在 `enterFloatMode` 里加一个分支。

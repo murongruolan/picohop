@@ -10,6 +10,14 @@ export const useUi = defineStore('cp-ui', {
   state: () => ({
     /** 添加/编辑节点对话框 */
     nodeDialog: { open: false, mode: 'add', node: null, fromImport: false },
+    /**
+     * 「添加/编辑节点」对话框关闭后的回调。
+     *
+     * 浮动窗口模式用它把结果回传给 Go（见 App.vue 的 enterFloatMode）。
+     * 放在 store 顶层而不是塞进 nodeDialog：openNodeDialog 会整个替换
+     * nodeDialog 对象，挂在里面会被冲掉。
+     */
+    onNodeDialogClosed: null,
     /** 只有端口的小弹窗（导入后） */
     portDialog: { open: false, pending: [], source: '' },
     /** 分享对话框 */
@@ -33,8 +41,12 @@ export const useUi = defineStore('cp-ui', {
     openNodeDialogFromImport(node) {
       this.nodeDialog = { open: true, mode: 'add', node, fromImport: true }
     },
-    closeNodeDialog() {
+    closeNodeDialog(result) {
       this.nodeDialog.open = false
+      // 关闭回调放在 store 顶层而不是 nodeDialog 里：openNodeDialog 会整个替换
+      // nodeDialog 对象，挂在里面会被冲掉。浮动窗口模式靠它把结果回传给 Go。
+      const cb = this.onNodeDialogClosed
+      if (cb) cb(result)
     },
 
     openPortDialog(pending, source) {
