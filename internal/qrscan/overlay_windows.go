@@ -355,6 +355,8 @@ type overlay struct {
 	// 压暗整屏用的 1x1 纯黑源 DC（见 paintDim）。
 	// 只要 1x1：源是纯色，拉伸不会失真，还省掉一整张 16MB 的暗色副本
 	// —— 那样每帧都得多跑一次 400 万像素的换算，纯属浪费。
+	loggedSizes bool
+
 	dimDC     uintptr
 	dimBmp    uintptr
 	dimOldBmp uintptr
@@ -559,16 +561,15 @@ func runOverlaySession(ready chan overlayReady, result chan overlayResult, onRea
 	//    调用方拿它当"用户已经能看到遮罩"的时刻来计时。
 	ready <- overlayReady{hwnd: ov.hwnd}
 
-	// 4.1) 然后才做那个昂贵的系统设置。
+	// 【这里刻意什么都不做】
 	//
-	// disableDragFullWindows 用 SPIF_SENDCHANGE 把 WM_SETTINGCHANGE 广播给
-	// **所有**顶层窗口并等它们响应，实测要 **1.8 秒**。早先它排在显示窗口之前，
-	// 于是"主窗口已隐藏、遮罩还没出现"的空档接近 2 秒，用户看到的就是
-	// "点了圈选没反应"（实测：建窗耗时 2173ms → 挪到信号之后 331ms）。
-	//
-	// 晚 1.8 秒生效没问题：它只是为了避免 Windows 的拖拽全窗口重绘和我们的
-	// 实时选区重绘打架，而用户从"看到遮罩"到"真的开始拖"至少几百毫秒。
-	ov.disableDragFullWindows()
+	// 早先这里调 disableDragFullWindows() —— 它用 SPIF_SENDCHANGE 把
+	// WM_SETTINGCHANGE 广播给**所有**顶层窗口并等它们响应，**实测要 1.8 秒**。
+	// 而它跑在覆盖层自己那条消息循环线程上，于是窗口刚显示就被冻住 1.8 秒：
+	// 用户看到的是"只出来半条线 → 卡住 → 过一会儿才恢复响应"。
+	// 它想防的"拖拽重绘与选区重绘打架"并没有实测证据，而代价是一个冻结的窗口
+	// 外加**改动用户的全局系统偏好**（SPIF_UPDATEINIFILE 会写进注册表）。
+	// 权衡下来直接不要它：不冻结、也不动用户的系统设置。
 
 	// 5) 消息循环（阻塞到窗口销毁）
 	ov.messageLoop()
@@ -1114,6 +1115,14 @@ func (ov *overlay) onPaint() {
 	if ov.memDC == 0 {
 		ov.recreateBackBuffer()
 	}
+	// 只诊断一次：客户区尺寸与截图尺寸是否一致。
+	// 不一致就说明窗口的物理尺寸没对齐虚拟桌面（DPI 缩放/窗口管理器调整），
+	// 那会让"挖选区"与"贴背景"两套坐标对不上 —— 记下来，别靠猜。
+	if !ov.loggedSizes {
+		ov.loggedSizes = true
+		Tracef("qrscan 尺寸核对：客户区=%dx%d 截图=%dx%d（一致才说明两个映射相同）",
+			w, h, ov.vs.Dx(), ov.vs.Dy())
+	}
 	ov.paintScreen(w, h)
 	// 全屏压暗 → 再把选区那块从原图重贴一次。
 	// 这就是微信/QQ 截图的观感：**整屏变暗、只有选中的区域是清楚的**。
@@ -1138,9 +1147,15 @@ func (ov *overlay) paintScreen(w, h int) {
 	// 源矩形用 (0,0,屏幕宽,屏幕高)：bgra 里存的就是整个虚拟桌面，
 	// 而客户区坐标 0,0 正好对应虚拟桌面左上角 vs.Min，所以是严格 1:1。
 	// 传 SRCCOPY 而不是 HALFTONE，避免 DPI 不匹配时被系统做一次重采样把二维码糊掉。
+	// 【必须 1:1，不能拉伸】目标尺寸用源尺寸（虚拟桌面），而不是客户区尺寸。
+	//
+	// 这里曾经是"把源图拉伸铺满客户区"，而 paintClearSelection（挖出选区）是 1:1
+	// 拷贝 —— 只要客户区尺寸 ≠ 截图尺寸（DPI 缩放就会出现），两种映射就不一致，
+	// 表现为"挖出来的选区跟背景对不上、像分辨率错位"（用户实报）。
+	// 客户区比截图大的部分留黑（它本来也不该存在；真出现了说明窗口尺寸没对齐）。
 	pStretchDIBits.Call(
 		ov.memDC,
-		0, 0, uintptr(w), uintptr(h),
+		0, 0, uintptr(ov.vs.Dx()), uintptr(ov.vs.Dy()),
 		0, 0, uintptr(ov.vs.Dx()), uintptr(ov.vs.Dy()),
 		uintptr(unsafe.Pointer(&ov.bgra[0])),
 		uintptr(unsafe.Pointer(&ov.bmi)),
