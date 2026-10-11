@@ -31,6 +31,8 @@ export const useUi = defineStore('cp-ui', {
     portDialog: { open: false, pending: [], source: '' },
     /** 分享对话框 */
     shareDialog: { open: false, result: null, nodeId: '', loading: false },
+    /** 设置对话框打开时停在哪一页（仅自测用，正常为空） */
+    settingsInitialTab: '',
     /** 设置对话框 */
     settingsDialog: false,
     /** 导入对话框 */

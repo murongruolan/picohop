@@ -63,6 +63,18 @@ type Settings struct {
 	NotificationDurationMs int `json:"notificationDurationMs"`
 	// LogLines 是界面日志面板保留的最大行数。
 	LogLines int `json:"logLines"`
+
+	// ---- 全局快捷键 ----
+	//
+	// 空字符串表示"用默认值"；要**关掉**某一条请显式写 "none"。
+	// （不用空字符串表示关闭，是因为"空"在迁移与老配置里天然等同于"没设过"。）
+	//
+	// ShortcutToggleWindow 显示/隐藏主窗口。
+	ShortcutToggleWindow string `json:"shortcutToggleWindow"`
+	// ShortcutToggleAll 激活全部节点；若已有节点在跑则全部停止。
+	//
+	// 默认**不用** Ctrl+Alt+A —— 那个组合被微信/QQ 的截图占用了（用户实测冲突）。
+	ShortcutToggleAll string `json:"shortcutToggleAll"`
 }
 
 // Config 是完整的应用配置。
@@ -100,6 +112,10 @@ func Default() *Config {
 			Theme:                  "system",
 			NotificationDurationMs: 4000,
 			LogLines:               500,
+
+			ShortcutToggleWindow: "Ctrl+Alt+C",
+			// 不用 Ctrl+Alt+A：微信/QQ 的截图占着它
+			ShortcutToggleAll: "Ctrl+Alt+Shift+A",
 		},
 		Nodes: []Node{},
 	}
@@ -620,6 +636,14 @@ func (c *Config) normalize() {
 	}
 	if s.LogLines == 0 {
 		s.LogLines = d.Settings.LogLines
+	}
+	// 快捷键：空 = 用默认值；显式写 "none" = 不注册这一条
+	// （不拿空字符串表示"关闭"，否则老配置与"没设过"就没法区分了）
+	if s.ShortcutToggleWindow == "" {
+		s.ShortcutToggleWindow = d.Settings.ShortcutToggleWindow
+	}
+	if s.ShortcutToggleAll == "" {
+		s.ShortcutToggleAll = d.Settings.ShortcutToggleAll
 	}
 
 	if c.Nodes == nil {

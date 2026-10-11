@@ -149,6 +149,11 @@ async function handleDevOpen(name) {
     case 'settings':
       ui.settingsDialog = true
       break
+    case 'shortcuts':
+      // 直接停在「快捷键」页，方便截图核对
+      ui.settingsInitialTab = 'shortcut'
+      ui.settingsDialog = true
+      break
     case 'import':
       ui.importDialog = true
       break
@@ -442,6 +447,48 @@ async function handleDevOpen(name) {
     case 'floatsubmit':
       ui.closeNodeDialog({ submitted: false, via: 'float-self-test' })
       break
+
+    // 验证「快捷键录制」这条交互：合成按键事件走真实录制逻辑。
+    // 包括用户明确要求的那条规则 —— 只按一个键不算，必须两个以上。
+    case 'keyrecord': {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      ui.settingsInitialTab = 'shortcut'
+      ui.settingsDialog = true
+      await wait(900)
+      const box = () => document.querySelector('.cp-shortcut-input')
+      const el = box()
+      if (!el) {
+        notify('error', '快捷键录制测试', '找不到录制框', 0)
+        break
+      }
+      const lines = [`初始显示：${el.textContent.trim()}`]
+
+      // ① 只按一个普通键 —— 应当被拒绝（"需要两个以上组合键"）
+      el.click()
+      await wait(150)
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', bubbles: true, cancelable: true }))
+      await wait(250)
+      lines.push(`① 只按 K → 仍是「${box().textContent.trim()}」`)
+
+      // ② 按 Ctrl+Shift+K —— 应当被记下来
+      box().dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }),
+      )
+      await wait(300)
+      const after = box().textContent.trim()
+      lines.push(`② 按 Ctrl+Shift+K → 「${after}」`)
+
+      // ③ 清除 —— 应当变成"未启用"（后端约定的 none）
+      const clearBtn = document.querySelectorAll('.cp-shortcut-row button')[0]
+      clearBtn?.click()
+      await wait(300)
+      const cleared = box().textContent.trim()
+      lines.push(`③ 点清除 → 「${cleared}」`)
+
+      const ok = after === 'Ctrl+Shift+K' && cleared.includes('未启用')
+      notify(ok ? 'success' : 'error', '快捷键录制测试', lines.join('\n'), 0)
+      break
+    }
 
     // 触发一次"从屏幕圈选二维码"，用来复现/验证那条链路。
     // 不 await：它会一直挂着直到用户圈选完或取消。

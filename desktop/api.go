@@ -65,6 +65,10 @@ type API struct {
 	shortcutOK   []string
 	shortcutFail []string
 
+	// 当前已注册的全局快捷键组合，改绑定时要先按这份名单注销掉。
+	shortcutMu          sync.Mutex
+	registeredShortcuts []string
+
 	// pendingWarnings 是"后端还没就绪时"产生的告警，等 ServiceStartup 补投。
 	pendingWarnings []string
 }
@@ -259,8 +263,48 @@ func (a *API) SaveSettings(s config.Settings) error {
 	if err := a.app.SetSettings(s); err != nil {
 		return err
 	}
+	// 快捷键可能刚被改过：立刻按新配置重新注册，并逐条报告结果。
+	// 放在这里（而不是让前端额外再调一次）是为了让"保存了但没生效"不可能发生。
+	if list := a.ApplyShortcuts(); len(list) > 0 {
+		a.reportShortcuts(list)
+		for _, st := range list {
+			if st.Accel != "" && !st.OK {
+				a.app.Notify("warning", "快捷键没能生效",
+					fmt.Sprintf("%s（%s）：%s", st.Accel, st.Label, st.Message))
+			}
+		}
+	}
 	a.app.Notify("success", "设置已保存", "")
 	return nil
+}
+
+// ShortcutStatuses 返回当前快捷键的注册情况（界面用来显示"已生效 / 被占用"）。
+func (a *API) ShortcutStatuses() []ShortcutStatus {
+	if a.app == nil {
+		return nil
+	}
+	// 不重新注册，只报告当前状态：把"查询"和"改绑定"分开，
+	// 免得每次打开设置面板都把快捷键注销重注册一遍（那会短暂失效）。
+	saved := map[string]bool{}
+	a.shortcutMu.Lock()
+	for _, accel := range a.registeredShortcuts {
+		saved[strings.ToLower(accel)] = true
+	}
+	a.shortcutMu.Unlock()
+
+	out := a.shortcutDefs()
+	for i := range out {
+		st := &out[i]
+		if st.Accel == "" {
+			st.Message = "未启用"
+			continue
+		}
+		st.OK = saved[strings.ToLower(st.Accel)]
+		if !st.OK {
+			st.Message = "未生效（可能被别的程序占用）"
+		}
+	}
+	return out
 }
 
 // ResetSettings 把设置恢复为默认值（保留节点与前置）。

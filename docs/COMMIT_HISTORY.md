@@ -58,6 +58,7 @@
 | 020 | `docs(migration): Wails v3 迁移技术验证（试点实测通过，GO）` | 2026-10-11 | 在 .cache 建试点工程真机验证：裸 `go build -tags production` 可构建、第二窗口(无边框+置顶)可用、托盘/全局快捷键/系统通知均通过、`Call.ByName` 免绑定生成器、WebviewUserDataPath 可留项目内；wails3 CLI 装入项目内；v2 打 tag v2.0-wails2 可回退 | [详情](#020) |
 | 021 | `feat(desktop)!: 桌面外壳从 Wails v2 迁移到 v3（托盘常驻/多窗口/全局快捷键/系统通知）` | 2026-10-11 | main.go 全重写 + 新增 shell.go/theme_*.go；API 改 v3 服务钩子；前端桥换 @wailsio/runtime（只改 api.js）；删 wailsjs 与 wails.json；构建改裸 go build（不依赖 wails3 CLI/task）；实测托盘/快捷键/关窗常驻/数据目录全部通过 | [详情](#021) |
 | 022 | `feat(desktop): 添加/编辑节点改为独立置顶浮动窗口（可拖到主窗口之外）` | 2026-10-11 | 新增 float.go：OpenFloatDialog 建无边框置顶窗口并阻塞等结果；复用同一份前端（?float=kind + body class），无需第二个入口；结果经 ui.onNodeDialogClosed → SubmitFloatDialog 回传；实测超出主窗口右 270px/下 94px 且不被裁剪 | [详情](#022) |
+| 023 | `feat(config): 全局快捷键可自定义 + 设置新增「快捷键」页` | 2026-10-11 | Settings 增 ShortcutToggleWindow/ShortcutToggleAll（空=默认、none=关闭）；默认改 Ctrl+Alt+Shift+A 以避开微信截图的 Ctrl+Alt+A；ApplyShortcuts 先注销再注册并逐条报结果；设置页新增录制框，只按一个键会被拒绝 | [详情](#023) |
 
 ---
 
@@ -2076,3 +2077,66 @@ DOM 浮层做不到 —— 元素只能画在所属窗口的客户区里，到�
 其余对话框（导入 / 分享 / 设置 / 仅端口小窗）仍是窗口内浮层。
 机制是通用的：`OpenFloatDialog` 只认 `floatSizes` 表里的类型，
 要推广只需把它们纳入这张表、并在 `enterFloatMode` 里加一个分支。
+
+---
+
+## 023
+
+**`feat(config): 全局快捷键可自定义 + 设置新增「快捷键」页`**
+
+### 起因
+
+用户："设置页面在测试前面增加一个 快捷键 tabs，让用户可以自己在里面设置这两个快捷键的
+绑定键，默认就是现在这两组，点击后旁边文字提醒'请点击键盘两个以上组合键进行记录'。"
+同时他实测反馈 **`Ctrl+Alt+A` 与微信截图冲突**。
+
+### 配置
+
+`Settings.ShortcutToggleWindow` / `Settings.ShortcutToggleAll`，约定：
+
+  - **空字符串 = 用默认值**（老配置自动补默认值，实测会写回 config.json）
+  - **显式写 `"none"` = 关闭这一条**，不再占用任何组合键
+
+不拿空字符串表示"关闭"，否则"没设过"和"主动关掉"就没法区分了。
+
+默认值：`Ctrl+Alt+C` 与 **`Ctrl+Alt+Shift+A`**。后者换掉 `Ctrl+Alt+A` 正是为了避开
+微信/QQ 的截图。顺带实测确认：v3 的 `GlobalShortcut.Register` 认三键组合。
+
+### 后端
+
+- `API.ApplyShortcuts()`：按当前设置**先全部注销再注册**，逐条返回
+  `ShortcutStatus{Key,Label,Accel,OK,Message}`。
+  先注销是必须的 —— 改绑定时旧键要让出来，否则会同时占着两个组合键。
+- `SaveSettings` 保存后**自动**调用它，所以"保存了但没生效"不可能发生；
+  有失败的条目会弹一次界面提示，并把每一条写进日志。
+- 注册失败不返回 error，而是逐条报告：一条冲突不该让另一条也失效。
+- `API.ShortcutStatuses()` 只查状态、不重注册 —— 免得每次打开设置面板
+  都让快捷键短暂失效。
+
+### 界面
+
+设置新增「快捷键」页（排在"运行与界面"之后、"关于"之前）：两行录制框 +
+「清除」+ 每行说明 + 冲突提示。点输入框开始录制，按下组合键即记录；
+**只按一个键会被拒绝**，并提示"请点击键盘两个以上组合键进行记录"。
+
+### 验证
+
+`-open keyrecord` 合成按键事件走真实录制逻辑：
+
+    初始显示：Ctrl+Alt+C
+    ① 只按 K → 仍是「请点击键盘两个以上组合键进行记录…」
+    ② 按 Ctrl+Shift+K → 「Ctrl+Shift+K」
+    ③ 点清除 → 「未启用（点击可重新设置）」
+
+启动日志：
+
+    外壳：已注册全局快捷键 Ctrl+Alt+C（显示 / 隐藏主窗口）、
+                           Ctrl+Alt+Shift+A（激活全部节点 / 停止全部）
+
+### 一处小坑
+
+设置面板的页签用 `const tab = ref(ui.settingsInitialTab || 'front')` 初始化**不生效** ——
+组件在应用启动时就创建了，那时自测入口还没跑。改成在 `watch(visible)` 里每次打开时设置。
+（截图里看到仍然是第一页才发现。）
+
+全量校验：gofmt / go vet 干净、8 个测试包全过。

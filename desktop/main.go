@@ -114,7 +114,7 @@ func main() {
 	})
 
 	setupTray(wapp, api)
-	setupGlobalShortcuts(wapp, api)
+	setupGlobalShortcuts(api)
 
 	if err := wapp.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "启动失败: %v\n", err)
@@ -164,28 +164,25 @@ func setupTray(wapp *application.App, api *API) {
 	api.trayIconSize = len(trayIcon)
 }
 
-// setupGlobalShortcuts 注册全局快捷键。
+// setupGlobalShortcuts 首次按配置注册全局快捷键。
 //
-// 注册失败（例如被别的程序占了）只记日志 + 提示一次，不打断启动 ——
+// 组合键本身是**可配置的**（设置 → 快捷键），这里只负责在启动时应用一次；
+// 之后用户改绑定走 SaveSettings → API.ApplyShortcuts。
+//
+// 注册失败（被别的程序占用是最常见的）只记日志 + 提示一次，不打断启动 ——
 // 快捷键是锦上添花，不该让主功能起不来。
-func setupGlobalShortcuts(wapp *application.App, api *API) {
-	type sc struct {
-		accel string
-		desc  string
-		fn    func()
-	}
-	list := []sc{
-		{"Ctrl+Alt+C", "显示/隐藏主窗口", func() { api.ToggleWindow() }},
-		{"Ctrl+Alt+A", "激活全部节点 / 停止全部", func() { api.ToggleActivateAll() }},
-	}
-	for _, s := range list {
-		if err := wapp.GlobalShortcut.Register(s.accel, s.fn); err != nil {
-			api.shortcutFail = append(api.shortcutFail,
-				fmt.Sprintf("注册全局快捷键 %s（%s）失败：%v", s.accel, s.desc, err))
-			api.warnShortcutFailed(s.accel, s.desc, err)
+func setupGlobalShortcuts(api *API) {
+	list := api.ApplyShortcuts()
+	for _, st := range list {
+		if st.Accel == "" {
 			continue
 		}
-		api.shortcutOK = append(api.shortcutOK, fmt.Sprintf("%s（%s）", s.accel, s.desc))
+		if st.OK {
+			api.shortcutOK = append(api.shortcutOK, fmt.Sprintf("%s（%s）", st.Accel, st.Label))
+			continue
+		}
+		api.shortcutFail = append(api.shortcutFail,
+			fmt.Sprintf("注册全局快捷键 %s（%s）失败：%s", st.Accel, st.Label, st.Message))
 	}
 }
 

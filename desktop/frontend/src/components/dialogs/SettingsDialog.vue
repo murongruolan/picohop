@@ -21,13 +21,65 @@ const visible = computed({
   },
 })
 
-const tab = ref('front')
+// 打开时停在哪一页：自测用 ui.settingsInitialTab 指定（-open shortcuts 用）
+const tab = ref(ui.settingsInitialTab || 'front')
 const saving = ref(false)
 const testingFront = ref(false)
 const frontTest = ref(null)
 
 const form = reactive(blankSettings())
 const front = reactive(blankFront())
+
+// ---------------------------------------------------------------------------
+// 快捷键录制
+//
+// 自己做而不是拉一个键盘录制组件：需求很简单 —— 点一下开始录，
+// 按下组合键就记下来，并且强制"至少两个键"。
+// ---------------------------------------------------------------------------
+const recording = ref('') // 正在录制哪个字段；空表示没在录
+const shortcutRows = [
+  { key: 'shortcutToggleWindow', label: '显示 / 隐藏主窗口', hint: '按一下收回托盘，再按一下叫回来' },
+  { key: 'shortcutToggleAll', label: '激活全部 / 停止全部', hint: '有节点在跑就全停，否则全开' },
+]
+const MODIFIER_KEYS = ['Control', 'Alt', 'Shift', 'Meta']
+
+function startRecord(key, ev) {
+  recording.value = key
+  // 让这个 div 拿到焦点，否则收不到 keydown
+  ev?.currentTarget?.focus?.()
+}
+
+function clearShortcut(key) {
+  // "none" 是后端约定的"显式关闭"（空字符串在配置里表示"没设过、用默认值"）
+  form[key] = 'none'
+}
+
+function onRecordKey(e) {
+  if (!recording.value) return
+  // 录制期间把按键吃掉，免得触发对话框自己的快捷键逻辑
+  e.preventDefault()
+  e.stopPropagation()
+
+  if (e.key === 'Escape') {
+    recording.value = ''
+    return
+  }
+  // 只按了修饰键：继续等他按真正的键，不当作结束
+  if (MODIFIER_KEYS.includes(e.key)) return
+
+  const mods = []
+  if (e.ctrlKey) mods.push('Ctrl')
+  if (e.altKey) mods.push('Alt')
+  if (e.shiftKey) mods.push('Shift')
+  if (mods.length === 0) {
+    notify('warning', '需要两个以上组合键', '请按住 Ctrl / Alt / Shift 之后再按一个普通键，例如 Ctrl+Alt+C')
+    return
+  }
+  // 键名统一成后端认识的写法：单字符大写，其余原样（F9 / Space / ArrowUp …）
+  const key = e.key.length === 1 ? e.key.toUpperCase() : e.key
+  form[recording.value] = [...mods, key].join('+')
+  recording.value = ''
+}
 
 let originalFront = ''
 let originalSettings = ''
@@ -47,6 +99,8 @@ function blankSettings() {
     theme: 'system',
     notificationDurationMs: 4000,
     logLines: 500,
+    shortcutToggleWindow: 'Ctrl+Alt+C',
+    shortcutToggleAll: 'Ctrl+Alt+Shift+A',
   }
 }
 
@@ -56,6 +110,11 @@ function blankFront() {
 
 watch(visible, async (v) => {
   if (!v) return
+  // 每次打开都从第一页开始（或自测指定的那一页）。
+  // 不能只在 setup 里初始化：组件在应用启动时就创建了，那时自测入口还没跑，
+  // 设置不进去 —— 踩过一次，截图里看到的仍然是第一页。
+  tab.value = ui.settingsInitialTab || 'front'
+  ui.settingsInitialTab = ''
   frontTest.value = null
   try {
     const [s, f] = await Promise.all([api.getSettings(), api.getFront()])
@@ -317,6 +376,45 @@ const meta = computed(() => store.meta || {})
       </el-tab-pane>
 
       <!-- ------------------------------------------------------------ -->
+      <el-tab-pane label="快捷键" name="shortcut">
+        <div class="cp-section">全局快捷键</div>
+        <div class="cp-hint" style="margin-bottom: 12px">
+          这两个键在**任何程序里**都有效，不用先切回本程序。点一下输入框就开始录制，
+          然后按下你想用的组合键。至少要按两个键（一个 Ctrl/Alt/Shift 加一个普通键）。
+        </div>
+
+        <div class="cp-shortcut-row" v-for="sc in shortcutRows" :key="sc.key">
+          <span class="cp-shortcut-label">{{ sc.label }}</span>
+          <div
+            class="cp-shortcut-input"
+            :class="{ recording: recording === sc.key }"
+            tabindex="0"
+            @click="startRecord(sc.key, $event)"
+            @keydown="onRecordKey"
+          >
+            <template v-if="recording === sc.key">请点击键盘两个以上组合键进行记录…</template>
+            <template v-else-if="form[sc.key] === 'none'">未启用（点击可重新设置）</template>
+            <template v-else>{{ form[sc.key] || '（未设置）' }}</template>
+          </div>
+          <el-button
+            v-if="form[sc.key] && form[sc.key] !== 'none'"
+            link
+            size="small"
+            @click="clearShortcut(sc.key)"
+          >
+            清除
+          </el-button>
+          <span class="cp-hint">{{ sc.hint }}</span>
+        </div>
+
+        <div class="cp-hint" style="margin-top: 12px">
+          冲突提示：<code>Ctrl+Alt+A</code> 被微信 / QQ 的截图占用，
+          所以这里默认用 <code>Ctrl+Alt+Shift+A</code>。保存后如果某个键没生效，
+          界面会提示一次、日志里也会写明是哪一条被占用了。
+        </div>
+      </el-tab-pane>
+
+      <!-- ------------------------------------------------------------ -->
       <el-tab-pane label="关于" name="about">
         <div class="cp-section">ChainProxy</div>
         <el-descriptions :column="1" border size="small">
@@ -359,3 +457,46 @@ const meta = computed(() => store.meta || {})
     </template>
   </el-dialog>
 </template>
+
+<style scoped>
+/* 快捷键录制行：标签 / 录制框 / 清除 / 说明 */
+.cp-shortcut-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.cp-shortcut-label {
+  width: 168px;
+  flex: 0 0 auto;
+  color: var(--cp-text-2);
+  font-size: 13px;
+}
+.cp-shortcut-input {
+  width: 220px;
+  flex: 0 0 auto;
+  height: 32px;
+  line-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--cp-border-strong);
+  border-radius: var(--cp-radius-sm);
+  background: var(--cp-panel-2);
+  font-family: Consolas, monospace;
+  font-size: 12.5px;
+  color: var(--cp-text);
+  cursor: pointer;
+  outline: none;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cp-shortcut-input:hover {
+  border-color: var(--cp-brand);
+}
+.cp-shortcut-input:focus,
+.cp-shortcut-input.recording {
+  border-color: var(--cp-brand);
+  box-shadow: 0 0 0 2px var(--cp-brand-soft);
+  color: var(--cp-brand);
+}
+</style>
