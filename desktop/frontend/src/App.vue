@@ -148,6 +148,85 @@ async function handleDevOpen(name) {
         window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
       }
       break
+
+    // 验证"拖拽列宽 + 下限钳制"。
+    //
+    // 手法：在表头右边缘（拖拽热区是右边缘 8px 内）派发一串**合成鼠标事件**，
+    // 把某一列往左拖 400px —— 远超该列宽度，不钳制的话会被拖成 30px 甚至更窄。
+    // Element Plus 内部只保证不低于 30px，我们自己钳到 56px，
+    // 所以期望结果是 56px。测完把实际宽度打到通知里，方便看截图核对。
+    case 'resize': {
+      await new Promise((r) => setTimeout(r, 400))
+      const ths = [...document.querySelectorAll('.cp-table-wrap .el-table__header th')]
+      const th = ths[1] // 第二列 = 别名
+      if (!th) {
+        notify('error', '列宽拖拽测试', '找不到表头单元格', 0)
+        break
+      }
+      const before = Math.round(th.getBoundingClientRect().width)
+      const rect = th.getBoundingClientRect()
+      const y = Math.round(rect.top + rect.height / 2)
+      const startX = Math.round(rect.right - 3)
+      const fire = (type, x, target) =>
+        target.dispatchEvent(
+          new MouseEvent(type, {
+            clientX: x,
+            clientY: y,
+            bubbles: true,
+            cancelable: true,
+            button: 0,
+            buttons: type === 'mouseup' ? 0 : 1,
+          }),
+        )
+      fire('mousemove', startX, th) // 让库把 draggingColumn 记上
+      fire('mousedown', startX, th)
+      fire('mousemove', startX - 400, document) // 往左拖 400px
+      fire('mouseup', startX - 400, document)
+      await new Promise((r) => setTimeout(r, 400))
+      const after = Math.round(th.getBoundingClientRect().width)
+      const saved = store.columnWidths?.name
+
+      // 再试**最后一列**：Element Plus 默认不允许拖最后一列（allowDragLastColumn），
+      // 我们显式开了它，所以这里应该也能变窄。
+      const lastTh = ths[ths.length - 1]
+      const lastKey = lastTh?.querySelector('.cell')?.textContent?.trim() || '最后一列'
+      let lastBefore = 0
+      let lastAfter = 0
+      if (lastTh) {
+        const lr = lastTh.getBoundingClientRect()
+        lastBefore = Math.round(lr.width)
+        const ly = Math.round(lr.top + lr.height / 2)
+        const lx = Math.round(lr.right - 3)
+        const fire2 = (type, x, target) =>
+          target.dispatchEvent(
+            new MouseEvent(type, {
+              clientX: x,
+              clientY: ly,
+              bubbles: true,
+              cancelable: true,
+              button: 0,
+              buttons: type === 'mouseup' ? 0 : 1,
+            }),
+          )
+        fire2('mousemove', lx, lastTh)
+        fire2('mousedown', lx, lastTh)
+        fire2('mousemove', lx - 60, document) // 只缩 60px，验证"正常拖拽"也能用
+        fire2('mouseup', lx - 60, document)
+        await new Promise((r) => setTimeout(r, 400))
+        lastAfter = Math.round(lastTh.getBoundingClientRect().width)
+      }
+
+      const ok = after >= 56 && after <= 80 && lastTh && lastAfter < lastBefore
+      notify(
+        ok ? 'success' : 'error',
+        '列宽拖拽测试',
+        `别名列：${before}px → 往左拖 400px 后 ${after}px\n` +
+          `（库内下限 30px，我们钳到 56px；store 记录 = ${saved}）\n` +
+          `最后一列「${lastKey}」：${lastBefore}px → ${lastAfter}px（验证 allow-drag-last-column）`,
+        0,
+      )
+      break
+    }
   }
 }
 

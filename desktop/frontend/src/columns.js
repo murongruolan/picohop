@@ -4,9 +4,24 @@
  * 默认显示的就是产品要求的 8 列（类型、别名、本地端口、地址、远程端口、
  * 传输协议、延迟、速度）；其余的通过「列显示」多选打开。
  *
- * 每一列的值都在这里用 render 语义描述好，表格组件只负责摆位置，
- * 这样"某列怎么算、怎么显示"不会散落在模板里。
+ * 宽度有两套：
+ *   - `width`     固定初始宽度（可拖拽调整）
+ *   - `minWidth`  弹性列：不写死宽度，而是吸收窗口多出来的空间
+ *                 （地址/备注/前置这类内容长度差异大的列适合弹性）
+ * 两者都不写死的话表格右侧会留一大片空白，所以每列至少要有一个。
  */
+
+/**
+ * 拖拽列宽的下限。
+ *
+ * Element Plus 自己在拖拽时只做了 `Math.max(列左边界 + 30, ...)` 的钳制，
+ * 也就是**允许把一列拖到只剩 30px**。30px 在左右各 10px 的单元格内边距下
+ * 只剩 10px 文字区，一个汉字（约 13px）会被切掉一半 —— 看起来就是"列叠在一起"。
+ * 所以下限由我们自己定，并在 header-dragend 里钳制（见 NodeTable.vue）。
+ */
+export const MIN_COL_WIDTH = 56
+/** 上限：避免手滑把一列拖到把其它列全挤出屏幕。 */
+export const MAX_COL_WIDTH = 900
 
 /** 默认可见的列，顺序即产品要求顺序。 */
 export const DEFAULT_VISIBLE = [
@@ -22,25 +37,25 @@ export const DEFAULT_VISIBLE = [
 
 /** 全部可选列。 */
 export const ALL_COLUMNS = [
-  { key: 'state', label: '状态', width: 76, align: 'center' },
-  { key: 'protocol', label: '类型', width: 104 },
-  { key: 'name', label: '别名', width: 190, minWidth: 130 },
-  { key: 'listenPort', label: '本地端口', width: 92, align: 'right' },
-  { key: 'server', label: '地址', minWidth: 168 },
-  { key: 'port', label: '远程端口', width: 90, align: 'right' },
-  { key: 'transport', label: '传输协议', width: 118 },
-  { key: 'latency', label: '延迟(ms)', width: 92, align: 'right' },
-  { key: 'real', label: '真连接(ms)', width: 104, align: 'right' },
-  { key: 'speed', label: '速度(MB/s)', width: 104, align: 'right' },
-  { key: 'exitIp', label: '出口 IP', width: 132 },
-  { key: 'today', label: '今日统计', width: 104, align: 'right' },
-  { key: 'lastUsed', label: '最近使用', width: 152 },
-  { key: 'createdAt', label: '创建时间', width: 152 },
-  { key: 'remark', label: '备注', minWidth: 130 },
-  { key: 'front', label: '前置', minWidth: 156 },
-  { key: 'tls', label: 'TLS', width: 62, align: 'center' },
-  { key: 'activeConn', label: '活动连接', width: 92, align: 'right' },
-  { key: 'totalConn', label: '累计连接', width: 92, align: 'right' },
+  { key: 'state', label: '状态', width: 88, min: 56, align: 'center' },
+  { key: 'protocol', label: '类型', width: 106, min: 56 },
+  { key: 'name', label: '别名', width: 208, min: 72 },
+  { key: 'listenPort', label: '本地端口', width: 100, min: 64, align: 'right' },
+  { key: 'server', label: '地址', minWidth: 300, min: 80 },
+  { key: 'port', label: '远程端口', width: 96, min: 64, align: 'right' },
+  { key: 'transport', label: '传输协议', width: 122, min: 64 },
+  { key: 'latency', label: '延迟(ms)', width: 94, min: 64, align: 'right' },
+  { key: 'real', label: '真连接(ms)', width: 106, min: 64, align: 'right' },
+  { key: 'speed', label: '速度(MB/s)', width: 106, min: 64, align: 'right' },
+  { key: 'exitIp', label: '出口 IP', width: 134, min: 72 },
+  { key: 'today', label: '今日统计', width: 106, min: 64, align: 'right' },
+  { key: 'lastUsed', label: '最近使用', width: 152, min: 76 },
+  { key: 'createdAt', label: '创建时间', width: 152, min: 76 },
+  { key: 'remark', label: '备注', minWidth: 180, min: 72 },
+  { key: 'front', label: '前置', minWidth: 200, min: 72 },
+  { key: 'tls', label: 'TLS', width: 64, min: 56, align: 'center' },
+  { key: 'activeConn', label: '活动连接', width: 94, min: 64, align: 'right' },
+  { key: 'totalConn', label: '累计连接', width: 94, min: 64, align: 'right' },
 ]
 
 /** 按 key 取列定义。 */

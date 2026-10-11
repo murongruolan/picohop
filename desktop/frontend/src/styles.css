@@ -191,10 +191,13 @@ textarea,
 .cp-table-wrap {
   flex: 1 1 auto;
   min-height: 0;
-  margin: 10px 14px 12px;
+  /* 通栏：左右不留白，列表直接抵到窗口两边。
+     因而也就不需要"卡片"那圈边框与圆角了 —— 通栏下左右两条竖线很别扭，
+     上下分隔交给筛选栏的 border-bottom 和表格自己的表头底色。 */
+  margin: 0;
   background: var(--cp-panel);
-  border: 1px solid var(--cp-border);
-  border-radius: var(--cp-radius);
+  border: none;
+  border-radius: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -254,6 +257,26 @@ textarea,
 .cp-table-wrap .el-table .cell {
   padding: 0 10px;
   line-height: 1.4;
+}
+/* 通栏之后，第一列的文字要和上方筛选栏的左内边距对齐（14px），否则看着会缩进不齐 */
+.cp-table-wrap .el-table th.el-table__cell:first-child .cell,
+.cp-table-wrap .el-table td.el-table__cell:first-child .cell {
+  padding-left: 14px;
+}
+/* 加了 border 才有列宽拖拽手柄，但它同时画了一圈外框 —— 通栏下外框是多余的 */
+.cp-table-wrap .el-table--border::after,
+.cp-table-wrap .el-table--border::before,
+.cp-table-wrap .el-table--border .el-table__inner-wrapper::after {
+  display: none;
+}
+/* 最右一列不需要右分隔线（它已经贴着窗口边了） */
+.cp-table-wrap .el-table__body tr > td.el-table__cell:last-child,
+.cp-table-wrap .el-table__header tr > th.el-table__cell:last-child {
+  border-right: none;
+}
+/* 表头右边缘 8px 是列宽拖拽热区，给一点视觉提示（Element Plus 会把光标变成 col-resize） */
+.cp-table-wrap .el-table th.el-table__cell:hover {
+  background: color-mix(in srgb, var(--cp-panel-2) 88%, var(--cp-brand) 12%);
 }
 .cp-table-wrap .el-table__inner-wrapper::before {
   display: none; /* Element 底部那条多余的横线 */

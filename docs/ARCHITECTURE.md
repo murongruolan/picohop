@@ -223,7 +223,18 @@ PlanActivation(["C"])  ──►  Order = [A, B, C], Auto = [A, B]
   默认它在 `%APPDATA%\<程序名>`，那是项目目录之外；本项目的规矩是
   "一切都在 F:\chain_proxy 内"，所以用 `WebviewUserDataPath` 改掉。
   顺带的好处：清数据只要删 `data\`，不会在用户漫游配置里留残留。
-- **`-open <面板名>` 开发参数**：让界面启动后直接打开某个面板。
+- **列表是通栏的**（左右不留白），表头支持拖拽调列宽。这里有两个必须知道的坑：
+  1. Element Plus 的列宽拖拽手柄**要求 `<el-table>` 上有 `border`**
+     （`table-header/event-helper.mjs` 里 `if (!props.border) return`），
+     而 `border` 同时会画一圈外框 —— 通栏下外框多余，用 CSS 把它去掉。
+  2. 库内部的拖拽下限**只有 30px**（`columnRect.left - tableLeft + 30`），
+     而单元格左右各 10px 内边距，30px 只剩 10px 文字区，一个汉字会被切一半、
+     看起来就像两列叠在一起。所以在 `header-dragend` 里自己钳到 `MIN_COL_WIDTH`
+     （56px，约两个汉字宽度），并直接改 `column.realWidth` ——
+     此刻库的 `scheduleLayout` 还排在下一个 rAF，改写会被紧接着的重排采用，
+     不会先按超窄宽度闪一帧。
+  3. 最后一列默认**不允许**拖拽（`allowDragLastColumn`），要显式打开才能"任意列都能拖"。
+- **`-open <面板名>` 开发参数**：让界面启动后直接打开某个面板。：让界面启动后直接打开某个面板。
   这是给"界面自测"用的：桌面程序的排版必须真的看一眼，
   而模拟鼠标点击会去动用户的鼠标（甚至点到别的程序上），不可接受。
 

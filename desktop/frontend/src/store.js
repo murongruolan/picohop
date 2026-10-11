@@ -6,9 +6,10 @@
  */
 import { defineStore } from 'pinia'
 import api, { notify, subscribeAll } from './api'
-import { DEFAULT_VISIBLE, ALL_COLUMNS } from './columns'
+import { DEFAULT_VISIBLE, ALL_COLUMNS, MIN_COL_WIDTH, MAX_COL_WIDTH } from './columns'
 
 const LS_COLUMNS = 'cp.visibleColumns'
+const LS_COL_WIDTHS = 'cp.columnWidths'
 const LS_THEME = 'cp.theme'
 const LS_STATUS = 'cp.statusFilter'
 
@@ -21,6 +22,30 @@ function loadVisibleColumns() {
     return valid.length ? valid : [...DEFAULT_VISIBLE]
   } catch {
     return [...DEFAULT_VISIBLE]
+  }
+}
+
+/**
+ * 用户拖拽过的列宽。
+ *
+ * 只记"用户改过的"，没改过的列仍然用列定义里的默认值 ——
+ * 这样以后调整默认宽度时，没动过列宽的人能跟着变好。
+ */
+function loadColumnWidths() {
+  try {
+    const raw = localStorage.getItem(LS_COL_WIDTHS)
+    if (!raw) return {}
+    const obj = JSON.parse(raw)
+    const out = {}
+    for (const [k, v] of Object.entries(obj || {})) {
+      const n = Number(v)
+      if (ALL_COLUMNS.some((c) => c.key === k) && Number.isFinite(n)) {
+        out[k] = Math.min(MAX_COL_WIDTH, Math.max(MIN_COL_WIDTH, Math.round(n)))
+      }
+    }
+    return out
+  } catch {
+    return {}
   }
 }
 
@@ -39,6 +64,7 @@ export const useStore = defineStore('cp', {
     searchApplied: '',
     statusFilter: localStorage.getItem(LS_STATUS) || 'all',
     visibleColumns: loadVisibleColumns(),
+    columnWidths: loadColumnWidths(),
 
     // 选择
     selectedIds: [],
@@ -181,6 +207,23 @@ export const useStore = defineStore('cp', {
 
     resetColumns() {
       this.setVisibleColumns([...DEFAULT_VISIBLE])
+      this.resetColumnWidths()
+    },
+
+    // -----------------------------------------------------------------
+    // 列宽
+    // -----------------------------------------------------------------
+    /** 记录用户拖出来的列宽（已钳制到 [MIN_COL_WIDTH, MAX_COL_WIDTH]）。 */
+    setColumnWidth(key, width) {
+      if (!ALL_COLUMNS.some((c) => c.key === key)) return
+      const w = Math.min(MAX_COL_WIDTH, Math.max(MIN_COL_WIDTH, Math.round(width)))
+      this.columnWidths = { ...this.columnWidths, [key]: w }
+      localStorage.setItem(LS_COL_WIDTHS, JSON.stringify(this.columnWidths))
+    },
+
+    resetColumnWidths() {
+      this.columnWidths = {}
+      localStorage.removeItem(LS_COL_WIDTHS)
     },
 
     // -----------------------------------------------------------------

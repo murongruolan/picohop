@@ -121,8 +121,9 @@ watch(
           {{ c.label }}
         </el-checkbox>
       </el-checkbox-group>
-      <div class="cp-hint" style="margin-top: 6px">
-        默认显示的就是产品要求的 8 列；其余列（今日统计、最近使用、创建时间、备注…）按需打开。
+      <div class="cp-col-foot">
+        <span class="cp-hint">默认显示产品要求的 8 列；表头右边缘可拖拽调列宽（最小 56px，约两个汉字）。</span>
+        <el-button link size="small" @click="store.resetColumnWidths()">重置列宽</el-button>
       </div>
     </el-popover>
 
@@ -195,5 +196,19 @@ watch(
 }
 .cp-col-group :deep(.el-checkbox__label) {
   font-size: 12.5px;
+}
+.cp-col-foot {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--cp-border);
+}
+.cp-col-foot .cp-hint {
+  flex: 1 1 auto;
+}
+.cp-col-foot .el-button {
+  flex: 0 0 auto;
 }
 </style>

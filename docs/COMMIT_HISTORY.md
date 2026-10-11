@@ -51,6 +51,7 @@
 | 013 | `chore(scripts): 构建脚本带上 sing-box 构建标签，新增界面截图与端到端脚本` | 2026-10-11 | `build.ps1` 固化 `-tags with_utls,with_quic`；`lint.ps1` 加"引擎自检"；新增 `ui_shot.ps1`；`test_e2e.ps1` 跟上新配置模型 | [详情](#013) |
 | 014 | `docs: 更新项目介绍、架构、使用说明、开发进度与提交说明` | 2026-10-11 | README / ARCHITECTURE / USER_GUIDE 全面改写为 v2；PROJECT_PROGRESS 追加 v2 专节；本文件追加 007-014 | [详情](#014) |
 | 015 | `fix(desktop): 通知重叠 / WebView2 数据目录越界 / 端口框宽度 + 补充运行时验证` | 2026-10-11 | 自己实现通知（ElNotification 同一 tick 连发会重叠）、WebView2 配置目录改到 data\webview、uishot 改用 PrintWindow 不抢焦点；补验需求 (4)(5)(7)(8)(10)(11) | [详情](#015) |
+| 016 | `feat(desktop): 列表改通栏 + 表头可拖拽调列宽（带最小宽度保护）` | 2026-10-11 | 列表左右不留白；列宽拖拽需要 border、库内下限仅 30px 会切字故自行钳到 56px、最后一列默认不可拖需 allow-drag-last-column；列宽持久化 + 重置入口 | [详情](#016) |
 
 ---
 
@@ -1603,3 +1604,59 @@ F:\chain_proxy 内"（`scripts/env.ps1` 连 Go 的工具链都重定向进来了
 - 没有真实 Reality / Hysteria2 服务器可测。
 - 界面仍然**没有自动化排版断言**（v1 的 `test_ui.ps1` 随旧界面删除），
   现在靠截图人眼看 + 像素分析。
+
+---
+
+## 016
+
+**`feat(desktop): 列表改通栏 + 表头可拖拽调列宽（带最小宽度保护）`**
+
+### 1. 列表通栏
+
+表格外面原先套了一层卡片（`margin: 10px 14px 12px` + 边框 + 圆角）。
+改成 `margin: 0`、去掉边框与圆角，表格直接抵到窗口左右两边；
+第一列单元格左内边距调到 14px 与筛选栏对齐。
+上下分隔交给筛选栏的 `border-bottom` 和表头底色，不再需要卡片边框。
+
+### 2. 表头拖拽调列宽
+
+需求："任意拖拽列宽度，但最小也得保留一个字，不要完全重叠"。
+
+翻 Element Plus 源码踩到三个点：
+
+  - **拖拽手柄要求 `border`**：`table-header/event-helper.mjs` 的
+    `handleMouseMove` 开头就是 `if (!props.border) return`，
+    `handleMouseDown` 里也有一处 `props.border` 判断。
+    没有 `border` 时鼠标移到表头边缘不会变成 `col-resize`、也拖不动。
+    所以给表格加 `border`，再用 CSS 去掉它附带的那圈外框（通栏下多余）。
+  - **库内下限只有 30px**：同文件里的 `columnRect.left - tableLeft + 30`。
+    单元格左右各有 10px 内边距，30px 只剩 10px 文字区，一个汉字（约 13px）
+    会被切一半，两个相邻列看起来就像叠在一起。
+    处理：在 `header-dragend` 里钳到 `MIN_COL_WIDTH = 56px`（约两个汉字），
+    并**直接改 `column.realWidth`** —— 因为 `handleMouseUp` 里的
+    `scheduleLayout` 排在下一个 `requestAnimationFrame`，而 `header-dragend`
+    在它之前发出，此刻改写会被紧接着的重排采用，不会先按超窄宽度闪一帧。
+  - **最后一列默认不可拖**（`allowDragLastColumn` 为假时跳过最后一列），
+    显式打开才能做到"任意列都能拖"。
+
+另外：弹性列（地址/备注/前置，只有 `min-width` 没有 `width`）被拖动之后
+就不再给 `min-width` —— 否则它还会继续吸收窗口多出来的空间，
+表现为"拖了却弹回去"。
+
+列宽会持久化（localStorage），「列显示」面板底部另加「重置列宽」。
+
+### 验证
+
+拖拽本来"只能手动试"，但没必要真的动鼠标：`-open resize` 里派发
+**合成鼠标事件**走真实代码路径，再把测出的宽度打进一条常驻通知，从截图读数字：
+
+    别名列：208px → 往左拖 400px 后 56px
+            （库内下限 30px，我们钳到 56px；store 记录 = 56）
+    最后一列「速度(MB/s)」：106px → 56px（验证 allow-drag-last-column）
+
+56px 下单元格显示为"任..." —— 保住一个完整汉字 + 省略号，没有重叠。
+
+### 文档
+
+ARCHITECTURE.md 在"界面层"一节补了这三条坑；
+PROJECT_PROGRESS.md 追加"界面微调（第 3 轮）"。

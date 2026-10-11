@@ -15,7 +15,7 @@ import { computed, ref } from 'vue'
 import { useStore } from '../store'
 import { useUi } from '../ui'
 import { useActions } from '../actions'
-import { ALL_COLUMNS } from '../columns'
+import { ALL_COLUMNS, MIN_COL_WIDTH, MAX_COL_WIDTH } from '../columns'
 import NodeCell from './NodeCell.vue'
 
 const store = useStore()
@@ -26,6 +26,52 @@ const tableRef = ref(null)
 
 /** 当前应该渲染的列，顺序按 ALL_COLUMNS 固定，不随勾选顺序乱跳。 */
 const cols = computed(() => ALL_COLUMNS.filter((c) => store.visibleColumns.includes(c.key)))
+
+/**
+ * 某一列当前该用多宽。
+ *
+ * 优先级：用户拖过的宽度 > 列定义里的默认宽度。
+ * 返回 undefined 表示"这一列不写死宽度"，交给 min-width 去弹性分配。
+ */
+function widthOf(c) {
+  const saved = store.columnWidths[c.key]
+  if (saved != null) return saved
+  return c.width
+}
+
+/**
+ * 弹性列的 min-width。
+ *
+ * 用户拖过之后这一列就变成固定宽度了：否则它还会继续吸收窗口多出来的空间，
+ * 表现为"拖了却弹回去"。所以拖过就不再给 min-width。
+ */
+function minWidthOf(c) {
+  if (store.columnWidths[c.key] != null) return undefined
+  return c.minWidth
+}
+
+/**
+ * 拖拽列宽结束。
+ *
+ * 【为什么要自己钳制】Element Plus 内部只保证不低于 30px
+ * （table-header/event-helper.mjs 里的 `columnRect.left - tableLeft + 30`），
+ * 而单元格左右各有 10px 内边距，30px 只剩 10px 文字区 ——
+ * 一个汉字（约 13px）会被切掉一半，看起来就像两列叠在一起。
+ * 这里把下限抬到 MIN_COL_WIDTH，保证至少能完整显示一个汉字。
+ */
+function onHeaderDragEnd(newWidth, oldWidth, column) {
+  const key = column?.property
+  if (!key) return
+  const clamped = Math.max(MIN_COL_WIDTH, Math.min(MAX_COL_WIDTH, Math.round(newWidth || 0)))
+  if (clamped !== newWidth) {
+    // 直接改库内部列的宽度：此刻 handleMouseUp 里的 scheduleLayout 还排在
+    // 下一个 requestAnimationFrame，所以这次改写会被紧接着的那次重排采用，
+    // 不会先按超窄的宽度画一帧（否则会看到一次闪动）。
+    column.width = clamped
+    column.realWidth = clamped
+  }
+  store.setColumnWidth(key, clamped)
+}
 
 function rowClass({ row }) {
   return store.selectedIds.includes(row.id) ? 'cp-row-selected' : ''
@@ -63,14 +109,17 @@ function onRowDblClick(row) {
       @row-click="onRowClick"
       @row-contextmenu="onRowContextMenu"
       @row-dblclick="onRowDblClick"
+      @header-dragend="onHeaderDragEnd"
+      border
+      allow-drag-last-column
     >
       <el-table-column
         v-for="c in cols"
         :key="c.key"
         :prop="c.key"
         :label="c.label"
-        :width="c.width"
-        :min-width="c.minWidth"
+        :width="widthOf(c)"
+        :min-width="minWidthOf(c)"
         :align="c.align || 'left'"
         :header-align="c.align || 'left'"
       >
