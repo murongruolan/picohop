@@ -55,6 +55,7 @@
 | 017 | `fix(desktop): 最右一列作为填充列，右端永远不留白` | 2026-10-11 | 根因是"拖拽会把内部 column.width 写成数字→不再有弹性列"（table-layout.mjs 用 !isNumber(column.width) 判定弹性）；改为让最右列只吃 min-width 并在 dragend 清空其 width；地址/备注/前置改回固定列；验证右侧留白 0px | [详情](#017) |
 | 018 | `test: 端口相关测试不再依赖机器的端口占用状态` | 2026-10-11 | 写死 10810/10815 导致"开发机上开着 ChainProxy 时测试变红"，极易被误判成回归；改为动态找连续空闲端口作为基准，其余断言改为相对基准 | [详情](#018) |
 | 019 | `feat(desktop): 对话框可拖动不裁切 + 长表单内部滚动 + 按钮做大居中 + 取消改警告色` | 2026-10-11 | 去掉弹窗顶部的导入区块；el-dialog draggable 默认即"可拖但被钳制在视口内"；长表单靠 max-height + body 滚动；修 `.cp-dialog .el-dialog` 选择器不匹配的坑；关闭图标 20px、按钮 36px 居中、取消橙色 | [详情](#019) |
+| 020 | `docs(migration): Wails v3 迁移技术验证（试点实测通过，GO）` | 2026-10-11 | 在 .cache 建试点工程真机验证：裸 `go build -tags production` 可构建、第二窗口(无边框+置顶)可用、托盘/全局快捷键/系统通知均通过、`Call.ByName` 免绑定生成器、WebviewUserDataPath 可留项目内；wails3 CLI 装入项目内；v2 打 tag v2.0-wails2 可回退 | [详情](#020) |
 
 ---
 
@@ -1852,3 +1853,62 @@ COM 自己托管第二个 WebView2，代价过大。交付的是"窗口内自由
 ARCHITECTURE.md 的"界面层"补三条（drag 的钳制依据、`cp-dialog` 选择器的坑、
 长表单的高度上限与 `min-height:0`，以及 Wails v2 单窗口的限制）；
 PROJECT_PROGRESS.md 追加"对话框体验调整（第 5 轮）"。
+
+---
+
+## 020
+
+**`docs(migration): Wails v3 迁移技术验证（试点实测通过，GO）`**
+
+新增 `docs/MIGRATION_wails_v3.md`。这一条不含任何产品代码改动，只是把**实测结论**固化下来，
+让迁移可以照着做、也便于回退。
+
+### 背景
+
+需求是"对话框能飘到主窗口之外、压在主窗口上面"。这需要**第二个真正的 OS 窗口**，
+而 Wails v2 没有任何创建窗口的 API（`pkg/application` 只有
+`New/NewWithOptions/Run/Quit/Bind/On/SetApplicationMenu`，全模块搜 `NewWebviewWindow` 无结果）。
+用户选择升级到 v3，顺带获得托盘常驻、全局快捷键、系统通知。
+
+### 做了什么（验证，不是猜）
+
+在 `.cache\spike-wails3\spike3`（gitignore 内）用 `wails3 init -t vanilla-js` 生成试点，
+写了一个含"主窗口 + 无边框置顶浮动窗口 + 托盘 + 全局快捷键 + 系统通知"的 main.go，
+**用裸 `go build` 构建并真实运行**，实测日志：
+
+    [spike] WebView2 数据目录 = …\spike3\data\webview        ← 在项目内
+    [spike] 主窗口已创建 id=1
+    [spike] 浮动窗口已创建 id=2（frameless + alwaysOnTop）
+    [spike] 托盘已 Run
+    [spike] 已注册全局快捷键 Ctrl+Alt+F9
+    [spike] JS 调用 Ping("hello-from-main")
+    [spike] JS 调用 Ping("hello-from-float")               ← Call.ByName 免绑定生成器
+    [spike] 启动满 3 秒，尝试发一条系统通知（无报错）
+
+枚举可见窗口确认是两个真正的 OS 窗口：`420x260 spike3·浮动窗口`、`760x480 spike3·主窗口`。
+
+### 关键结论
+
+1. **构建不需要 wails3 CLI、也不需要 Taskfile**。`wails3 build` 是 Taskfile 驱动的，
+   而本机没有 `task`；但官方 Windows 任务里真正的命令就是一条
+   `go build -tags production,<EXTRA_TAGS> -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"`。
+   **`production` 标签是必需的**（v3 用它区分 production/dev 实现文件）。
+   我们已有的 `with_utls,with_quic` 照旧作为 EXTRA_TAGS 传入。
+2. **前端可以完全绕开绑定生成器**：`@wailsio/runtime` 导出 `Call.ByName('包.类型.方法', args)`
+   与 `Events.On(name, e => e.data)`。我们现有的 `api.js` 本来就把调用收敛在一处，改一处即可。
+3. **数据目录可留在项目内**：`application.Options.Windows.WebviewUserDataPath`
+   （内部即 `chromium.DataPath`），不设则默认 `%APPDATA%\<exe名>`，违反本项目约束。
+4. 托盘 / 全局快捷键 / 系统通知 / `DisableQuitOnLastWindowClosed`（关窗不退出，托盘常驻的前提）
+   的 API 用法均已编译运行通过，具体代码见文档。
+
+### 隔离性与可回退
+
+- v2 最终状态已打 tag **`v2.0-wails2`**；迁移在分支 **`wails-v3`** 上进行。
+- `wails3` CLI 装在 **`F:\chain_proxy\.cache\bin\wails3.exe`**；v3 模块与依赖在
+  `GOMODCACHE`（项目内）解包。验证过 `%APPDATA%\wails` **不存在** —— 项目外零写入。
+
+### 遗留待办（写进文档了）
+
+- 试点有告警 `Error saving icon: … resource with id 3`（未生成 `.syso` 图标资源），
+  正式迁移时处理。
+- 运行期切换标题栏明暗在 v3 未找到 setter（v2 有 `WindowSetDarkTheme`），待验证。

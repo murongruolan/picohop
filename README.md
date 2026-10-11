@@ -191,6 +191,7 @@ go test -tags "with_utls,with_quic" ./...
 | [`docs/PROJECT_PROGRESS.md`](docs/PROJECT_PROGRESS.md) | 开发进度与验收状态 |
 | [`docs/COMMIT_HISTORY.md`](docs/COMMIT_HISTORY.md) | **每次提交的详细说明（逐条展开，含所有踩过的坑）** |
 | [`docs/DEPLOY_reality_xhttp.md`](docs/DEPLOY_reality_xhttp.md) | 在一台 NAT 服务器上部署 VLESS+Reality 的完整过程 |
+| [`docs/MIGRATION_wails_v3.md`](docs/MIGRATION_wails_v3.md) | **迁移到 Wails v3 的技术验证与方案**（已实测：裸 go build、托盘、多窗口、通知） |
 | [`refs/README.md`](refs/README.md) | 参考项目拉取记录 |
 
 ---
