@@ -148,13 +148,32 @@ func (a *API) BeginScreenScan() ImportResult {
 	// WindowHide 只是投递消息，立刻截图有可能把还没隐掉的窗口拍进去。
 	time.Sleep(280 * time.Millisecond)
 
-	rect, err := qrscan.SelectRegion()
+	// 圈选这条链路很长（隐藏窗口 → 调 Win32 建全屏遮罩 → 等用户拖 → 截图 → 识别），
+	// 而且**用户报过"点完就什么都没了"**。所以每一步都写日志：
+	// 出问题时能从 data\chainproxy.log 看出卡在哪一步，而不是只能猜。
+	if a.app != nil {
+		a.app.Logf("屏幕圈选：主窗口已隐藏，准备创建遮罩")
+	}
+
+	// 用 Hooked 版本是为了拿到"遮罩窗口真的建出来了"这个事实。
+	// 如果日志里没有下一行，就说明窗口创建这一步就失败了。
+	rect, err := qrscan.SelectRegionHooked(func(hwnd uintptr) {
+		if a.app != nil {
+			a.app.Logf("屏幕圈选：遮罩窗口已创建 hwnd=0x%x，等待选择", hwnd)
+		}
+	})
 	if err != nil {
+		if a.app != nil {
+			a.app.Logf("屏幕圈选：结束（%v）", err)
+		}
 		if err == qrscan.ErrCancelled {
 			return ImportResult{Source: "screen", Message: "已取消圈选"}
 		}
 		a.app.Notify("error", "屏幕圈选失败", err.Error())
 		return ImportResult{Source: "screen", Message: err.Error()}
+	}
+	if a.app != nil {
+		a.app.Logf("屏幕圈选：选定区域 %v", rect)
 	}
 
 	img, err := qrscan.CaptureRect(rect)

@@ -443,6 +443,17 @@ async function handleDevOpen(name) {
       ui.closeNodeDialog({ submitted: false, via: 'float-self-test' })
       break
 
+    // 触发一次"从屏幕圈选二维码"，用来复现/验证那条链路。
+    // 不 await：它会一直挂着直到用户圈选完或取消。
+    case 'screenscan': {
+      notify('info', '屏幕圈选自测', '即将隐藏主窗口并创建全屏遮罩；日志里能看到每一步。', 0)
+      api
+        .beginScreenScan()
+        .then((r) => notify(r?.ok ? 'success' : 'warning', '屏幕圈选结果', String(r?.message || ''), 0))
+        .catch((e) => notify('error', '屏幕圈选失败', String(e?.message || e), 0))
+      break
+    }
+
     // 【主窗口】发起一条"拖动归属"测试：打开浮动对话框并把 floatdrag 透传进去。
     // 注意名字必须和浮动窗口里的那个自测项不同（switch 重复 case 只有第一个命中）。
     case 'floatdragtest': {

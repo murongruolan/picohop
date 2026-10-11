@@ -47,6 +47,7 @@ var (
 	procIsWindowVisible  = user32.NewProc("IsWindowVisible")
 	procSetForegroundWin = user32.NewProc("SetForegroundWindow")
 	procShowWindow       = user32.NewProc("ShowWindow")
+	procPostMessageW     = user32.NewProc("PostMessageW")
 )
 
 const swRestore = 9
@@ -137,7 +138,31 @@ func main() {
 	wait := flag.Int("wait", 0, "等待窗口出现的秒数")
 	pad := flag.Int("pad", 0, "截图时四周留白像素")
 	rect := flag.String("rect", "", "截取屏幕区域，格式 x,y,w,h（用于拍摄任务栏托盘等不属于任何窗口的东西）")
+	postdrag := flag.String("postdrag", "", "向该标题的窗口投递一组鼠标拖拽消息（自测用，完全不碰真实鼠标）")
 	flag.Parse()
+
+	// 【为什么用 PostMessage 而不是真的动鼠标】
+	// 圈选遮罩那条交互路径必须被真实驱动一次才能确认它没问题，但真实鼠标注入
+	// 会在焦点丢失时点到用户的其它程序上（本项目已彻底禁用）。
+	// PostMessage 走的是同一条窗口消息路径，只是不经过物理鼠标。
+	if *postdrag != "" {
+		if *rect == "" {
+			fmt.Fprintln(os.Stderr, "-postdrag 需要 -rect 给出屏幕坐标 x,y,w,h")
+			os.Exit(2)
+		}
+		r, err := parseRect(*rect)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "解析 -rect 失败：%v\n", err)
+			os.Exit(2)
+		}
+		if err := postDrag(*postdrag, r); err != nil {
+			fmt.Fprintf(os.Stderr, "投递拖拽消息失败：%v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("已向 %q 投递拖拽：屏幕 (%d,%d) → (%d,%d)\n",
+			*postdrag, r.Min.X, r.Min.Y, r.Max.X, r.Max.Y)
+		return
+	}
 
 	if *rect != "" {
 		r, err := parseRect(*rect)
@@ -241,6 +266,67 @@ func main() {
 	}
 
 	fmt.Printf("已截图：%s\n  窗口：%s\n  尺寸：%dx%d\n", *out, target.title, img.Bounds().Dx(), img.Bounds().Dy())
+}
+
+// postDrag 向标题匹配的窗口投递"按下 → 移动若干步 → 松开"的消息序列。
+//
+// 坐标用**屏幕坐标**传入，这里换算成客户区坐标（遮罩窗口覆盖整个虚拟桌面，
+// 原点是 (-1920,0) 这种负值，不换算就会选到屏幕外面去）。
+func postDrag(title string, screenArea image.Rectangle) error {
+	needle := strings.ToLower(title)
+	var target *windowInfo
+	for _, w := range enumWindows() {
+		if strings.Contains(strings.ToLower(w.title), needle) {
+			ww := w
+			target = &ww
+			break
+		}
+	}
+	if target == nil {
+		return fmt.Errorf("没有找到标题包含 %q 的可见窗口", title)
+	}
+	// 客户区原点（这个窗口无边框，客户区 == 窗口矩形）
+	var cr rect
+	if ok, _, _ := procGetClientRect.Call(target.hwnd, uintptr(unsafe.Pointer(&cr))); ok == 0 {
+		return fmt.Errorf("GetClientRect 失败")
+	}
+	var origin point
+	origin.X, origin.Y = cr.Left, cr.Top
+	procClientToScreen.Call(target.hwnd, uintptr(unsafe.Pointer(&origin)))
+	toClient := func(p image.Point) (int, int) {
+		return p.X - int(origin.X), p.Y - int(origin.Y)
+	}
+	lparam := func(x, y int) uintptr {
+		return uintptr(uint32(x)&0xffff | uint32(y)&0xffff<<16)
+	}
+	post := func(msg uint32, wparam uintptr, x, y int) error {
+		r, _, err := procPostMessageW.Call(target.hwnd, uintptr(msg), wparam, lparam(x, y))
+		if r == 0 {
+			return fmt.Errorf("PostMessage(%#x) 失败：%v", msg, err)
+		}
+		return nil
+	}
+	const (
+		wmLButtonDown = 0x0201
+		wmLButtonUp   = 0x0202
+		wmMouseMove   = 0x0200
+		mkLButton     = 1
+	)
+	x1, y1 := toClient(screenArea.Min)
+	x2, y2 := toClient(screenArea.Max)
+	if err := post(wmLButtonDown, mkLButton, x1, y1); err != nil {
+		return err
+	}
+	const steps = 6
+	for i := 1; i <= steps; i++ {
+		x := x1 + (x2-x1)*i/steps
+		y := y1 + (y2-y1)*i/steps
+		if err := post(wmMouseMove, mkLButton, x, y); err != nil {
+			return err
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return post(wmLButtonUp, 0, x2, y2)
 }
 
 // parseRect 解析 "x,y,w,h"。给 -rect 用。

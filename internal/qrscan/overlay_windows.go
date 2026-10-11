@@ -57,7 +57,6 @@ var (
 	pEndPaint              = user32.NewProc("EndPaint")
 	pGetClientRect         = user32.NewProc("GetClientRect")
 	pFillRect              = user32.NewProc("FillRect")
-	pTextOutW              = user32.NewProc("TextOutW")
 	pSetCapture            = user32.NewProc("SetCapture")
 	pReleaseCapture        = user32.NewProc("ReleaseCapture")
 	pShowCursor            = user32.NewProc("ShowCursor")
@@ -68,6 +67,17 @@ var (
 
 var (
 	pStretchDIBits = gdi32.NewProc("StretchDIBits")
+	// TextOutW 也在 gdi32 里，**不在 user32**。
+	//
+	// 这一行曾经写成 user32.NewProc("TextOutW")，代价是：拖动产生选区之后，
+	// WM_PAINT 要画"尺寸标签"时 Go 的 LazyProc 找不到这个过程名，直接 panic，
+	// **整个程序当场退出**（用户报的现象是"圈选点完什么都没了，软件也不见了"）。
+	//
+	// 为什么那 6 个覆盖层测试没抓到：它们用 `hideOverlayForTest` 让窗口保持**隐藏**，
+	// 而隐藏窗口永远不会收到 WM_PAINT —— paintSelection 这条路径从来没被执行过。
+	// 现在有 TestAllWin32ProcsResolve 兜底：它把每个绑定的过程名都 Find() 一遍，
+	// "绑错 DLL"这一类再也不会躲过测试。
+	pTextOutW      = gdi32.NewProc("TextOutW")
 	pCreateFontW   = gdi32.NewProc("CreateFontW")
 	pGetDeviceCaps = gdi32.NewProc("GetDeviceCaps")
 	pSetTextColor  = gdi32.NewProc("SetTextColor")
@@ -152,6 +162,10 @@ const (
 	swShowNa = 8 // 显示但不激活：圈选期间不该抢走前台窗口
 
 	// 消息
+	// minSelectSide 是"算得上一次圈选"的最小边长（像素）。
+	// 小于它的选区按取消处理：一个 0x0 的矩形既截不到东西、也识别不出二维码，
+	// 只会让用户收到一句莫名其妙的报错，不如直接当成"他点了一下想退出"。
+	minSelectSide = 12
 	wmDestroy     = 0x0002
 	wmPaint       = 0x000F
 	wmClose       = 0x0010
@@ -454,6 +468,17 @@ func runOverlaySession(ready chan overlayReady, result chan overlayResult, onRea
 		// 恢复光标：无论正常结束、报错还是 panic，都必须执行。
 		// 漏掉这一句用户就再也看不到鼠标指针了。
 		restoreSystemCursor()
+
+		// 【把 panic 挡在这里】这是"圈选出问题不该拖死整个程序"的最后一道防线。
+		//
+		// 有真实外伤：pTextOutW 曾经绑错 DLL，拖动产生选区后 WM_PAINT 里
+		// LazyProc 直接 panic —— panic 发生在窗口过程里，整个进程当场退出，
+		// 用户看到的是"点完圈选，软件整个不见了"。有了这个 recover，
+		// 同类问题最多让这一次圈选失败（主窗口照常恢复），而不是让程序消失。
+		if r := recover(); r != nil {
+			resErr = fmt.Errorf("qrscan: 圈选内部错误（已拦下，未影响程序运行）: %v", r)
+		}
+
 		// 用闭包发送结果：无论从哪条分支 return，都保证 result 恰好被 send 一次，
 		// 调用方不会因为某个错误分支忘了写 channel 而永久阻塞。
 		result <- overlayResult{rect: res, err: resErr}
@@ -503,6 +528,13 @@ func runOverlaySession(ready chan overlayReady, result chan overlayResult, onRea
 		return
 	}
 	res = ov.selectionAbsolute()
+	// "点一下没拖"（或拖得极小）当成取消，而不是丢一个 0x0 的矩形给调用方 ——
+	// 那种矩形既截不到东西，也识别不出二维码，只会让用户看到一句莫名其妙的报错。
+	// 用户在圈选界面上点一下的意图本来就是"算了，不选了"。
+	if res.Dx() < minSelectSide || res.Dy() < minSelectSide {
+		resErr = ErrCancelled
+		return
+	}
 }
 
 // hideOverlayForTest 读会话级开关（带锁，避免 -race 下的数据竞争告警）。

@@ -760,3 +760,56 @@ Wails v2 没有任何创建窗口的 API。经对比 v2/v3（见 `MIGRATION_wail
 |---|---|---|
 | `-open floatdragtest`（浮动窗口内合成标题栏拖动） | `.el-dialog` 的 inline transform **仍为空**、无横向溢出 | `（空）→（空）`，`是否出现横向溢出 = false` ✓ |
 | `-open dialogdrag`（主窗口内的浮层拖动） | 对话框**会**被移动，长表单底部按钮仍完整可见 | `left=104 top=30`（明显偏离居中）、底部按钮 `bottom=655 < 701` ✓ |
+
+---
+
+### 修（严重）：二维码屏幕圈选一点就崩溃、整个程序消失（用户实报）
+
+**现象**：点「从屏幕扫描二维码」→ 主窗口隐藏了，但遮罩与红色十字准星没立刻出现 →
+按住左键拖一下就什么都没有了，**连程序本体也找不到了**。
+
+**根因**：`internal/qrscan/overlay_windows.go` 里 `pTextOutW` 绑在了 **user32** 上，
+而 `TextOutW` 实际在 **gdi32** 里。拖动产生选区后，`WM_PAINT` 要画"尺寸标签"时
+Go 的 `LazyProc` 找不到这个过程名 → **panic** → panic 发生在窗口过程里 → **整个进程退出**。
+
+抓法：GUI 版没有控制台看不到 panic，改用**带控制台的构建**复现，stderr 里直接给出栈：
+
+    panic: Failed to find TextOutW procedure in user32.dll: The specified procedure could not be found.
+      qrscan.(*overlay).paintSelection(overlay_windows.go:1065)
+      qrscan.(*overlay).onPaint(...)          ← WM_PAINT
+      qrscan.overlayWndProc(...)
+
+**为什么之前 6 个覆盖层测试全绿却没抓到**：那些测试用 `hideOverlayForTest` 让窗口保持
+**隐藏**来驱动消息，而隐藏窗口永远收不到 `WM_PAINT` —— 画尺寸标签那条路径从没被执行过。
+"测试全绿"和"这条路径没坏"是两件事，这就是活生生的例子。
+
+顺带发现：同一个 var 块里的 `CreateSolidBrush` 早先也犯过同样的错（注释还在），
+说明这是**一类**错误，不是一次手误。
+
+**修法（四层）**：
+
+1. 把 `TextOutW` 改绑 `gdi32`；
+2. **新增 `TestAllWin32ProcsResolve`**：把包里每一个绑定的过程名都 `Find()` 一遍。
+   绑错 DLL 编译期看不出来，但 `Find()` 会当场失败。已反向验证：把绑定改回 user32，
+   这个测试立刻红并指出"TextOutW 在 user32 里找不到"；改回来即绿；
+3. 在覆盖层会话的 defer 里加 `recover()`：同类问题以后最多让**这一次圈选失败**，
+   而不是让整个程序消失（主窗口照常恢复）；
+4. 选区小于 12px 按"取消"处理 —— 在遮罩上点一下不拖，本来就是在说"算了"，
+   不该丢一个 0x0 矩形去截图/识别。
+
+**验证（带控制台的构建 + 用 PostMessage 驱动真实拖拽，不碰真实鼠标）**：
+
+| | 修复前 | 修复后 |
+|---|---|---|
+| 拖拽后可见窗口 | **无**（主窗口没回来） | `1180x740 @(370,146) ChainProxy · 链式代理` ✓ |
+| 进程 | **已死** | 活着 ✓ |
+| stderr | `panic: Failed to find TextOutW …` | 无 panic ✓ |
+| 日志选区 | `(0,0)-(0,0)`（错乱） | `(800,400)-(1200,600)`（正确）✓ |
+
+另外给 `cmd/uishot` 增加了 `-postdrag <窗口标题> -rect x,y,w,h`：
+向指定窗口投递一组鼠标消息（按下→移动若干步→松开），坐标是屏幕坐标、内部换算成客户区。
+它让这条交互路径以后能被自动化验证，而不是只能靠人手动拖。
+
+**还没解决的一点**：遮罩从"主窗口隐藏"到"出现在屏幕上"大约有 1-2 秒空档
+（日志：`11:32:12 准备创建` → `11:32:14 已创建`）。用户感知就是"点了没反应"。
+下一步要给 capture/建窗/首帧分别计时，找出这 1-2 秒花在哪。
