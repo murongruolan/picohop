@@ -220,6 +220,16 @@ func (a *API) GetNodes() []app.NodeView {
 	return a.app.Nodes()
 }
 
+// GetTrafficHistory 返回最近 seconds 秒的每秒速率样本（流量统计画曲线用）。
+//
+// 放在 Go 侧留历史的原因见 internal/app/stats.go 的 TrafficSample 注释。
+func (a *API) GetTrafficHistory(seconds int) []app.TrafficSample {
+	if a.app == nil {
+		return nil
+	}
+	return a.app.TrafficHistory(seconds)
+}
+
 // GetSummary 返回顶部总览。
 func (a *API) GetSummary() app.Summary {
 	if a.app == nil {

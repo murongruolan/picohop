@@ -8,6 +8,9 @@
  * ------------------------------------------------------------------------- */
 
 :root {
+  /* 流量上下行配色（曲线、图例、状态区共用一套） */
+  --cp-up: #e6a23c;
+  --cp-down: var(--cp-brand);
   --cp-bg: #f4f5f7;
   --cp-panel: #ffffff;
   --cp-panel-2: #fafbfc;
@@ -525,6 +528,13 @@ body.cp-float-window .el-overlay-dialog {
  * 头部常驻 34px：列表的横向滚动条从此离窗口底边 34px（原先贴着底边不好按住），
  * 同时端口 / 前置 / 流量常驻可见，底部不再空。原因与结构见 docs/BOTTOM_PANEL.md。
  * ------------------------------------------------------------------------ */
+.cp-up {
+  color: var(--cp-up);
+}
+.cp-down {
+  color: var(--cp-down);
+}
+
 .cp-bottom {
   flex: 0 0 auto;
   display: flex;

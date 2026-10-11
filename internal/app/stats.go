@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -55,13 +56,37 @@ type NodeView struct {
 }
 
 // Summary 是顶部的总览。
+// TrafficSample 是一次每秒采样的**总速率**快照（字节/秒）。
+//
+// 为什么在 Go 侧留历史、而不是让界面自己攒：界面侧的刷新是去抖合并的
+// （见 store.js 的 scheduleRefresh），拿到的样本时间间隔不规则；而这里是
+// 精确的每秒一次，画曲线才有意义。
+type TrafficSample struct {
+	At   int64 `json:"at"` // Unix 毫秒
+	Up   int64 `json:"up"` // 上行 字节/秒
+	Down int64 `json:"down"`
+}
+
+// trafficHistorySeconds 是历史缓冲保留的秒数。
+// 1 秒一个样本、每个 24 字节 → 约 86KB，可以放心常驻内存。
+const trafficHistorySeconds = 3600
+
 type Summary struct {
-	Total        int    `json:"total"`
-	Running      int    `json:"running"`
-	Error        int    `json:"error"`
-	TodayUp      int64  `json:"todayUp"`
-	TodayDown    int64  `json:"todayDown"`
-	TodayText    string `json:"todayText"`
+	Total     int    `json:"total"`
+	Running   int    `json:"running"`
+	Error     int    `json:"error"`
+	TodayUp   int64  `json:"todayUp"`
+	TodayDown int64  `json:"todayDown"`
+	TodayText string `json:"todayText"`
+	// 实时速率（字节/秒），来自每秒采样。界面用它显示 ↑↓。
+	UpRate   int64 `json:"upRate"`
+	DownRate int64 `json:"downRate"`
+	// MemMB 是进程内存占用（MB）。
+	//
+	// 为什么用 Go 运行时自己的数字而不是 Win32 工作集：内核（sing-box）跑在**本进程里**，
+	// 而界面在另一个 WebView2 进程里 —— 所以"Go 运行时占用"恰好对应主流客户端界面上那个
+	// "内核占用"，比整进程工作集更贴切，也省掉一次系统调用。
+	MemMB        int64  `json:"memMB"`
 	ActiveConn   int64  `json:"activeConn"`
 	FrontDesc    string `json:"frontDesc"`
 	FrontOK      bool   `json:"frontOk"`
@@ -197,6 +222,12 @@ func (a *App) Summary() Summary {
 		s.TodayDown += v.TodayDown
 	}
 	s.TodayText = FormatBytes(s.TodayUp + s.TodayDown)
+	// 速率取最近一次采样的值：它就是"过去 1 秒的增量"，比界面上做差更准
+	s.UpRate = a.upRate.Load()
+	s.DownRate = a.downRate.Load()
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	s.MemMB = int64(ms.Sys / 1024 / 1024)
 	sort.Ints(s.ListeningAll)
 	return s
 }
@@ -235,6 +266,7 @@ func (a *App) tickStats() {
 	a.rollDayLocked()
 
 	now := time.Now()
+	var tickUp, tickDown int64
 	for id, srv := range a.servers {
 		idx := a.indexOfLocked(id)
 		if idx < 0 {
@@ -264,7 +296,43 @@ func (a *App) tickStats() {
 		a.cfg.Nodes[idx].DownBytes += dDown
 		a.cfg.Nodes[idx].LastUsed = now
 		a.dirty = true
+
+		tickUp += dUp
+		tickDown += dDown
 	}
+
+	// 留下来的这两个数原先算完就扔了 —— 于是界面既拿不到速率、也没法画曲线。
+	a.upRate.Store(tickUp)
+	a.downRate.Store(tickDown)
+	a.pushTrafficLocked(TrafficSample{At: now.UnixMilli(), Up: tickUp, Down: tickDown})
+}
+
+// pushTrafficLocked 追加一个采样并裁掉超出保留时长的旧样本。调用方须持有 mu。
+//
+// 单独抽出来是为了能直接测"裁剪"这段算术 —— 它只在跑满一小时之后才会生效，
+// 靠等是等不到的（那种测试没人会跑，等于没测）。
+func (a *App) pushTrafficLocked(s TrafficSample) {
+	a.traffic = append(a.traffic, s)
+	if n := len(a.traffic); n > trafficHistorySeconds {
+		// 一次挪掉一批，避免每秒都做一次全量拷贝
+		copy(a.traffic, a.traffic[n-trafficHistorySeconds:])
+		a.traffic = a.traffic[:trafficHistorySeconds]
+	}
+}
+
+// TrafficHistory 返回最近 seconds 秒的速率样本（按时间升序）。
+//
+// seconds <= 0 或超过缓冲长度时，返回缓冲里的全部样本。
+func (a *App) TrafficHistory(seconds int) []TrafficSample {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	n := len(a.traffic)
+	if seconds > 0 && seconds < n {
+		n = seconds
+	}
+	out := make([]TrafficSample, n)
+	copy(out, a.traffic[len(a.traffic)-n:])
+	return out
 }
 
 // rollDayLocked 跨天时把"今日统计"清零。

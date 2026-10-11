@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"chainproxy/internal/config"
@@ -63,6 +64,16 @@ type App struct {
 	baseUp   map[string]int64
 	baseDown map[string]int64
 
+	// 最近一次每秒采样到的总速率（字节/秒）。
+	// 用原子量是为了让 Summary() 这种"不加锁的读取"也能安全拿到最新值 ——
+	// tickStats 每秒写一次，界面随时可能读。
+	upRate   atomic.Int64
+	downRate atomic.Int64
+
+	// traffic 是每秒速率的历史环形缓冲（受 mu 保护），给"流量统计"画图用。
+	// 由 Socialticks 写入，见 TrafficHistory。
+	traffic []TrafficSample
+
 	dirty   bool // 统计改动是否需要落盘
 	lastDay string
 
@@ -92,9 +103,11 @@ func New(cfgPath string) (*App, error) {
 		errs:     map[string]string{},
 		baseUp:   map[string]int64{},
 		baseDown: map[string]int64{},
-		logs:     newRingBuffer(1000),
-		closing:  make(chan struct{}),
-		lastDay:  config.Today(),
+		// 预分配：1 秒一个样本，够 1 小时
+		traffic: make([]TrafficSample, 0, trafficHistorySeconds),
+		logs:    newRingBuffer(1000),
+		closing: make(chan struct{}),
+		lastDay: config.Today(),
 	}
 
 	if f, err := os.OpenFile(config.LogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {

@@ -13,6 +13,8 @@ import { ArrowDown, ArrowUp, Search, Delete } from '@element-plus/icons-vue'
 import { useStore } from '../store'
 import { useUi } from '../ui'
 import { api } from '../api'
+import { formatBytes } from '../columns'
+import TrafficView from './bottom/TrafficView.vue'
 
 const store = useStore()
 const ui = useUi()
@@ -30,7 +32,7 @@ const TABS = [
 // ---- 布局偏好：跟着配置走（空/0 由这里补默认值）----
 const view = ref('logs')
 const open = ref(false)
-const height = ref(220)
+const height = ref(260)
 
 // 【不能在 setup 里直接读 store.settings】
 //
@@ -204,7 +206,16 @@ watch(
           </span>
         </el-tooltip>
 
-        <span class="cp-bottom-chip cp-num">{{ store.summary?.todayText || '0 KB' }}</span>
+        <el-tooltip
+          :content="`实时速率 · 今日共 ${store.summary?.todayText || '0 KB'}`"
+          placement="top"
+          :show-after="400"
+        >
+          <span class="cp-bottom-chip cp-num">
+            <span class="cp-up">↑ {{ formatBytes(store.summary?.upRate || 0) }}</span>
+            <span class="cp-down">↓ {{ formatBytes(store.summary?.downRate || 0) }}</span>
+          </span>
+        </el-tooltip>
 
         <el-tooltip content="活动连接" placement="top" :show-after="400">
           <span class="cp-bottom-chip cp-num">{{ store.summary?.activeConn || 0 }}</span>
@@ -248,6 +259,9 @@ watch(
           </div>
         </div>
       </div>
+
+      <!-- 流量统计 -->
+      <TrafficView v-else-if="view === 'traffic'" />
 
       <!-- 其余视图：骨架先占位，按施工顺序逐个补 -->
       <div v-else class="cp-bottom-placeholder">{{ TABS.find((t) => t.key === view)?.label }}</div>

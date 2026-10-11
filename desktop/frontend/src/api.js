@@ -111,6 +111,7 @@ export const api = {
   // 设置
   getSettings: () => call('GetSettings'),
   saveSettings: (s) => call('SaveSettings', s),
+  getTrafficHistory: (seconds) => call('GetTrafficHistory', seconds),
   resetSettings: () => call('ResetSettings'),
   getFront: () => call('GetFront'),
   saveFront: (f) => call('SaveFront', f),
