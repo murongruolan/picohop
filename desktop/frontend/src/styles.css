@@ -502,6 +502,27 @@ body.cp-float-window .el-overlay-dialog {
   transition: none !important;
 }
 
+/* 说明文字的"?"入口：解释一律进 tooltip，界面上只留一个可点的问号。
+   为什么要有这个可见的入口：没有任何视觉提示的 tooltip 等于不存在。 */
+.cp-tip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  margin-left: 8px;
+  border: 1px solid var(--cp-border);
+  border-radius: 50%;
+  color: var(--cp-text-3);
+  font-size: 11px;
+  cursor: default;
+  vertical-align: middle;
+}
+.cp-tip-icon:hover {
+  border-color: var(--cp-brand);
+  color: var(--cp-brand);
+}
+
 /* 设置项搬到别处之后留的指路行（避免用户在两处找同一个开关） */
 .cp-moved {
   padding: 6px 0 10px;
@@ -651,6 +672,14 @@ body.cp-float-window .el-overlay-dialog {
 }
 .cp-bottom-chip.is-off .cp-bottom-dot {
   background: var(--cp-text-3);
+}
+
+.cp-bottom-error {
+  color: var(--cp-danger);
+  cursor: default;
+}
+.cp-bottom-error:hover {
+  text-decoration: underline;
 }
 
 .cp-bottom-body {

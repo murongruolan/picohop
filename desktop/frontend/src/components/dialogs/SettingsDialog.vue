@@ -278,12 +278,17 @@ const meta = computed(() => store.meta || {})
     <el-tabs v-model="tab">
       <!-- ------------------------------------------------------------ -->
       <el-tab-pane label="前置与网络" name="front">
-        <div class="cp-section">全局前置代理</div>
-        <div class="cp-hint" style="margin-bottom: 12px">
-          节点在「前置节点」里选「全局前置代理」时会走这里。最常见的用法是填本机前置代理 的
-          SOCKS5 端口（默认 127.0.0.1:10808）。
+        <div class="cp-section">
+          全局前置代理
+          <el-tooltip
+            content="节点在「前置节点」里选「全局前置代理」时走这里；常见填法：本机前置代理 的 127.0.0.1:10808"
+            placement="top"
+            :show-after="400"
+          >
+            <span class="cp-tip-icon">?</span>
+          </el-tooltip>
         </div>
-        <el-form class="cp-form" label-width="96px">
+                <el-form class="cp-form" label-width="96px">
           <el-row :gutter="14">
             <el-col :span="9">
               <el-form-item label="类型">
@@ -365,15 +370,10 @@ const meta = computed(() => store.meta || {})
             <el-input v-model="form.speedTestSeconds" type="number" style="width: 120px">
               <template #append>秒</template>
             </el-input>
-            <span class="cp-hint" style="margin-left: 10px">
-              超时会主动断开，避免把流量白跑掉
-            </span>
+            <el-tooltip content="超时即主动断开，避免把流量白跑掉" placement="top" :show-after="400"><span class="cp-tip-icon">?</span></el-tooltip>
           </el-form-item>
         </el-form>
-        <div class="cp-hint">
-          「真连接延迟」是走完整链路去请求一个极小的 204 页面，最接近真实使用体验；
-          「TCP 延迟」只对服务器地址做一次 TCP 握手，不经代理，用来快速筛掉不可达的节点。
-        </div>
+        <el-tooltip content="真连接延迟：走完整链路请求一个极小的 204 页面，最接近实际体验。TCP 延迟：只做一次 TCP 握手、不经代理，用来快速筛掉不可达节点" placement="top" :show-after="400"><span class="cp-tip-icon">?</span></el-tooltip>
       </el-tab-pane>
 
       <!-- ------------------------------------------------------------ -->
@@ -382,9 +382,7 @@ const meta = computed(() => store.meta || {})
         <el-form class="cp-form" label-width="140px">
           <el-form-item label="启动时自动激活">
             <el-switch v-model="form.autoActivateOnLaunch" />
-            <span class="cp-hint" style="margin-left: 10px">
-              自动激活上次处于激活状态的节点
-            </span>
+            
           </el-form-item>
         </el-form>
 
@@ -411,13 +409,12 @@ const meta = computed(() => store.meta || {})
       <!-- ------------------------------------------------------------ -->
       <el-tab-pane label="快捷键" name="shortcut">
         <div class="cp-section">全局快捷键</div>
-        <div class="cp-hint" style="margin-bottom: 12px">
-          这两个键在**任何程序里**都有效，不用先切回本程序。点一下输入框就开始录制，
-          然后按下你想用的组合键。至少要按两个键（一个 Ctrl/Alt/Shift 加一个普通键）。
-        </div>
+        <div class="cp-hint" style="margin-bottom: 12px">在任何程序里都有效，不用先切回本程序</div>
 
         <div class="cp-shortcut-row" v-for="sc in shortcutRows" :key="sc.key">
-          <span class="cp-shortcut-label">{{ sc.label }}</span>
+          <el-tooltip :content="sc.hint" placement="top" :show-after="400">
+            <span class="cp-shortcut-label">{{ sc.label }}</span>
+          </el-tooltip>
           <div
             class="cp-shortcut-input"
             :class="{ recording: recording === sc.key }"
@@ -437,13 +434,10 @@ const meta = computed(() => store.meta || {})
           >
             清除
           </el-button>
-          <span class="cp-hint">{{ sc.hint }}</span>
         </div>
 
         <div class="cp-hint" style="margin-top: 12px">
-          冲突提示：<code>Ctrl+Alt+A</code> 被微信 / QQ 的截图占用，
-          所以这里默认用 <code>Ctrl+Alt+Shift+A</code>。保存后如果某个键没生效，
-          界面会提示一次、日志里也会写明是哪一条被占用了。
+          <code>Ctrl+Alt+A</code> 被微信 / QQ 截图占用，故默认用 <code>Ctrl+Alt+Shift+A</code>
         </div>
       </el-tab-pane>
 

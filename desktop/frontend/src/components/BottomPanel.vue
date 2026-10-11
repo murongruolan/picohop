@@ -114,6 +114,12 @@ const localPorts = computed(() =>
 const frontOk = computed(() => !!store.summary?.frontOk)
 const frontDesc = computed(() => store.summary?.frontDesc || '未配置')
 
+function openLogs() {
+  view.value = 'logs'
+  open.value = true
+  persist()
+}
+
 function copyPorts() {
   if (localPorts.value) api.copyText(localPorts.value)
 }
@@ -259,6 +265,17 @@ watch(
 
         <el-tooltip content="活动连接" placement="top" :show-after="400">
           <span class="cp-bottom-chip cp-num">{{ store.summary?.activeConn || 0 }}</span>
+        </el-tooltip>
+
+        <!-- 错误徽标：只在真有节点出错时出现（平时不占视线）。
+             数字是"启动失败的节点数"；点一下跳到日志（那里有具体原因）。 -->
+        <el-tooltip
+          v-if="store.summary?.error"
+          :content="`${store.summary.error} 个节点启动失败，点击看日志`"
+          placement="top"
+          :show-after="400"
+        >
+          <span class="cp-bottom-chip cp-bottom-error" @click="openLogs">错误 {{ store.summary.error }}</span>
         </el-tooltip>
       </div>
     </div>

@@ -384,11 +384,14 @@ const flowOptions = [
             :value="o.value"
           />
         </el-select>
-      </el-form-item>
-      <div class="cp-hint" style="margin: -8px 0 14px 104px">
-        不选就是直连；选「全局前置代理」走设置里的前置；选某个节点则经它的本地端口转发
-        （会形成一个链路：前置节点 → 本节点）。
-      </div>
+        <el-tooltip
+            content="不选＝直连；选「全局前置代理」走设置里的前置；选某个节点＝经它的本地端口转发（形成链路：前置节点 → 本节点）"
+            placement="top"
+            :show-after="400"
+          >
+            <span class="cp-tip-icon">?</span>
+          </el-tooltip>
+        </el-form-item>
 
       <div class="cp-section">服务器</div>
       <el-row :gutter="14">
@@ -586,7 +589,16 @@ const flowOptions = [
 
         <!-- Reality -->
         <template v-if="pinfo.showReality">
-          <div class="cp-section">Reality</div>
+          <div class="cp-section">
+            Reality
+            <el-tooltip
+              content="填了公钥即为 Reality：必须启用 TLS，建议「指纹」设为 chrome"
+              placement="top"
+              :show-after="400"
+            >
+              <span class="cp-tip-icon">?</span>
+            </el-tooltip>
+          </div>
           <el-row :gutter="14">
             <el-col :span="12">
               <el-form-item label="公钥 pbk">
@@ -604,9 +616,6 @@ const flowOptions = [
               </el-form-item>
             </el-col>
           </el-row>
-          <div class="cp-hint" style="margin: -8px 0 14px 104px">
-            填了公钥即为 Reality：此时必须启用 TLS，并建议把「指纹」设成 chrome。
-          </div>
         </template>
       </template>
 
@@ -655,7 +664,13 @@ const flowOptions = [
       <template v-if="pinfo.showWireGuard">
         <div class="cp-section">
           WireGuard
-          <el-button link type="primary" size="small" :icon="Key" @click="genKeys">
+          <el-tooltip
+            content="纯用户态实现：不改系统路由表、不需要管理员权限。前置节点若是 SOCKS5，外层 UDP 经它的 UDP ASSOCIATE 送出"
+            placement="top"
+            :show-after="400"
+          >
+            <span class="cp-tip-icon">?</span>
+          </el-tooltip><el-button link type="primary" size="small" :icon="Key" @click="genKeys">
             生成密钥对
           </el-button>
         </div>
@@ -702,10 +717,6 @@ const flowOptions = [
             </el-form-item>
           </el-col>
         </el-row>
-        <div class="cp-hint" style="margin: -8px 0 14px 104px">
-          本程序用纯用户态实现 WireGuard：不改系统路由表、不需要管理员权限。
-          若「前置节点」是 SOCKS5，外层 UDP 会经它的 UDP ASSOCIATE 送出。
-        </div>
       </template>
 
       <!-- ------------------------------------------------------------ -->
@@ -715,7 +726,17 @@ const flowOptions = [
       </el-form-item>
 
       <el-collapse v-model="advanced">
-        <el-collapse-item name="adv" title="高级：本地端口鉴权">
+        <el-collapse-item name="adv">
+          <template #title>
+            高级：本地端口鉴权
+            <el-tooltip
+              content="默认只监听 127.0.0.1、无需鉴权；开了「允许局域网」才建议填写"
+              placement="top"
+              :show-after="400"
+            >
+              <span class="cp-tip-icon">?</span>
+            </el-tooltip>
+          </template>
           <el-row :gutter="14">
             <el-col :span="12">
               <el-form-item label="用户名">
@@ -728,10 +749,6 @@ const flowOptions = [
               </el-form-item>
             </el-col>
           </el-row>
-          <div class="cp-hint" style="margin-left: 104px">
-            本地端口默认只监听 127.0.0.1，不需要鉴权。
-            只有在设置里打开了「允许局域网连接」时才建议填写，否则局域网内任何人都能用。
-          </div>
         </el-collapse-item>
       </el-collapse>
     </el-form>
