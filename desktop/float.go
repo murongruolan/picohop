@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,11 +34,25 @@ type floatSession struct {
 	result  chan string
 	// closing 表示"这次关闭是我们自己发起的"，用来让关窗钩子放行。
 	closing atomic.Bool
+	// reused 表示这一轮是复用已有窗口（不是新建）。
+	reused bool
+	// wakeAt 是"我们让窗口开始进入这一轮"的时刻，用来量前端多久才能把对话框显示出来。
+	// 首次打开和复用打开都会记 —— 用户反馈"打开明显卡"，快了多少必须有数，不能凭感觉。
+	wakeAt time.Time
 }
 
 var (
 	floatMu      sync.Mutex
 	floatCurrent *floatSession
+
+	// floatPool 保存"已经建好、当前没在用"的浮动窗口（按 kind 复用）。
+	//
+	// 【为什么需要它】用户反馈"打开添加节点的弹窗有明显的延迟感"。原因是**每次打开
+	// 都要新建一个 WebView2 控制器，并把整个前端（1.15MB JS + Element Plus）加载解析
+	// 一遍** —— 这两块加起来就是几百毫秒到一秒。窗口本身完全可以复用：
+	// 关闭时只隐藏，下次打开让窗口里的前端重新进入"浮动对话框模式"即可，
+	// 既不新建 WebView2、也不重新加载页面，于是打开是"立刻"的。
+	floatPool = map[string]application.Window{}
 )
 
 // 各类浮动对话框的初始窗口尺寸。宽度要留够表单。
@@ -87,6 +100,29 @@ func (a *API) OpenFloatDialog(kind, payloadJSON, devOpen string) (string, error)
 	floatCurrent = sess
 	floatMu.Unlock()
 
+	// 【复用：已经有建好的同类型窗口就直接唤醒它】
+	//
+	// 放在 payload/会话登记之后、建窗口之前 —— 会话必须先生效，
+	// 因为窗口里的前端一被唤醒就会来取 payload。
+	floatMu.Lock()
+	reused := floatPool[kind]
+	floatMu.Unlock()
+	if reused != nil {
+		sess.window = reused
+		sess.reused = true
+		sess.wakeAt = time.Now()
+		// 让窗口里的前端重新进入浮动模式（它会自己去 GetFloatPayload 取新数据）。
+		//
+		// 用 JS 调用而不是 SetURL 重新导航：重新导航会把整个前端再解析一遍，
+		// 而那正是我们要省掉的开销。
+		// ExecJS 没有返回值（v3 里它在窗口未就绪时会静默忽略），所以只调不问结果；
+		// 真正的确认靠前端：它一被唤醒就会来取 payload（见 GetFloatPayload 的计时日志）。
+		reused.ExecJS("window.__cpFloatReopen && window.__cpFloatReopen()")
+		reused.Show()
+		reused.Focus()
+		return <-sess.result, nil
+	}
+
 	title := floatTitles[kind]
 	if title == "" {
 		title = "ChainProxy · " + kind
@@ -118,6 +154,10 @@ func (a *API) OpenFloatDialog(kind, payloadJSON, devOpen string) (string, error)
 		},
 	})
 	sess.window = win
+	sess.wakeAt = time.Now()
+	floatMu.Lock()
+	floatPool[kind] = win
+	floatMu.Unlock()
 
 	// 把浮动窗口挂到主窗口名下（附属窗口）。
 	// 窗口是异步建出来的，句柄要等一下才有，所以放到 goroutine 里重试几次。
@@ -134,11 +174,11 @@ func (a *API) OpenFloatDialog(kind, payloadJSON, devOpen string) (string, error)
 				continue
 			}
 			if !setWindowOwner(child, owner) {
-				log.Printf("浮动窗口设为附属窗口失败（不影响使用，只是层级退化成普通窗口）")
+				a.logf("浮动窗口设为附属窗口失败（不影响使用，只是层级退化成普通窗口）")
 			}
 			return
 		}
-		log.Printf("浮动窗口句柄未能定位，未设为附属窗口（其标题为 %q）", title)
+		a.logf("浮动窗口句柄未能定位，未设为附属窗口（其标题为 %q）", title)
 	}()
 
 	// 用户直接点浮动窗口的关闭（或 Esc）→ 按"取消"处理。
@@ -146,9 +186,16 @@ func (a *API) OpenFloatDialog(kind, payloadJSON, devOpen string) (string, error)
 	// 两处细节：
 	//   - 必须先 e.Cancel()：默认行为是销毁窗口，那样等待方就永远醒不来了
 	//   - 真正的关闭放到 goroutine 里异步做：在窗口事件回调里同步关窗是危险的
+	// 注意这里**动态查**当前会话，而不是捕获上面那个 sess：
+	// 窗口会跨多次打开复用，而钩子只在建窗口时注册一次 —— 捕获旧 sess 的话，
+	// 第二次打开时它已经不成立了（旧会话的 closing 是 true，钩子会放行真正的关闭，
+	// 于是用户一点 X 窗口就被销毁、复用池里留了个死窗口）。
 	win.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
-		if sess.closing.Load() {
-			return // 我们自己发起的关闭，放行
+		floatMu.Lock()
+		cur := floatCurrent
+		floatMu.Unlock()
+		if cur == nil || cur.closing.Load() {
+			return // 没有进行中的会话，或我们自己发起的，放行
 		}
 		e.Cancel()
 		go a.finishFloat("", true)
@@ -265,6 +312,18 @@ func (a *API) GetFloatPayload() string {
 	if floatCurrent == nil {
 		return ""
 	}
+	// 前端一被唤醒就会来取 payload —— 所以这一刻就是"对话框快出来了"的可靠标志。
+	// 记下来才知道复用到底省了多少（首次要建 WebView2 + 加载前端，复用不用）。
+	if !floatCurrent.wakeAt.IsZero() {
+		ms := time.Since(floatCurrent.wakeAt).Milliseconds()
+		// 注意走应用日志而不是 log.Printf：后者写 stderr，而 GUI 构建没有控制台
+		// —— 踩过，日志里一行都看不到。
+		if floatCurrent.reused {
+			a.logf("浮动窗口：复用唤醒 → 前端就绪 %dms", ms)
+		} else {
+			a.logf("浮动窗口：首次创建 → 前端就绪 %dms（含新建 WebView2 + 加载前端）", ms)
+		}
+	}
 	return floatCurrent.payload
 }
 
@@ -295,17 +354,10 @@ func (a *API) finishFloat(result string, closeWindow bool) {
 
 	if closeWindow && sess.window != nil {
 		sess.closing.Store(true)
-		// 【先立刻隐藏，再销毁窗口】
+		// 【只隐藏，不销毁】窗口留在 floatPool 里给下次打开复用。
 		//
-		// 对话框的 DOM 在收到结果那一刻就已经清空了，而窗口还要等一会儿才销毁 ——
-		// 这段间隙里用户会看到"一个什么都没装的弹窗一闪而过"（用户实报）。
-		// 隐藏是瞬时的，先把这块空壳从屏幕上撤掉，再从容销毁。
+		// 隐藏是瞬时的，所以既不会出现"空白弹窗一闪"（用户报过），
+		// 也不会像销毁那样让下次打开重新付一遍 WebView2 的创建成本。
 		sess.window.Hide()
-		go func() {
-			// 稍等一下再关：调用方可能正是这个窗口里的 JS，
-			// 立刻销毁会让它那条调用以异常收场（无害，但难看）。
-			time.Sleep(120 * time.Millisecond)
-			sess.window.Close()
-		}()
 	}
 }

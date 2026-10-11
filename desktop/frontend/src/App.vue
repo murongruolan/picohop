@@ -119,10 +119,12 @@ onMounted(async () => {
   // 浮动窗口：只打开那一个对话框就够了
   if (props.floatKind) {
     await enterFloatMode(props.floatKind)
+
     // 自测参数（由主窗口透传过来）：等对话框挂好之后跑一遍，
     // 用来验证"在浮动窗口里结束对话框 → 结果回传 → Go 唤醒等待方"这条链路。
     const devParam = new URLSearchParams(window.location.search).get('devopen')
-    if (devParam) {
+    const runDev = async () => {
+      if (!devParam) return
       await new Promise((r) => setTimeout(r, 900))
       try {
         await handleDevOpen(devParam)
@@ -130,6 +132,23 @@ onMounted(async () => {
         notify('error', '浮动窗口自测出错', `${devParam}：${String(e?.message || e)}`, 0)
       }
     }
+
+    // 【复用同一个浮动窗口时的入口】
+    //
+    // 窗口建一次就留着（关闭只隐藏），下次打开时 Go 侧调这个全局函数唤醒我们，
+    // 而不是重新建窗口、重新加载整个前端 —— 那两步正是"打开卡一下"的来源。
+    // 这里重新走一遍 enterFloatMode：它会重置浮动模式、重新取新的 payload、
+    // 再把对话框打开，等于"这个窗口又弹了一次"。
+    //
+    // 自测参数也要重跑一遍：否则复用打开时没人去结束这个对话框，
+    // 主窗口那侧就会一直 await 着（自测会表现为"卡住不返回"）。
+    window.__cpFloatReopen = () => {
+      enterFloatMode(props.floatKind)
+        .then(runDev)
+        .catch((e) => notify('error', '浮动窗口复用失败', String(e?.message || e), 0))
+    }
+
+    await runDev()
     return
   }
 
@@ -538,6 +557,22 @@ async function handleDevOpen(name) {
         `下拉条目数 = ${items.length}；首项高度 = ${items[0]?.getBoundingClientRect().height ?? '?'}px`,
         0,
       )
+      break
+    }
+
+    // 连开两次浮动对话框：第一次是新建（要建 WebView2 + 加载前端），
+    // 第二次应该走**复用**（窗口已在、不重新加载）。
+    // 这是用户报的“打开还是卡”那条，两边的耗时在 Go 日志里（"~前端就绪 Xms"~
+    case 'floatreuse': {
+      const payload = JSON.stringify({ mode: 'add', node: null })
+      const out = []
+      for (let i = 1; i <= 2; i++) {
+        const t0 = performance.now()
+        // devopen=floatsubmit：浮动窗口里的前端会自动提交，所以这一次能自己结束
+        const r = await api.openFloatDialog('node', payload, 'floatsubmit')
+        out.push(`第 ${i} 次：${Math.round(performance.now() - t0)}ms → ${String(r).slice(0, 60)}`)
+      }
+      notify('success', '浮动窗口复用测试', out.join('\n'), 0)
       break
     }
 

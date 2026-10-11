@@ -142,6 +142,17 @@ func (a *API) flushWarnings() {
 	}
 }
 
+// logf 写一行应用日志。
+//
+// 【为什么要有它】直接用标准库 log.Printf 是写 stderr —— 而 GUI 构建是
+// -H windowsgui（没有控制台），那些行**一行都到不了 data\chainproxy.log**。
+// 浮动窗口那边踩过这个坑（"日志里怎么没有那行"），所以统一走这里。
+func (a *API) logf(format string, args ...any) {
+	if a.app != nil {
+		a.app.Logf(format, args...)
+	}
+}
+
 // minimiseToTray 把主窗口收进托盘、但不退出进程。
 //
 // 这是"点 × 不退出"的实际动作。注意它**不是**关窗：窗口只是隐藏，
