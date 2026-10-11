@@ -23,7 +23,7 @@ func TestCloseConnections(t *testing.T) {
 	CloseConnections(nil)
 
 	c1, c2 := &fakeCloser{}, &fakeCloser{}
-	id1, _ := h.trackConn("socks5", "a.com:443", nil, c1, c2)
+	cc1, _ := h.trackConn("socks5", "a.com:443", nil, c1, c2)
 	c3 := &fakeCloser{}
 	h.trackConn("http", "b.com:443", nil, c3)
 
@@ -31,8 +31,8 @@ func TestCloseConnections(t *testing.T) {
 		t.Fatalf("应当登记 2 条连接，实际 %d", n)
 	}
 
-	// 只关其中一条
-	if n := CloseConnections([]uint64{id1}); n != 1 {
+	// 只关其中一条（用计数器上的 ID 定向关闭）
+	if n := CloseConnections([]uint64{cc1.ID}); n != 1 {
 		t.Fatalf("应当关掉 1 条，实际 %d", n)
 	}
 	if got := c1.closed.Load(); got != 1 {

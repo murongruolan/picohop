@@ -70,6 +70,9 @@ func emitConn(ev ConnEvent) {
 // 这里让中继循环直接累加到它身上，界面每秒轮询时读一次即可：
 // 不用发事件（每秒几十次的进度事件毫无意义），也不会有锁竞争。
 type ConnCounter struct {
+	// ID 是这条连接的编号，与事件里的 ID 一致。
+	// 中继需要计数、界面需要按编号定向关闭，两条需求合在一个对象上最省事。
+	ID   uint64
 	up   atomic.Int64
 	down atomic.Int64
 }
@@ -109,7 +112,7 @@ func LiveConnStats() map[uint64][2]int64 {
 // 界面上点"关闭全部"时才有东西可关；不记的话这个按钮就只能是个摆设。
 func (h *Handler) trackConn(protocol, target string, client net.Conn, closers ...io.Closer) (*ConnCounter, func(up, down int64, err error)) {
 	id := connSeq.Add(1)
-	counter := &ConnCounter{}
+	counter := &ConnCounter{ID: id}
 	srcPort := 0
 	src := ""
 	if client != nil {
