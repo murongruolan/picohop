@@ -525,6 +525,32 @@ func (h *Handler) httpConnect(client net.Conn, br *bufio.Reader, head *httpHead)
 	finish(up, down, nil)
 }
 
+// httpForwardWriteTimeout 是 httpForward 每次"写回客户端"的兜底写超时。
+//
+// 【为什么必须是 var 而不是 const】回归测试要复现的场景是"客户端发了请求就再也不读，
+// 写回被内核缓冲堵死"，而真等满 60 秒的用例没人会跑 —— 所以留一个测试接缝，
+// 让用例把它临时压到几百毫秒（与 idle_test.go 里替换 singFactory 是同一类做法）。
+// 生产代码不许改它。
+var httpForwardWriteTimeout = writeTimeout
+
+// writeBackToClient 给一次"写回客户端"套上与 Relay 同款的兜底写超时。
+//
+// 【为什么不直接调 client.Write】SetWriteDeadline 设的是**一次性绝对时刻**，
+// 写一次就得重设一次；包一层既不会漏设，也免得把下面那段理由抄两遍。
+//
+// 【这个坑是什么】httpForward 原来对客户端只写不设任何超时（同文件的 CONNECT 路径走
+// Relay，那里每次写之前都会 SetWriteDeadline，这条路径漏了）。客户端只要"发了请求就
+// 挂着不读"（脚本连上就睡、下载中途停住、故意不读走人），内核发送缓冲 + 客户端接收
+// 缓冲填满后 client.Write 就会**永久阻塞**：写回的 goroutine、已建立的上游连接、
+// 以及成对的 socket 句柄全部钉死，反复来几次就能把进程的句柄耗光 —— 而这不是理论
+// 风险，任何能连上代理端口的人（AllowLan 打开时包括整个局域网）都能触发。
+// 加上超时后，写不动就报错返回，defer 会把上游连接关掉，句柄立刻回收。
+func writeBackToClient(c net.Conn, p []byte) error {
+	_ = c.SetWriteDeadline(time.Now().Add(httpForwardWriteTimeout))
+	_, err := c.Write(p)
+	return err
+}
+
 // httpForward 处理普通（非隧道）HTTP 代理请求：GET http://host/path HTTP/1.1
 //
 // 刻意取舍：本路径**每条客户端连接只处理一个请求**，转发时对上游声明 Connection: close。
@@ -605,14 +631,14 @@ func (h *Handler) httpForward(client net.Conn, br *bufio.Reader, head *httpHead)
 		h.Stats.Up.Add(int64(len(body)))
 	}
 
-	// 把上游应答原样回给客户端。
+	// 把上游应答原样回给客户端（前端写超时的理由见 writeBackToClient）。
 	rbr := bufio.NewReaderSize(remote, 16*1024)
 	respHead, err := readHTTPHead(rbr)
 	if err != nil {
 		h.fail("读取上游应答失败: %v", err)
 		return
 	}
-	if _, err := client.Write(respHead.raw); err != nil {
+	if err := writeBackToClient(client, respHead.raw); err != nil {
 		return
 	}
 
@@ -628,7 +654,7 @@ func (h *Handler) httpForward(client net.Conn, br *bufio.Reader, head *httpHead)
 			if h.Stats != nil {
 				h.Stats.Down.Add(int64(n))
 			}
-			if _, werr := client.Write(buf[:n]); werr != nil {
+			if err := writeBackToClient(client, buf[:n]); err != nil {
 				return
 			}
 		}
