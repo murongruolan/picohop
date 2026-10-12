@@ -309,6 +309,11 @@ type XHTTPOptions struct {
   | 2 | vmess + tcp | 无 | 204 | 第 7 轮 |
   | 3 | vmess + UDP（QUIC/原生 UDP 通道） | 无 | DNS 往返（ID 匹配） | 第 ⑪ 轮 |
   | 4 | **hysteria2 + TLS 证书 pin** | sni / pinSHA256 / mport(未支持) | 真连接秒级（899 / 1928 ms）、出口 IP 与服务器同 /24、204 | 第 ⑲ 轮 |
+  | 5 | trojan + tcp + TLS（自签证书 + 跳过校验） | sni / allowInsecure / fp / headerType | ⚠️ **未完成**：凭据未送达本会话（见第 14.5 节）。已确证卡点是**我们自己的映射缺口**并已修（第 14 节），修复后同一路径的报错从证书错误变成 `EOF`（= 服务端在 Trojan 认证阶段拒绝这个**假密码**） | 第 ⑳ 轮 |
+  | 6 | shadowsocks + aes-256-gcm（无 TLS） | method | ⚠️ **未完成**：凭据未送达（同上）。`context deadline exceeded`，**无法归因** —— 与"密码不对被服务端静默丢弃"一致，但也没有证据能把它和"映射问题"分开 | 第 ⑳ 轮 |
+
+  第 5、6 条的**导入器解析完整性**已单独验证通过（不依赖真实凭据，见第 14.2 节）；
+  缺的只是"真拨"那一步。
 
   第 4 条的完整配方（**临时数据目录 + 走真实导入路径**，见第 13 节）：
   ```
@@ -986,3 +991,146 @@ mihomo 成为唯一内核，开关与 `Settings.EngineMode` 一起删除。
   - 凭据（密码 / UUID / pin 值 / SNI 值 / 分享链接原文）**没有**进入任何代码、测试、文档、
     日志或提交信息；本文档只写"主机:端口 + 协议 + 参数名 + 结果"；
   - 临时目录与其中的 `config.json`（含凭据）在验证结束后**删除**。
+
+---
+
+## 14. 第 ⑳ 轮：trojan / shadowsocks 真机验证（**真拨未完成**，但抓出并修掉一个跨协议映射缺口）
+
+用户要求对两条真实节点（trojan 与 shadowsocks）做"先复现不改代码 → 真拨 → 完整产品路径"
+的验证，并顺手核实/修掉跨协议的映射缺口。**结果：映射缺口确证并已修（第 14.3/14.4 节），
+但"真拨到底"这一步没做成 —— 凭据没有送达本会话（第 14.5 节），如实报 failed。**
+
+### 14.1 复现（先不改代码）：走真实导入路径 + 临时数据目录
+
+`CHAINPROXY_DATA_DIR` 指向仓库内 `.cache\` 下的临时目录（**没碰 `data/config.json`**，
+其 mtime 实测仍是 `2026/10/12 19:31:23`），用 CLI 的导入路径造配置：
+
+    chainproxy-cli.exe import -port 18091 "<trojan 分享链接>"
+      ✅ 已导入「…」（Trojan，本地端口 18091）
+    chainproxy-cli.exe import -port 18092 "<ss 分享链接>"
+      ✅ 已导入「…」（Shadowsocks，本地端口 18092）
+
+### 14.2 导入器解析完整性：**通过**（逐字段核对落盘配置）
+
+这一步**不依赖真实凭据**（验的是"参数有没有落到正确字段"，与密码内容无关），
+所以用同形状的假凭据完成了核对：
+
+| 链接里的参数 | 落到的字段 | 结果 |
+|---|---|---|
+| trojan：`security=tls` | `tls.enabled` | ✅ true |
+| trojan：`sni=` | `tls.serverName` | ✅ 保留 |
+| trojan：`allowInsecure=1` | `tls.allowInsecure` | ✅ true |
+| trojan：`fp=chrome` | `tls.fingerprint` | ✅ 保留（**uTLS 指纹**，不是 pin） |
+| trojan：`type=tcp` / `headerType=none` | `transport.network` | ✅ tcp |
+| trojan：密码里的 `@ : / ? & # %` | `password` | ✅ 百分号转义正确还原（踩中"密码里带 @"那条注释） |
+| ss：`base64(method:password)` | `method` / `password` | ✅ `aes-256-gcm` + 密码逐字符还原 |
+
+也就是说，**导入侧两种链接都没问题**。
+
+### 14.3 原始报错（修复前，走我们自己的 mihomo 适配层）
+
+    「…」mihomo 出站已就绪：23.246.164.156:44761（type=Trojan）
+    「…」真连接延迟测试失败：Get "http://cp.cloudflare.com/generate_204":
+      mihomo 建立链路失败: 23.246.164.156:44761 connect error:
+      tls: failed to verify certificate: x509: certificate signed by unknown authority
+
+值得注意的**排除项**：出站构造成功、TCP 端口可达（实测通）、TLS 握手走到"要验证书"这一步
+→ 节点可达、SNI 也发出去了；失败点**只在证书校验**。
+
+### 14.4 归因实验（把"映射缺口"与"密码不对"干净分开）
+
+对**同一个端点**跑两次 TLS 握手，**两次都用同一个假密码**，唯一变量是 `SkipCertVerify`：
+
+    A) SkipCertVerify=false → 拨号失败（413ms）: tls: failed to verify certificate: x509: certificate signed by unknown authority
+    B) SkipCertVerify=true  → ✅ 拨号成功（387ms）—— TLS 握手已过
+
+密码两次一样，所以差异**不可能**来自凭据 —— 卡点确实只在证书校验，即我们自己的映射缺口。
+
+**修复后再跑同一条完整产品路径**，报错**变了**：
+
+    「…」真连接延迟测试失败：Get "http://cp.cloudflare.com/generate_204": EOF
+
+`EOF` = TLS 握手已成功、服务端在 **Trojan 认证阶段**关掉了连接 —— 这与"假密码"完全一致
+（真密码下这一跳就该过去）。**这就是本会话能给出的最强证据**：修复在完整产品路径上真的生效了，
+剩下的唯一变量是那个我拿不到的密码。
+
+### 14.5 为什么"真拨到底"没做成（如实报 failed 的原因）
+
+用户提供的两条链接在传递到本会话时，**凭据部分已被抹成占位符**：我收到的字面量是
+`trojan://<password>@…` 与 `ss://<base64(method:password)>@…`。我已确认这不是能绕过的问题：
+
+  - `data/config.json` 里**没有**这两个节点（它只有两条 socks5 住宅节点）；
+  - 系统剪贴板里也没有这两条链接；
+  - 因此**无法**把真实凭据交给 `chainproxy-cli import`。
+
+**为什么不用猜的密码硬跑**：那得到的任何结果都不可归因 —— 既不能证明映射对，
+也不能证明服务端可用，属于"看起来跑过了"的假证据。所以这条如实记 failed。
+
+**shadowsocks 那一条的额外问题**：它的报错是 `context deadline exceeded`。
+为给它补一点可归因的证据，做了一次**不需要凭据**的裸 TCP 探针：
+
+    ss     26275   TCP 已建立（168ms）→ 静置 4s 读：i/o timeout（服务端接受并保持，什么都不回）
+    trojan 44761   TCP 已建立（167ms）→ 静置 4s 读：i/o timeout（同上）
+
+结论：**端口活着、网络路径没问题**（"连不上"不是网络层原因），卡点在协议/凭据层。
+但这仍然**不能**把它和"我们的映射有问题"分开 —— 一个用错密码的 ss 客户端，
+服务端同样会静默丢弃、同样表现为超时（`aes-256-gcm` 的 `Method→Cipher` 映射本身
+是单测锁死的，且与 trojan 走同一条拨号路径）。按"不许把猜测写成结论"的要求，
+这一条记为**无法归因**。
+
+### 14.6 修了什么（跨协议同类缺口，一次修掉）
+
+`internal/engine/mihomo.go`：
+
+| 协议 | mihomo 选项结构 | 跳证书校验字段 | 我们以前 | 现在 |
+|---|---|---|---|---|
+| vless | `outbound.VlessOption` | `SkipCertVerify`（`vless.go:84`） | ❌ 没映射 | ✅ `n.TLS.AllowInsecure` |
+| vmess | `outbound.VmessOption` | `SkipCertVerify`（`vmess.go:65`） | ❌ 没映射 | ✅ 同上 |
+| trojan | `outbound.TrojanOption` | `SkipCertVerify`（`trojan.go:53`） | ❌ 没映射 | ✅ 同上 |
+| hysteria2 | `outbound.Hysteria2Option` | `SkipCertVerify` | ✅ 第 ⑲ 轮已补 | 不变 |
+
+**同一处还漏了两个字段**（都是"从我们的 config 到 mihomo 少传一位"，症状同类）：
+
+| 协议 | mihomo 字段 | 我们以前 | 现在 | 后果 |
+|---|---|---|---|---|
+| vless/vmess/trojan | `ALPN` | ❌ 没映射 | ✅ `n.TLS.ALPN`（只裁剪、**不塞默认值**） | 分享链接 `alpn=` 会被丢掉，只认 h2 的节点协商失败 |
+| vmess | `ClientFingerprint` | ❌ 没映射（只给了 vless/trojan） | ✅ `n.TLS.Fingerprint` | 带 `fp=chrome` 的 vmess 链接导入后指纹退化成 Go 默认 TLS |
+
+`sni` 与 uTLS 指纹**本来就映射对了**（vless/vmess 是 `ServerName`、trojan 是 `SNI`；
+指纹都是 `ClientFingerprint`）—— 已由本轮表驱动单测一并钉死，不是本轮新修的。
+
+**判据只写一遍**：新增两个共用纯函数 `tlsSkipCertVerify` / `tlsALPN`，
+避免以后又只给其中一个协议补、另外两个继续漏（这正是本轮缺口的成因）。
+
+### 14.7 单测与**反向验证**
+
+`internal/engine/mihomo_test.go::TestTLSParamMappingAllTLSProtocols`：
+表驱动 3 协议 × 3 字段（`allowInsecure→SkipCertVerify`、`ALPN→ALPN`、
+`sni→SNI/ServerName` + `fp→ClientFingerprint`），外加两条护栏
+（vmess 指纹必须真进 mihomo 选项；uTLS 指纹不许被当成证书 pin —— 改成 `Fingerprint`
+会让 mihomo 拒绝 `chrome` 而变红）。
+
+**反向验证（三组都实测过，把映射改回去测试必须变红）**：
+
+| 实验 | 操作 | 结果 |
+|---|---|---|
+| A | 删掉三处 `opt.SkipCertVerify = tlsSkipCertVerify(n)` | ❌ 3 个子测试变红（vless/vmess/trojan 的 `allowInsecure → SkipCertVerify`） |
+| B | 删掉三处 `opt.ALPN = tlsALPN(n)` | ❌ 3 个子测试变红（vless/vmess/trojan 的 `ALPN → ALPN`） |
+| C | 删掉 vmess 的 `opt.ClientFingerprint = …` | ❌ 2 个子测试变红（vmess 的指纹落位 + 护栏） |
+
+实验后已完整恢复（`git diff` 只剩预期的 2 个文件）。提交：`4c04c40`。
+
+### 14.8 本轮仍未验 / 需用户决定
+
+  1. **trojan / shadowsocks 的真拨**：缺真实凭据（第 14.5 节）。**需要用户提供**，
+     或让用户自己在界面里把两个节点加好（那样凭据就在 `data/config.json` 里，
+     我复制到 `.cache` 临时目录跑，原文件不动）。
+  2. **ALPN 与 vmess 指纹只有代码级证据**：`alpn=` 的节点与带 `fp=` 的 vmess 节点
+     都**没有真实节点**可验（与迁移期其它传输同一个遗留）。
+  3. trojan 的 **Reality** 我们也没映射：`TrojanOption` 里其实**有** `RealityOpts`
+     （`trojan.go:64`），而 `trojanOption()` 只映射了 SNI/指纹/跳过校验。
+     本轮未动（不在"跳过校验/SNI/指纹"这条缺口上），记在这里供后续决定。
+  4. `spx`（`RealitySpiderX`）：我们的 config 有、导入导出也有，但**mihomo 的
+     `RealityOptions` 根本没有这个字段**（`reality.go` 只有 `PublicKey/ShortID/
+     SupportX25519MLKEM768`）→ 属"对方内核表达不了"，不是我们的漏传。
+
