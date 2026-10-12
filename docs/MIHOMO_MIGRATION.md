@@ -151,22 +151,49 @@ type XHTTPOptions struct {
 
 ## 4. 进度与下一轮开工的第一件事
 
-**第 ① 步（补读签名）已完成**（2026-10-12，本轮）：`ProxyAdapter` 全方法、`constant.Metadata`
-字段与枚举、`RealityOptions`、`XHTTPOptions` 字段、现成的 `DialContext` 调用点
-（`adapter/outbound/base.go:380` 一带）都已读实，结论写进第 1.2 / 1.3 节。
-**副产品**：确认了"我们只需调用、不需实现 `ProxyAdapter`"，这一步的代价比预估低。
+### 第 ① 步（补读签名）✅ 已完成（第 1 轮）
+`ProxyAdapter` 全方法、`constant.Metadata` 字段与枚举、`RealityOptions`、`XHTTPOptions`
+都已读实（见 1.2 / 1.3 节）。**副产品**：确认"我们只需调用、不需实现 `ProxyAdapter`"。
 
-**正在做**：`.cache/mihomo-meta/cmd/xprobe/main.go` —— 一个独立探针（**放在 mihomo 克隆内**，
-复用它的 go.mod 与已下载依赖，**完全不碰我们的仓库**），只读 ChainProxy 配置取参数，
-构造一个 mihomo vless 出站（xhttp + REALITY），`DialContext` 到 `www.gstatic.com:443`
-并发一个 HTTP 请求。它一次性回答两件事：
-  1. 我读到的这些字段/构造方式**能不能编译**（编译器就是权威，不靠猜）；
-  2. **用户那条 xhttp 节点在 mihomo 下到底能不能通**（这是整件事的起因）。
+**探针已实测通过**（`.cache/mihomo-meta/cmd/xprobe`，放在 mihomo 克隆内、不碰我们的仓库）：
+```
+✅ 隧道建立（382 ms）-> 204.197.163.238:30022
+✅ 响应首行：HTTP/1.1 204 No Content
+```
+即 **mihomo 出站层能在"不经 hub.Parse、不建 inbound"下独立拨通 xhttp + REALITY 节点并过真实流量**
+—— 这是"每节点一实例 + 多端口多活"架构成立的关键证据，也是整件事的起因。
 
-**下一轮第一件事**：
-1. 看 xprobe 的结果；若编译不过，按编译器的报错修字段名（这是最省的定位方式）；
-2. 通了 → 进第 0 步（在**我们的模块**里引依赖，实测与现有依赖是否冲突 + 体积增量）；
-3. 不通 → 把探针的真实报错记进本文件，再决定是否继续（不要把"能构建"当成"能用"）。
+途中有两条对迁移直接有用的发现：
+1. **REALITY 必须显式给 `client-fingerprint`**（报错原文：`REALITY is based on uTLS,
+   please set a client-fingerprint`）。sing-box 会自动推断，**mihomo 不会** → 映射表必须带上。
+2. **配置里远端端口字段是 `port`**（不是 `serverPort`）。写映射代码时字段名一律以
+   `internal/config/model.go` 的 tag 为准，否则会得到"看起来像网络问题"的报错。
+
+### 第 ② 步（引依赖 + 体积增量）✅ 已完成（第 2 轮）
+- `go get github.com/metacubex/mihomo@88dcbf7f…`（`Meta` 分支 tip）→ 解析为**稳定版本 `v1.19.32`**，
+  记在 `go.mod`（当前是 `// indirect`，因为还没有代码 import 它）。
+- **无依赖冲突**：`go build ./...` 通过；`go test ./internal/...` 8 个包全 ok。
+  途中自动升级了两个间接依赖（`go.yaml.in/yaml/v3`→v3.0.5、`go4.org/netipx`→新版），测试全绿。
+- **体积增量（实测，非估计）**：
+
+  | 组合 | 体积 |
+  |---|---|
+  | 仅 sing-box + 我们 engine | 36.29 MB |
+  | 仅 mihomo 出站层 | 11.31 MB |
+  | **两者都在（过渡期上限）** | **43.64 MB** |
+  | → mihomo 净增量 | **+7.36 MB** |
+
+  比简单相加（47.60 MB）**小 4 MB**（两个引擎共享部分底层代码）→ 过渡期"保留 sing-box 作回退"
+  的代价只有 +7.36 MB。
+- ⚠️ **此时不要跑 `go mod tidy`**：还没有代码 import mihomo，tidy 会把它从 `go.mod` 里删掉。
+
+### 下一轮第一件事（第 ③ 步）
+新写 `internal/engine` 的 mihomo 适配层，实现 `proxy.Upstream`
+（`Start` / `Stop` / `Dial` / `DialUDP` / `Describe` / `SupportsUDP` / `DialTimeout`），
+内部持有**一个 mihomo 出站实例**（`outbound.NewVless(...)` 等 + `DialContext` /
+`ListenPacketContext`），**不经 `hub.Parse`、不建 inbound**。
+先只做 vless+tcp 一条最小路径打通（含选项映射与单测），再按第 2 步的表逐传输扩。
+
 
 
 ## 5. 已知但**暂不处理**的问题（用户明确指示）
