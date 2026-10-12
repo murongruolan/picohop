@@ -202,23 +202,31 @@ const sourceLines = computed(() =>
   logTab.value === 'net' ? (store.netLogs || []).map(fmtNetLine) : store.logs || [],
 )
 
+// 过滤开关：照主流客户端的过滤栏的约定（Aa = 区分大小写、.* = 按正则）
+const regexMode = ref(true)
+const caseSensitive = ref(false)
+
 const filteredLogs = computed(() => {
   const lines = sourceLines.value
   const q = filter.value.trim()
   if (!q) return lines
-  try {
-    const re = new RegExp(q)
-    return lines.filter((l) => re.test(l))
-  } catch {
-    // 正则写坏了就退化成子串匹配，不弹错误 —— 用户还在打字
-    return lines.filter((l) => l.includes(q))
+  if (regexMode.value) {
+    try {
+      return lines.filter((l) => new RegExp(q, caseSensitive.value ? '' : 'i').test(l))
+    } catch {
+      // 正则写到一半（比如刚敲了 "["）不该弹错误、也不该把列表清空 ——
+      // 退回子串匹配，用户接着敲完就恢复成正则。
+    }
   }
+  const needle = caseSensitive.value ? q : q.toLowerCase()
+  return lines.filter((l) => (caseSensitive.value ? l : l.toLowerCase()).includes(needle))
 })
 
-function applyFilter() {
-  // 回车触发：这里只是把焦点收回，过滤本身是 computed 实时算的
-  if (logBox.value) logBox.value.scrollTop = logBox.value.scrollHeight
-}
+// 匹配计数：过滤时显示 "命中/总数"，让用户知道过滤生效了没
+const matchInfo = computed(() => {
+  if (!filter.value.trim()) return ''
+  return `${filteredLogs.value.length}/${sourceLines.value.length}`
+})
 
 // 复制**当前显示**的那些行（过滤之后的结果）——
 // 用户要的是"把我看到的这段日志发给你"，复制全部反而不是他要的。
@@ -230,6 +238,57 @@ function copyShown() {
   }
   api.copyText(lines.join('\n'))
   notify('success', '已复制', `${lines.length} 行${filter.value.trim() ? '（当前过滤结果）' : ''}`)
+}
+
+// ---- 日志区右键菜单 ----
+const logMenu = ref({ show: false, x: 0, y: 0 })
+
+function openLogMenu(e) {
+  const box = e.currentTarget.getBoundingClientRect()
+  logMenu.value = {
+    show: true,
+    // 贴在光标处，但不超出日志框
+    x: Math.min(e.clientX - box.left, box.width - 130),
+    y: Math.min(e.clientY - box.top, Math.max(0, box.height - 78)),
+  }
+}
+
+function closeLogMenu() {
+  logMenu.value.show = false
+}
+
+// 全选：把日志框的文本整体选上，用户随后 Ctrl+C 即可
+function selectAllLogs() {
+  const el = logBox.value
+  if (el) {
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    const sel = window.getSelection()
+    sel.removeAllRanges()
+    sel.addRange(range)
+  }
+  closeLogMenu()
+}
+
+// 复制所选：没选中就复制当前显示的（免得点了没反应）
+function copySelected() {
+  const sel = String(window.getSelection() || '').trim()
+  const text = sel || filteredLogs.value.join('\n')
+  if (!text) {
+    notify('info', '没有可复制的内容', '')
+    closeLogMenu()
+    return
+  }
+  api.copyText(text)
+  notify('success', '已复制', sel ? '所选内容' : `${filteredLogs.value.length} 行（未选中，按当前显示复制）`)
+  closeLogMenu()
+}
+
+// 清除所有：用户日志与网络日志一起清（按钮上的"清除本页"只清当前这一页）
+async function clearAllLogs() {
+  store.logs = []
+  await store.clearNetworkLogs()
+  closeLogMenu()
 }
 
 function clearCurrent() {
@@ -371,26 +430,40 @@ watch(
 
         <div class="cp-logs-main">
           <div class="cp-logs-bar">
-            <el-input
-              v-model="filter"
-              size="small"
-              placeholder="过滤器（支持正则）"
-              @keyup.enter="applyFilter"
-            >
-              <template #suffix>
-                <el-icon class="cp-logs-search" @click="applyFilter"><Search /></el-icon>
-              </template>
+            <el-input v-model="filter" size="small" placeholder="过滤器（支持正则）">
             </el-input>
             <el-button size="small" :icon="CopyDocument" @click="copyShown">复制</el-button>
-            <el-button size="small" :icon="Delete" @click="clearCurrent">清除本项</el-button>
+            <!-- 两个开关照主流客户端的过滤栏的写法：Aa = 区分大小写、.* = 按正则。
+                 原来这里只有一个搜索图标，而它的点击只做了"滚到底" —— 等于没有功能。 -->
+            <el-tooltip content="区分大小写" placement="top" :show-after="400">
+              <button class="cp-log-flag" :class="{ 'is-on': caseSensitive }" @click="caseSensitive = !caseSensitive">Aa</button>
+            </el-tooltip>
+            <el-tooltip content="按正则匹配（关闭则按子串）" placement="top" :show-after="400">
+              <button class="cp-log-flag" :class="{ 'is-on': regexMode }" @click="regexMode = !regexMode">.*</button>
+            </el-tooltip>
+            <span v-if="matchInfo" class="cp-log-match cp-num">{{ matchInfo }}</span>
+            <el-button size="small" :icon="Delete" @click="clearCurrent">清除本页</el-button>
             <el-tooltip content="自动滚动到末尾" placement="top" :show-after="400">
               <el-switch v-model="autoScroll" size="small" active-text="自动滚动" />
             </el-tooltip>
           </div>
 
-          <div ref="logBox" class="cp-logs-box">
+          <div ref="logBox" class="cp-logs-box" @contextmenu.prevent="openLogMenu" @click="closeLogMenu">
             <div v-if="!filteredLogs.length" class="cp-logs-empty">—</div>
             <div v-for="(l, i) in filteredLogs" :key="i" class="cp-logs-line">{{ l }}</div>
+
+            <!-- 右键菜单：全选 / 复制所选 / 清除所有 -->
+            <div
+              v-if="logMenu.show"
+              class="cp-logs-menu"
+              :style="{ left: logMenu.x + 'px', top: logMenu.y + 'px' }"
+              @click.stop
+              @contextmenu.prevent
+            >
+              <div class="cp-logs-menu-item" @click="selectAllLogs">全选</div>
+              <div class="cp-logs-menu-item" @click="copySelected">复制所选</div>
+              <div class="cp-logs-menu-item" @click="clearAllLogs">清除所有</div>
+            </div>
           </div>
         </div>
       </div>

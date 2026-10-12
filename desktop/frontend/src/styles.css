@@ -821,8 +821,57 @@ body.cp-float-window .el-overlay-dialog {
   white-space: nowrap;
   flex-shrink: 0;
 }
-.cp-logs-search {
+/* 过滤开关（Aa / .*）：照主流客户端的过滤栏的写法 */
+.cp-log-flag {
+  height: 24px;
+  min-width: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--cp-border);
+  border-radius: var(--cp-radius-sm);
+  background: transparent;
+  color: var(--cp-text-3);
+  font-size: 11.5px;
   cursor: default;
+}
+.cp-log-flag:hover {
+  border-color: var(--cp-brand);
+  color: var(--cp-brand);
+}
+.cp-log-flag.is-on {
+  background: var(--cp-brand-soft);
+  border-color: transparent;
+  color: var(--cp-brand);
+  font-weight: 600;
+}
+.cp-log-match {
+  color: var(--cp-text-3);
+  font-size: 11.5px;
+  min-width: 46px;
+}
+
+/* 日志区的右键菜单（全选 / 复制所选 / 清除所有） */
+.cp-logs-menu {
+  position: absolute;
+  z-index: 5;
+  min-width: 124px;
+  padding: 4px;
+  border: 1px solid var(--cp-border);
+  border-radius: var(--cp-radius-sm);
+  background: var(--cp-panel);
+  box-shadow: var(--cp-shadow);
+}
+.cp-logs-menu-item {
+  height: 26px;
+  line-height: 26px;
+  padding: 0 10px;
+  border-radius: var(--cp-radius-sm);
+  font-size: 12.5px;
+  color: var(--cp-text);
+  cursor: default;
+}
+.cp-logs-menu-item:hover {
+  background: var(--cp-brand-soft);
+  color: var(--cp-brand);
 }
 .cp-logs-box {
   flex: 1 1 auto;

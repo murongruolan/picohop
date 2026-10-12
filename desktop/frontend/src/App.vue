@@ -778,6 +778,94 @@ async function handleDevOpen(name) {
       break
     }
 
+    // 日志过滤器 / 正则 / 大小写 / 右键菜单：一次把用户问的几件事全测掉。
+    case 'logfilter': {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const q = () => document.querySelector('.cp-logs-bar input')
+      // 用原生 setter 再派发 input —— 直接改 .value 的话 Vue 的 v-model 收不到
+      const setFilter = (v) => {
+        const el = q()
+        if (!el) return false
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+        setter.call(el, v)
+        el.dispatchEvent(new Event('input', { bubbles: true }))
+        return true
+      }
+      const shown = () => document.querySelectorAll('.cp-logs-line').length
+      const flag = (text) =>
+        [...document.querySelectorAll('.cp-log-flag')].find((b) => b.textContent.trim() === text)
+      const out = []
+
+      // 确定性打开日志视图（先切别的再切回来）
+      ui.bottomPanelView = 'traffic'
+      await wait(400)
+      ui.bottomPanelView = 'logs'
+      await wait(2200)
+      if (!q()) {
+        notify('error', '日志过滤自测', '找不到过滤输入框', 0)
+        break
+      }
+
+      const total = shown()
+      out.push(`未过滤：${total} 行`)
+
+      // ① 子串
+      setFilter('启动')
+      await wait(500)
+      out.push(`① 子串「启动」→ ${shown()} 行`)
+
+      // ② 正则（用 ^ 锚点：子串匹配里 "^启动" 是匹配不到的，能区分两种模式）
+      setFilter('^ChainProxy')
+      await wait(500)
+      out.push(`② 正则「^ChainProxy」→ ${shown()} 行（子串模式会是 0）`)
+
+      // ③ 坏正则：不该崩、不该清空，退化成子串
+      setFilter('[')
+      await wait(500)
+      out.push(`③ 坏正则「[」→ ${shown()} 行（不崩即为通过）`)
+
+      // ④ 大小写：先用小写找只有大写开头的行
+      setFilter('chainproxy')
+      await wait(500)
+      const ciCount = shown()
+      flag('Aa')?.click()
+      await wait(500)
+      const csCount = shown()
+      flag('Aa')?.click() // 还原
+      await wait(300)
+      out.push(`④ 「chainproxy」不区分大小写=${ciCount} 行，区分后=${csCount} 行`)
+
+      // ⑤ 匹配计数显示
+      setFilter('启动')
+      await wait(500)
+      out.push(`⑤ 计数显示：「${(document.querySelector('.cp-log-match')?.textContent || '(无)').trim()}」`)
+
+      // ⑥ 右键菜单 + 全选
+      const box = document.querySelector('.cp-logs-box')
+      const r = box.getBoundingClientRect()
+      box.dispatchEvent(
+        new MouseEvent('contextmenu', {
+          clientX: Math.round(r.left + 60),
+          clientY: Math.round(r.top + 40),
+          bubbles: true,
+          cancelable: true,
+        }),
+      )
+      await wait(400)
+      const items = [...document.querySelectorAll('.cp-logs-menu-item')].map((e) => e.textContent.trim())
+      out.push(`⑥ 右键菜单项：${items.join(' / ') || '(没弹出)'}`)
+      const all = items.includes('全选') ? [...document.querySelectorAll('.cp-logs-menu-item')].find((e) => e.textContent.includes('全选')) : null
+      if (all) {
+        all.click()
+        await wait(400)
+      }
+      out.push(`⑦ 全选后选区长度=${String(window.getSelection() || '').length}`)
+
+      setFilter('')
+      notify('success', '日志过滤自测', out.join('\n'), 0)
+      break
+    }
+
     // 连开两次浮动对话框：第一次是新建（要建 WebView2 + 加载前端），
     // 第二次应该走**复用**（窗口已在、不重新加载）。
     // 这是用户报的“打开还是卡”那条，两边的耗时在 Go 日志里（"~前端就绪 Xms"~
