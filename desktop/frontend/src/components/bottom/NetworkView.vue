@@ -38,6 +38,37 @@ const dirty = computed(() => {
   )
 })
 
+/**
+ * 没配齐「本地端口鉴权」（用户名 + 密码）的节点名。
+ *
+ * 【为什么设置页要自己点名】审查 #22：打开「允许局域网」= 监听 0.0.0.0，
+ * 此时没有凭据就等于给整条局域网开匿名开放代理，所以后端（proxy.NewServer）
+ * 会**拒绝启动**这类节点。与其让用户一个个去点激活看报错，不如在这里
+ * 提前把要改的节点列出来 —— 判据 listenAuth 由后端算好（config.Node.HasListenAuth），
+ * 前端只负责显示，不重复实现规则。
+ */
+const noAuthNames = computed(() =>
+  (store.nodes || []).filter((n) => !n.listenAuth).map((n) => n.name),
+)
+
+const lanAlert = computed(() => {
+  if (!noAuthNames.value.length) {
+    return {
+      type: 'warning',
+      title: '局域网内其它设备可以使用这台机器上网',
+      desc: '全部节点都已配齐本地端口鉴权（用户名 + 密码），对方需要在代理设置里填上才能用。',
+    }
+  }
+  return {
+    type: 'error',
+    title: '局域网内任何人都能匿名借这台机器上网',
+    desc:
+      `以下节点没有配齐本地端口鉴权（用户名和密码都要填），打开「允许局域网」后会被拒绝启动：` +
+      `${noAuthNames.value.join('、')}。` +
+      `请到「编辑节点 → 高级 → 本地端口鉴权」补上，或关掉这个开关。`,
+  }
+})
+
 async function save() {
   saving.value = true
   try {
@@ -63,17 +94,22 @@ async function save() {
     <div class="cp-net-form">
       <div class="cp-net-row">
         <span class="cp-net-label">允许局域网</span>
-        <el-tooltip content="打开后节点监听 0.0.0.0，局域网内其它设备也能用" placement="top" :show-after="400">
+        <el-tooltip
+          content="打开后节点监听 0.0.0.0，局域网内其它设备也能用；这些节点必须先配好本地端口鉴权（用户名 + 密码），否则会拒绝启动"
+          placement="top"
+          :show-after="400"
+        >
           <el-switch v-model="form.allowLan" size="small" />
         </el-tooltip>
       </div>
 
       <el-alert
         v-if="form.allowLan"
-        type="warning"
+        :type="lanAlert.type"
         :closable="false"
         show-icon
-        title="局域网内任何人都能借这台机器上网"
+        :title="lanAlert.title"
+        :description="lanAlert.desc"
         class="cp-net-alert"
       />
 

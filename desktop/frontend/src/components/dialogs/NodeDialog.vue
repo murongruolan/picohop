@@ -730,7 +730,7 @@ const flowOptions = [
           <template #title>
             高级：本地端口鉴权
             <el-tooltip
-              content="默认只监听 127.0.0.1、无需鉴权；开了「允许局域网」才建议填写"
+              content="默认只监听 127.0.0.1、无需鉴权；开了「允许局域网」就必须填（用户名和密码都要填），否则该节点会被拒绝启动"
               placement="top"
               :show-after="400"
             >

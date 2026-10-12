@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -45,7 +46,34 @@ type Server struct {
 // node.ListenHost 应当是**已经解析好的**实际监听地址
 // （见 config.Config.ListenHostEffective）——这里不再做 AllowLan 判断，
 // 免得同一套规则散落在两个包里。
+//
+// 唯一的例外是下面那条与 AllowLan 无关的兜底：地址**非回环** = 对局域网开放，
+// 此时必须有本地端口鉴权，否则拒绝构造（审查 #22）。
 func NewServer(node config.Node, frontCfg config.Front, idle time.Duration, logf func(string, ...any)) (*Server, error) {
+	// 【审查 #22：对局域网开放的监听必须配齐鉴权，否则拒绝构造】
+	// 不鉴权（ListenUsername/ListenPassword 都为空 → Handler.Listen == nil）
+	// 的含义是"完全不校验"：SOCKS5 会协商成 0x00（无需认证），HTTP 那条路径
+	// 也不看 Proxy-Authorization（见 handler.go 里 h.Listen == nil 的两个分支）。
+	// 而 node.ListenHost 到这里已经是**解析好的实际监听地址** —— 用户在设置里
+	// 打开「允许局域网」时它就是 0.0.0.0。两者一叠加，这台机器就成了整条局域网
+	// 的匿名开放代理：同网段任何人（邻居、被入侵的 IoT 设备、别人的脚本）都能
+	// 借它出去，流量与额度全算用户的，日志里也看不出是谁。
+	//
+	// 所以这里 fail-closed：宁可不启动，也不静默地匿名暴露。判据用
+	// !IsLoopbackListenHost（而不是"等于 0.0.0.0"）是为了把具体网卡地址、::、
+	// 主机名一起盖住；凭据要求"配齐"（HasListenAuth）而不是"填了一个"，
+	// 理由见那个方法的注释。空 ListenHost 按 Start() 的规则回落到回环，
+	// 所以老调用方（含测试）不受影响。
+	//
+	// 别再改成"静默拉回回环"或"只在日志里警告"：前者让用户以为局域网已经通了
+	// （比报错更难查），后者等于没修。
+	if host := listenHost(node.ListenHost); !config.IsLoopbackListenHost(host) && !node.HasListenAuth() {
+		return nil, fmt.Errorf(
+			"监听地址 %s 对局域网开放，但该节点没有配齐本地端口鉴权：局域网内任何人都能匿名借用这台机器上网。"+
+				"请在「编辑节点 → 高级 → 本地端口鉴权」填写用户名和密码，或关闭设置里的「允许局域网」",
+			host)
+	}
+
 	front := NewFront(frontCfg)
 	up, err := NewUpstream(node, frontCfg, logf)
 	if err != nil {
@@ -92,15 +120,25 @@ func idleTimeoutOrDefault(idle time.Duration) time.Duration {
 	return idle
 }
 
+// listenHost 返回节点**实际会 bind** 的地址：空值回落到回环。
+//
+// 【为什么要有这个小函数】Start() 与 NewServer() 的空值兜底必须是同一条规则：
+// NewServer 用它判断"这次监听是否对局域网开放"（不鉴权就拒绝，审查 #22），
+// Start 用它决定 bind 到哪儿。两份各写一遍的话，日后只改一处就会出现
+// "检查的是回环、绑的是 0.0.0.0"这种最危险的缝。
+func listenHost(h string) string {
+	if s := strings.TrimSpace(h); s != "" {
+		return s
+	}
+	return "127.0.0.1"
+}
+
 // Start 绑定端口、启动出口、开始接受连接。
 func (s *Server) Start() error {
 	if s.started.Load() {
 		return nil
 	}
-	host := s.node.ListenHost
-	if host == "" {
-		host = "127.0.0.1"
-	}
+	host := listenHost(s.node.ListenHost)
 	addr := net.JoinHostPort(host, fmt.Sprint(s.node.ListenPort))
 
 	// 先启动出口（WireGuard 需要在这里握手、sing-box 要在这里拉实例），再绑定端口。

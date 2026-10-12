@@ -27,11 +27,18 @@ type NodeView struct {
 	Port          int    `json:"port"`
 	ListenHost    string `json:"listenHost"`
 	ListenPort    int    `json:"listenPort"`
-	Front         string `json:"front"`
-	FrontLabel    string `json:"frontLabel"`
-	Remark        string `json:"remark"`
-	TLSEnabled    bool   `json:"tlsEnabled"`
-	Active        bool   `json:"active"`
+	// ListenAuth 说明这个节点是否**配齐**了本地端口鉴权（用户名 + 密码）。
+	//
+	// 【为什么界面需要它】打开「允许局域网」后，没配齐鉴权的节点会被
+	// proxy.NewServer 拒绝启动（审查 #22）。设置页要能提前把"哪几个节点
+	// 会被拦下"点名说出来，而不是等用户一个个点激活再看报错。
+	// 判据与后端完全同一处：config.Node.HasListenAuth。
+	ListenAuth bool   `json:"listenAuth"`
+	Front      string `json:"front"`
+	FrontLabel string `json:"frontLabel"`
+	Remark     string `json:"remark"`
+	TLSEnabled bool   `json:"tlsEnabled"`
+	Active     bool   `json:"active"`
 
 	State      string `json:"state"` // running / stopped / error
 	StateLabel string `json:"stateLabel"`
@@ -169,6 +176,7 @@ func (a *App) buildView(n config.Node, st *proxyStats, errMsg string) NodeView {
 		Port:          n.Port,
 		ListenHost:    n.ListenHost,
 		ListenPort:    n.ListenPort,
+		ListenAuth:    n.HasListenAuth(),
 		Front:         n.Front,
 		FrontLabel:    a.DescribeFront(n),
 		Remark:        n.Remark,

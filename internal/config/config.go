@@ -477,20 +477,25 @@ func (c *Config) ListenHostEffective(n Node) string {
 	// 所以判定反过来：只有确认是回环地址才放行，其余（空值、通配地址、
 	// 具体 IP、无法解析的主机名）一律拉回 127.0.0.1 —— 即 fail-closed。
 	// 别再改回"白名单拉回"的写法。
-	if isLoopbackListenHost(host) {
+	if IsLoopbackListenHost(host) {
 		return host
 	}
 	return "127.0.0.1"
 }
 
-// isLoopbackListenHost 判断监听地址是否只对本机可见。
+// IsLoopbackListenHost 判断监听地址是否只对本机可见。
 //
 // "只对本机可见"的合法形式：127.0.0.0/8 里的任意地址、IPv6 的 ::1，
 // 以及名字 localhost。用 net.ParseIP 判定而不是字符串比较，是为了让
 // 127.0.0.2 这类同样纯回环的地址不被误伤；空串、0.0.0.0、::、具体
 // 网卡地址、普通主机名（无法证明是回环）都返回 false，交由调用方
 // 按"非回环"处理。
-func isLoopbackListenHost(host string) bool {
+//
+// 【为什么导出】internal/proxy 也要用它：监听地址非回环 + 没有本地端口鉴权
+// = 局域网匿名代理（审查 #22），那里必须拒绝启动。这条"什么算回环"的规则
+// 只能有一份，否则两边判据漂移就会出现"config 认为安全、proxy 认为危险"
+// （或反过来）的缝。别再拷一份过去。
+func IsLoopbackListenHost(host string) bool {
 	h := strings.TrimSpace(host)
 	if h == "" {
 		return false

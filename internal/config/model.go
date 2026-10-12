@@ -159,7 +159,8 @@ type Node struct {
 	// ListenUsername/ListenPassword 是本节点本地端口的可选鉴权。
 	//
 	// 默认留空（只监听回环，不需要鉴权）。一旦打开了设置里的"允许局域网连接"，
-	// 强烈建议填上 —— 否则等于在局域网上开了一个匿名代理。
+	// 就必须填上 —— 否则等于在局域网上开了一个匿名代理（审查 #22：
+	// 这种组合现在会被 proxy.NewServer **直接拒绝**，见 HasListenAuth）。
 	ListenUsername string `json:"listenUsername,omitempty"`
 	ListenPassword string `json:"listenPassword,omitempty"`
 
@@ -310,6 +311,21 @@ func (n Node) FrontKind() string {
 
 // UsesGlobalFront 说明该节点用的是全局前置代理。
 func (n Node) UsesGlobalFront() bool { return n.FrontKind() == FrontGlobal }
+
+// HasListenAuth 说明该节点**配齐了**本地端口鉴权（用户名与密码都不为空）。
+//
+// 【为什么"配齐"要单独判定，而不是看 ListenUsername/ListenPassword 非空就完事】
+// proxy.NewServer 里"要不要鉴权"的判据是"两个字段任一非空"（保持原有语义：
+// 只填用户名、密码留空也算开了鉴权）。但对**对局域网开放**的监听来说，
+// 半套凭据等于没凭据：密码留空时，局域网里任何人只要猜到用户名就能连上
+// （SOCKS5 的 RFC 1929 允许零长度密码，HTTP 的 Basic 也一样）。
+// 所以"允许局域网"这一侧要求配齐，判据收在这里一处，proxy 与界面共用，
+// 免得两边各写一套、日后只改一处（审查 #22）。
+//
+// 空白字符一律按"没填"处理：用户名写成一个空格挡不住任何人。
+func (n Node) HasListenAuth() bool {
+	return strings.TrimSpace(n.ListenUsername) != "" && strings.TrimSpace(n.ListenPassword) != ""
+}
 
 // FrontNodeID 返回作为前置的那个节点 ID；直连或全局前置时返回空串。
 func (n Node) FrontNodeID() string {
