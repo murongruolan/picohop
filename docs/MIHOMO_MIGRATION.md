@@ -265,4 +265,71 @@ type XHTTPOptions struct {
     `git clone --branch Meta` 即可（`main` 分支是另一个 Python 项目，别克隆错）。
   - **原因未查明**（可能是外部清理/磁盘空间策略）。不猜测；但它提醒一件事：
     **凡是不想丢的结论，必须落到仓库里（docs/），而不是留在 `.cache`。**
+---
+
+## 7. 第 ⑤⑥⑦⑧ 轮进度（逐轮累积，证据在提交信息里）
+
+### 第 6 轮：其余四协议的映射 ✅
+`vmess` / `trojan` / `shadowsocks` / `hysteria2` 的映射与单测（共 17 个子测试）；
+`mihomoSupports` 放行五种协议。要点已在前一节（第 5 轮）记全，实现按它做即可。
+
+被纠正三次，都是同一类教训：
+  1. 编译器：**mihomo 的 `VmessOption` 没有 `XHTTPOpts`**（xhttp 只有 vless 有）
+     → vmess+xhttp 在映射**入口与分支两处**明确报错，不静默忽略传输；
+  2. 测试：第 3 轮那条守护测试**自己抓到过时断言**（"这四种还没接"），
+     已按同一意图改为"已实现必须放行、**未实现必须拒绝**"；
+  3. 我自己：用 PowerShell 双引号 here-string 写 Go 代码 → **反引号被当成转义符**，
+     Go 的原始字符串被吃掉、文件语法损坏（fail-fast 拦住提交）。
+     **写 Go 代码不要用 PowerShell here-string。**
+
+### 第 7 轮：vmess 真实链路验证 ✅（契约第 ④ 步的第 2 条证据）
+
+用**我们自己的** `internal/engine.MihomoUpstream` 拨 `香港-39.109-CN2-VMess`
+（`39.109.57.15:11720`，tcp、无 TLS）：
+
+    ✅ Start 完成（0 ms）
+    ✅ DialUDP 如实报错：mihomo 适配层：UDP 通道尚未接入（…）
+    ✅ Dial 建立链路（54 ms）-> 39.109.57.15:11720
+    ✅ 响应首行：HTTP/1.1 204 No Content
+
+**真实链路验证清单（契约第 ④ 步的硬要求，逐条累积）**：
+  | # | 协议 + 传输 | 轮次 |
+  |---|---|---|
+  | 1 | vless + xhttp + REALITY | 第 4 轮 |
+  | 2 | vmess + tcp | 第 7 轮 |
+
+**仍未验证**：trojan / shadowsocks / hysteria2（只有单测）；
+ws / grpc / http / h2 / httpupgrade 五种传输（无真实节点）；UDP（未接入）。
+
+### 第 8 轮：UDP 的两个接口已读实（**未实现**，见下）
+
+mihomo 侧（`constant.PacketConn`，v1.19.32 模块缓存里的源码）：
+
+    type PacketConn interface {
+        N.EnhancePacketConn        // sing 的增强包接口：ReadPacket/WritePacket(*PacketBuffer)
+        Connection                 // 普通连接语义（含 net.Conn 那套）
+        ResolveUDP(ctx, *Metadata) error
+    }
+
+我们侧（`internal/proxy`）：
+
+    type UDPChannel interface {
+        SendToUDP(payload []byte, host string, port int) error
+        ReceiveFromUDP(quit <-chan struct{}, buf []byte) (n int, srcHost string, srcPort int, err error)
+        Close() error
+    }
+
+**实现思路（下一轮照做）**：
+  1. `DialUDP` → `out.ListenPacketContext(ctx, &C.Metadata{NetWork: C.UDP, Host, DstPort})`，
+     先按 mihomo 的用法调 `ResolveUDP(ctx, metadata)`；
+  2. `SendToUDP` → `WriteTo(payload, &net.UDPAddr{IP, Port})`（`net.PacketConn` 那套）；
+  3. `ReceiveFromUDP(quit, buf)` → **必须可被 quit 叫醒**（本项目对 wireguard 侧有过死锁教训）：
+     用 `SetReadDeadline` 小步轮询 + 每轮检查 quit，或起一个读协程 + 通道；
+  4. `Close()` → 关底层 + 让阻塞读退出。
+
+**为什么这轮没有直接写**：`EnhancePacketConn`/`PacketBuffer` 的确切用法与 `ResolveUDP` 的语义
+还没读全，而且**当前没有可验证的 UDP 目标** —— 半写完的 UDP 是"无法验证的代码"，
+比不写更糟（本项目已多次吃过"看起来对、其实没通"的教训）。
+**验证方案（下一轮）**：经该 UDP 通道把一条 DNS 查询发到 `8.8.8.8:53`，看是否收到应答
+（真实、可判定，且不需要额外节点）。
 
