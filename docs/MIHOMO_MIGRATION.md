@@ -187,12 +187,39 @@ type XHTTPOptions struct {
   的代价只有 +7.36 MB。
 - ⚠️ **此时不要跑 `go mod tidy`**：还没有代码 import mihomo，tidy 会把它从 `go.mod` 里删掉。
 
-### 下一轮第一件事（第 ③ 步）
-新写 `internal/engine` 的 mihomo 适配层，实现 `proxy.Upstream`
-（`Start` / `Stop` / `Dial` / `DialUDP` / `Describe` / `SupportsUDP` / `DialTimeout`），
-内部持有**一个 mihomo 出站实例**（`outbound.NewVless(...)` 等 + `DialContext` /
-`ListenPacketContext`），**不经 `hub.Parse`、不建 inbound**。
-先只做 vless+tcp 一条最小路径打通（含选项映射与单测），再按第 2 步的表逐传输扩。
+### 第 ③④ 步（适配层 + 映射）✅ 主体完成（第 3 轮）
+
+新增 `internal/engine/mihomo.go`（`MihomoUpstream` 实现 `proxy.Upstream`）+ `mihomo_test.go`。
+
+- 只把 mihomo 当**拨号器库**：每节点一个独立出站实例、`DialContext` 直连，
+  **不经 `hub.Parse`、不建 inbound** → "每节点一端口 + 多节点同时活跃"照旧成立。
+- `Start` 建实例 / `Stop` 释放 / `Dial` 走 `DialContext` / `DialTimeout` 用 `node.Timeout()`。
+- **`DialUDP` 目前明确报错**（mihomo 的 UDP 是 `ListenPacketContext`+`PacketConn`，
+  包成 `proxy.UDPChannel` 属第 ④ 步剩余项）—— 不假装成功。
+- `mihomoSupports` 只对**已写好**的协议返回 true（当前 vless），宁可构造时报错，
+  也不等用户激活才发现没接。
+- 映射已覆盖 vless 的六种传输（tcp/ws/grpc/http/h2/httpupgrade/xhttp），
+  表驱动单测 12 个子测试锁死。四个反直觉点（都有源码/实测依据）：REALITY 必须显式给
+  client-fingerprint；`HTTPOptions` 没有 Host 字段（放 Headers）；httpupgrade 复用 `WSOpts`；
+  h2 用 `HTTP2Opts`。
+
+**真实节点连通验证（第 4 轮，用我们自己的适配层，不是独立探针）**：
+```
+节点=①US1直连出口  传输=xhttp  TLS=true  指纹="chrome"  REALITY=true
+  [engine] 「①US1直连出口」mihomo 出站已就绪：204.197.163.238:30022（type=Vless）
+✅ Start 完成（0 ms）
+✅ Dial 建立链路（1422 ms）-> 204.197.163.238:30022
+✅ 响应首行：HTTP/1.1 204 No Content
+```
+即：**`internal/engine.MihomoUpstream` 能起、能拨通 xhttp + REALITY 节点、能过真实流量。**
+
+### 第 ④ 步剩余项（下一轮）
+1. 其余协议：`vmess` / `trojan` / `shadowsocks` / `hysteria2` 的映射与构造（形状照 vless）。
+2. **UDP**：`ListenPacketContext` → 包成 `proxy.UDPChannel`（`SendToUDP`/`ReceiveFromUDP` + quit 语义）。
+3. **逐传输真实验证**：目前只验了 `xhttp`（用户手上唯一可用的 vless 节点）。
+   ws/grpc/http/h2/httpupgrade 与其它协议**都还没有真实节点验证** —— 不许当已完成。
+   用户可以给一条 vmess（已有：香港-39.109-CN2-VMess）来验 vmess+tcp 那条。
+
 
 
 
