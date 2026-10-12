@@ -60,7 +60,8 @@ func NewMihomo(n config.Node, front config.Front, logf func(string, ...any)) (pr
 // 也不要等用户点了激活才发现没接。
 func mihomoSupports(protocol string) bool {
 	switch protocol {
-	case config.ProtocolVLESS:
+	case config.ProtocolVLESS, config.ProtocolVMess, config.ProtocolTrojan,
+		config.ProtocolShadowsocks, config.ProtocolHysteria2:
 		return true
 	default:
 		return false
@@ -158,6 +159,47 @@ func buildMihomoOutbound(n config.Node) (C.ProxyAdapter, error) {
 		out, err := outbound.NewVless(opt)
 		if err != nil {
 			return nil, fmt.Errorf("构造 mihomo vless 出站失败: %w", err)
+		}
+		return out, nil
+	case config.ProtocolVMess:
+		opt, err := vmessOption(n)
+		if err != nil {
+			return nil, err
+		}
+		out, err := outbound.NewVmess(opt)
+		if err != nil {
+			return nil, fmt.Errorf("构造 mihomo vmess 出站失败: %w", err)
+		}
+		return out, nil
+	case config.ProtocolTrojan:
+		opt, err := trojanOption(n)
+		if err != nil {
+			return nil, err
+		}
+		out, err := outbound.NewTrojan(opt)
+		if err != nil {
+			return nil, fmt.Errorf("构造 mihomo trojan 出站失败: %w", err)
+		}
+		return out, nil
+	case config.ProtocolShadowsocks:
+		opt, err := shadowsocksOption(n)
+		if err != nil {
+			return nil, err
+		}
+		// 注意拼写：mihomo 是 NewShadowSocks（不是 NewShadowsocks）
+		out, err := outbound.NewShadowSocks(opt)
+		if err != nil {
+			return nil, fmt.Errorf("构造 mihomo shadowsocks 出站失败: %w", err)
+		}
+		return out, nil
+	case config.ProtocolHysteria2:
+		opt, err := hysteria2Option(n)
+		if err != nil {
+			return nil, err
+		}
+		out, err := outbound.NewHysteria2(opt)
+		if err != nil {
+			return nil, fmt.Errorf("构造 mihomo hysteria2 出站失败: %w", err)
 		}
 		return out, nil
 	default:
@@ -265,5 +307,170 @@ func vlessOption(n config.Node) (outbound.VlessOption, error) {
 		}
 	}
 
+	return opt, nil
+}
+
+// ------------------------------------------------------------------
+// 其余四种协议的映射
+//
+// 与 vlessOption 同一套路：**纯函数**，表驱动单测锁死字段落位。
+// 传输放行范围按各自 mihomo 结构体**实际有**的选项字段来（不是所有协议都有全部传输），
+// 其余组合一律返回明确错误，不静默忽略。
+// ------------------------------------------------------------------
+
+// vmessOption 映射 VMess。
+//
+// 字段对照：我们的「加密方式」叫 Security，mihomo 里叫 **Cipher**（读源码确认）。
+func vmessOption(n config.Node) (outbound.VmessOption, error) {
+	var opt outbound.VmessOption
+	if strings.TrimSpace(n.Server) == "" || n.Port <= 0 || strings.TrimSpace(n.UUID) == "" {
+		return opt, fmt.Errorf("节点「%s」缺少服务器地址/端口/UUID", n.Name)
+	}
+	ours := strings.ToLower(strings.TrimSpace(n.Transport.Network))
+	if ours == "xhttp" {
+		return opt, fmt.Errorf("mihomo 的 vmess 不支持 xhttp 传输（只有 vless 有），节点「%s」", n.Name)
+	}
+	network, err := mihomoTransport(n.Transport.Network)
+	if err != nil {
+		return opt, err
+	}
+	opt = outbound.VmessOption{
+		Name:       n.Name,
+		Server:     n.Server,
+		Port:       n.Port,
+		UUID:       n.UUID,
+		AlterID:    n.AlterID,
+		Cipher:     n.Security,
+		UDP:        true,
+		Network:    network,
+		TLS:        n.TLS.Enabled,
+		ServerName: n.TLS.ServerName,
+	}
+	path := strings.TrimSpace(n.Transport.Path)
+	host := strings.TrimSpace(n.Transport.Host)
+	if host == "" {
+		host = n.TLS.ServerName
+	}
+	switch strings.ToLower(strings.TrimSpace(n.Transport.Network)) {
+	case "ws":
+		opt.WSOpts.Path = path
+		if host != "" {
+			opt.WSOpts.Headers = map[string]string{"Host": host}
+		}
+	case "grpc":
+		opt.GrpcOpts.GrpcServiceName = strings.TrimSpace(n.Transport.ServiceName)
+	case "http":
+		if path != "" {
+			opt.HTTPOpts.Path = []string{path}
+		}
+		if host != "" {
+			opt.HTTPOpts.Headers = map[string][]string{"Host": {host}}
+		}
+	case "h2":
+		opt.HTTP2Opts.Path = path
+		if host != "" {
+			opt.HTTP2Opts.Host = []string{host}
+		}
+	case "httpupgrade":
+		// mihomo 的 httpupgrade 复用 WSOpts（见 vless 那边的源码证据）
+		opt.WSOpts.Path = path
+		opt.WSOpts.V2rayHttpUpgrade = true
+		if host != "" {
+			opt.WSOpts.Headers = map[string]string{"Host": host}
+		}
+	case "xhttp":
+		// 【编译器确认】mihomo 的 VmessOption 没有 XHTTPOpts —— xhttp 只有 vless 有。
+		// 所以这里明确报错，而不是静默忽略传输（否则用户会得到"连不上但看不出原因"）。
+		return opt, fmt.Errorf("mihomo 的 vmess 不支持 xhttp 传输（该传输只有 vless 有），节点「%s」请改用 vless+xhttp 或其它传输", n.Name)
+	}
+	return opt, nil
+}
+
+// trojanOption 映射 Trojan。
+//
+// 两点与其它协议不同：TLS 是协议自带；**SNI 的字段名就叫 SNI**（不是 ServerName）。
+// 它的结构体只有 GrpcOpts / WSOpts 两种传输，别的组合明确报错。
+func trojanOption(n config.Node) (outbound.TrojanOption, error) {
+	var opt outbound.TrojanOption
+	if strings.TrimSpace(n.Server) == "" || n.Port <= 0 || strings.TrimSpace(n.Password) == "" {
+		return opt, fmt.Errorf("节点「%s」缺少服务器地址/端口/密码", n.Name)
+	}
+	network, err := mihomoTransport(n.Transport.Network)
+	if err != nil {
+		return opt, err
+	}
+	opt = outbound.TrojanOption{
+		Name:              n.Name,
+		Server:            n.Server,
+		Port:              n.Port,
+		Password:          n.Password,
+		SNI:               n.TLS.ServerName,
+		ClientFingerprint: n.TLS.Fingerprint,
+		UDP:               true,
+		Network:           network,
+	}
+	path := strings.TrimSpace(n.Transport.Path)
+	host := strings.TrimSpace(n.Transport.Host)
+	if host == "" {
+		host = n.TLS.ServerName
+	}
+	switch strings.ToLower(strings.TrimSpace(n.Transport.Network)) {
+	case "", "tcp":
+	case "ws":
+		opt.WSOpts.Path = path
+		if host != "" {
+			opt.WSOpts.Headers = map[string]string{"Host": host}
+		}
+	case "grpc":
+		opt.GrpcOpts.GrpcServiceName = strings.TrimSpace(n.Transport.ServiceName)
+	default:
+		return opt, fmt.Errorf("mihomo trojan 目前只接了 ws/grpc 传输，收到 %q（其结构体只有这两个选项）", network)
+	}
+	return opt, nil
+}
+
+// shadowsocksOption 映射 Shadowsocks（无传输层；我们的加密方式字段叫 Method）。
+func shadowsocksOption(n config.Node) (outbound.ShadowSocksOption, error) {
+	var opt outbound.ShadowSocksOption
+	if strings.TrimSpace(n.Server) == "" || n.Port <= 0 {
+		return opt, fmt.Errorf("节点「%s」缺少服务器地址/端口", n.Name)
+	}
+	if strings.TrimSpace(n.Method) == "" {
+		return opt, fmt.Errorf("节点「%s」缺少加密方式（method）", n.Name)
+	}
+	return outbound.ShadowSocksOption{
+		Name:     n.Name,
+		Server:   n.Server,
+		Port:     n.Port,
+		Password: n.Password,
+		Cipher:   n.Method,
+		UDP:      true,
+	}, nil
+}
+
+// hysteria2Option 映射 Hysteria2。
+//
+// 注意 mihomo 的 Up/Down 是**带单位的字符串**（如 "100 Mbps"），
+// 我们配置里是整数 Mbps → 这里格式化；为 0 时不写（让它用默认）。
+func hysteria2Option(n config.Node) (outbound.Hysteria2Option, error) {
+	var opt outbound.Hysteria2Option
+	if strings.TrimSpace(n.Server) == "" || n.Port <= 0 {
+		return opt, fmt.Errorf("节点「%s」缺少服务器地址/端口", n.Name)
+	}
+	opt = outbound.Hysteria2Option{
+		Name:         n.Name,
+		Server:       n.Server,
+		Port:         n.Port,
+		Password:     n.Password,
+		SNI:          n.TLS.ServerName,
+		Obfs:         n.Obfs,
+		ObfsPassword: n.ObfsPassword,
+	}
+	if n.UpMbps > 0 {
+		opt.Up = fmt.Sprintf("%d Mbps", n.UpMbps)
+	}
+	if n.DownMbps > 0 {
+		opt.Down = fmt.Sprintf("%d Mbps", n.DownMbps)
+	}
 	return opt, nil
 }

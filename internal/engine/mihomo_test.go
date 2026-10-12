@@ -191,16 +191,107 @@ func TestVlessOptionMapping(t *testing.T) {
 	})
 }
 
-// TestMihomoSupportsIsHonest 锁死"只声明已经接好的协议"。
+// TestMihomoSupportsIsHonest 守住那条规则："只声明已经实现的东西"。
 //
-// 迁移是分步做的：宁可构造时就明确报错，也不要等用户点了激活才发现没接。
+// 第 3 轮这版的断言是"vmess/trojan/ss/hysteria2 还没接、不该声称支持"；
+// 第 6 轮把它们实现了，那条断言随之过时 —— 但**意图不变**：
+// 适配层没实现的协议必须当场拒绝，而不是等用户点了"激活"才发现没接。
 func TestMihomoSupportsIsHonest(t *testing.T) {
-	if !mihomoSupports(config.ProtocolVLESS) {
-		t.Fatal("vless 已接，应当返回 true")
-	}
-	for _, p := range []string{config.ProtocolVMess, config.ProtocolTrojan, config.ProtocolShadowsocks, config.ProtocolHysteria2} {
-		if mihomoSupports(p) {
-			t.Fatalf("%s 还没接，不该声称支持（否则用户激活时才炸）", p)
+	for _, p := range []string{
+		config.ProtocolVLESS, config.ProtocolVMess, config.ProtocolTrojan,
+		config.ProtocolShadowsocks, config.ProtocolHysteria2,
+	} {
+		if !mihomoSupports(p) {
+			t.Errorf("%s 已经实现，必须放行", p)
 		}
 	}
+	if mihomoSupports("nope-not-a-protocol") {
+		t.Error("不认识的协议不该声称支持")
+	}
+}
+
+func TestOtherProtocolOptions(t *testing.T) {
+	t.Run("vmess：Security→Cipher、AlterID、传输 ws", func(t *testing.T) {
+		n := config.Node{
+			ID: "v", Name: "v", Protocol: config.ProtocolVMess,
+			Server: "1.1.1.1", Port: 443, UUID: "uuid-1", AlterID: 64, Security: "auto",
+		}
+		n.TLS.Enabled = true
+		n.TLS.ServerName = "sni.example.com"
+		n.Transport.Network = "ws"
+		n.Transport.Path = "/w"
+		o, err := vmessOption(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if o.Cipher != "auto" || o.AlterID != 64 {
+			t.Fatalf("Cipher/AlterID 映射错误：cipher=%q alterID=%d", o.Cipher, o.AlterID)
+		}
+		if o.Network != "ws" || o.WSOpts.Path != "/w" {
+			t.Fatalf("ws 映射错误：net=%q path=%q", o.Network, o.WSOpts.Path)
+		}
+	})
+
+	t.Run("trojan：SNI 字段 + 传输白名单", func(t *testing.T) {
+		n := config.Node{
+			ID: "t", Name: "t", Protocol: config.ProtocolTrojan,
+			Server: "t.example.com", Port: 443, Password: "pw",
+		}
+		n.TLS.ServerName = "sni.example.com"
+		o, err := trojanOption(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if o.SNI != "sni.example.com" || o.Password != "pw" {
+			t.Fatalf("trojan 映射错误：sni=%q pw=%q", o.SNI, o.Password)
+		}
+		n.Transport.Network = "xhttp" // trojan 结构体没有这个选项
+		if _, err := trojanOption(n); err == nil {
+			t.Fatal("trojan + xhttp 应当明确报错，而不是静默忽略传输")
+		}
+	})
+
+	t.Run("shadowsocks：Method→Cipher", func(t *testing.T) {
+		n := config.Node{
+			ID: "s", Name: "s", Protocol: config.ProtocolShadowsocks,
+			Server: "s.example.com", Port: 8388, Password: "pw", Method: "aes-256-gcm",
+		}
+		o, err := shadowsocksOption(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if o.Cipher != "aes-256-gcm" || o.Password != "pw" {
+			t.Fatalf("ss 映射错误：cipher=%q pw=%q", o.Cipher, o.Password)
+		}
+	})
+
+	t.Run("hysteria2：Up/Down 带单位、Obfs 透传", func(t *testing.T) {
+		n := config.Node{
+			ID: "h", Name: "h", Protocol: config.ProtocolHysteria2,
+			Server: "h.example.com", Port: 443, Password: "pw",
+			UpMbps: 100, DownMbps: 500, Obfs: "salamander", ObfsPassword: "op",
+		}
+		n.TLS.ServerName = "sni.example.com"
+		o, err := hysteria2Option(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if o.Up != "100 Mbps" || o.Down != "500 Mbps" {
+			t.Fatalf("Up/Down 应当是带单位字符串，实际 up=%q down=%q", o.Up, o.Down)
+		}
+		if o.Obfs != "salamander" || o.ObfsPassword != "op" || o.SNI != "sni.example.com" {
+			t.Fatalf("hysteria2 映射错误：%+v", o)
+		}
+	})
+
+	t.Run("五种协议都要被 mihomoSupports 放行", func(t *testing.T) {
+		for _, p := range []string{
+			config.ProtocolVLESS, config.ProtocolVMess, config.ProtocolTrojan,
+			config.ProtocolShadowsocks, config.ProtocolHysteria2,
+		} {
+			if !mihomoSupports(p) {
+				t.Fatalf("%s 已实现，应当放行", p)
+			}
+		}
+	})
 }
