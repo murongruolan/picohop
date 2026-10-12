@@ -333,3 +333,40 @@ mihomo 侧（`constant.PacketConn`，v1.19.32 模块缓存里的源码）：
 **验证方案（下一轮）**：经该 UDP 通道把一条 DNS 查询发到 `8.8.8.8:53`，看是否收到应答
 （真实、可判定，且不需要额外节点）。
 
+### 第 ⑨ 轮：UDP 的 API 事实已钉死（比预想简单，下一轮可直接写）
+
+在模块缓存里把链路读通了（`.cache/gomod/...`，与 go.mod 同为 v1.19.32）：
+
+**① `constant.PacketConn` 的真实构成**（`mihomo/common/net/packet/packet.go:13`）：
+
+    type EnhancePacketConn interface {
+        net.PacketConn      // ReadFrom / WriteTo / SetReadDeadline / Close …
+        WaitReadFrom        // 一个"可等待/可叫醒"的机制
+    }
+
+**关键结论：返回的对象本身就是 `net.PacketConn`** —— 所以我们的 `UDPChannel`
+可以直接建在它上面，**不需要**去啃 `PacketBuffer` 那套（此前担心会复杂得多）：
+
+  - `SendToUDP(payload, host, port)`
+      → `pc.WriteTo(payload, &net.UDPAddr{IP: net.ParseIP(host), Port: port})`
+  - `ReceiveFromUDP(quit, buf)` → 两种都能用：
+      (a) `select` 等 `pc.WaitReadFrom()` 与 `quit`（更干净）；
+      (b) 退而求其次：`SetReadDeadline(now+200ms)` 小步轮询，每轮检查 `quit`。
+      **无论哪种都必须能被 quit 叫醒**（wireguard 侧有过"阻塞读叫不醒 → 死锁"的教训）。
+  - `Close()` → `pc.Close()`
+  - `DialUDP(ctx, front)` → `out.ListenPacketContext(ctx, &C.Metadata{NetWork: C.UDP})`，
+      再按 mihomo 用法调 `ResolveUDP(ctx, metadata)`。
+      注意我们接口的 `DialUDP` **不带目标**（目标由每个 `SendToUDP` 给），所以 metadata
+      用空的即可。
+  - **错误要透传**：不支持 UDP 的 mihomo 出站会让 `Base.ListenPacketContext` 返回
+      `C.ErrNotSupport`（见 `adapter/outbound/base.go:96`）—— 照原样返回给上层，别包装成
+      自己的话术，否则排查时看不出是内核不支持。
+
+**② `PacketBuffer{Buffer *buf.Buffer, Destination M.Socksaddr}`** 也读到了
+（`sing@v0.5.8/common/network/packet.go`），以及 sing 的高层读接口
+`ReadPacket(buffer *buf.Buffer) (destination M.Socksaddr, err error)`
+（`packet_conn.go:35`）—— 如果 (a) 方案里 `WaitReadFrom` 用起来别扭，可改用这条高层接口。
+
+**③ 验证方式不变**：经通道把 DNS 查询发到 `8.8.8.8:53`，看是否收到应答。
+
+
