@@ -63,7 +63,7 @@ if ($buildCli) {
 # 【v3 起不再用 wails build】
 # `wails build` 是一条 Taskfile 驱动的流水线（根 Taskfile.yml → build/windows/
 # Taskfile.yml），需要额外装 `task` 这个 Taskfile 执行器，而它做的事情本质上就是：
-#   前端 npm run build → go build -tags production,<EXTRA_TAGS> -ldflags "-H windowsgui"
+#   前端 npm run build → go build -tags production -ldflags "-H windowsgui"
 # 我们直接调这条命令，好处是：不依赖 wails3 CLI 与 task、构建过程可见可控、
 # 和命令行版走完全一样的编译路径。
 #
