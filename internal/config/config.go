@@ -229,16 +229,28 @@ func (c *Config) Validate() []Issue {
 	seenID := map[string]bool{}
 
 	for i := range c.Nodes {
-		n := &c.Nodes[i]
+		// 【这里是读路径，一行都不许写配置】
+		// 所以取**值拷贝**而不是 &c.Nodes[i]：即使后人误加了一句回写，
+		// 也伤不到共享的那份配置（写回只改到这个局部副本，不会静默生效）。
+		//
+		// 为什么较真：App.Validate 持的是 RLock，而 RLock 允许**多个读者同时进入**。
+		// 本函数历史上会就地补 ID、补协议、补监听地址 —— 于是"点一下校验"和并发的
+		// 读者（节点列表、每秒统计、Save 时的序列化）会对同一片内存一读一写，
+		// 是实实在在的 data race。补默认值是**改配置**，只能由显式写入路径做：
+		// 载入走 normalize()，新增/更新节点走 App.AddNode / App.UpdateNode
+		// （两者都调 Config.NormalizeNode）。别再把这些补丁挪回来。
+		n := c.Nodes[i]
 		scope := n.Name
 		if strings.TrimSpace(scope) == "" {
 			scope = fmt.Sprintf("节点 #%d", i+1)
 		}
 
+		// 缺 ID 不再偷偷补（那就是写配置），直接报出来。
+		// 正常路径下不可能为空：Load -> normalize()、AddNode / UpdateNode -> NormalizeNode
+		// 都会补 ID；能走到这里说明配置被手工改坏了，值得让用户看见。
 		if strings.TrimSpace(n.ID) == "" {
-			n.ID = NewID()
-		}
-		if seenID[n.ID] {
+			add(scope, "id", "内部 ID 缺失（配置可能被手工改过）；重新载入配置会自动补齐")
+		} else if seenID[n.ID] {
 			add(scope, "id", "内部 ID 重复：%s", n.ID)
 		}
 		seenID[n.ID] = true
@@ -250,8 +262,10 @@ func (c *Config) Validate() []Issue {
 		}
 		seenName[n.Name] = true
 
-		n.Protocol = ProtocolOrDefault(n.Protocol)
-		if !IsSupportedProtocol(n.Protocol) {
+		// 空协议按 socks5 处理（与 NormalizeNode / normalize() 同一规则），
+		// 但只在**局部变量**上取默认值，不回写 n.Protocol。
+		proto := ProtocolOrDefault(n.Protocol)
+		if !IsSupportedProtocol(proto) {
 			add(scope, "protocol", "不支持的协议 %q", n.Protocol)
 		}
 
@@ -264,9 +278,9 @@ func (c *Config) Validate() []Issue {
 			}
 			seenPort[n.ListenPort] = scope
 		}
-		if strings.TrimSpace(n.ListenHost) == "" {
-			n.ListenHost = c.Settings.DefaultListenHost
-		}
+		// 监听地址：这里以前会把空值补成 Settings.DefaultListenHost —— 那也是写配置，
+		// 已挪到写入路径的 NormalizeNode。校验本身不需要它：
+		// 下游真正决定监听地址的是 ListenHostEffective，它对空值有 fail-closed 兜底。
 
 		// 前置引用
 		kind := n.FrontKind()
@@ -282,7 +296,7 @@ func (c *Config) Validate() []Issue {
 		}
 
 		// 远端服务器
-		if n.Protocol == ProtocolWireGuard {
+		if proto == ProtocolWireGuard {
 			w := n.WireGuard
 			if w == nil {
 				add(scope, "wireguard", "缺少 WireGuard 配置")
@@ -315,7 +329,7 @@ func (c *Config) Validate() []Issue {
 			add(scope, "port", "%v", err)
 		}
 
-		switch n.Protocol {
+		switch proto {
 		case ProtocolVMess:
 			if strings.TrimSpace(n.UUID) == "" {
 				add(scope, "uuid", "VMess 必须填写 UUID")
@@ -720,6 +734,32 @@ func migrate(data []byte, version int) ([]byte, error) {
 	return json.MarshalIndent(out, "", "  ")
 }
 
+// NormalizeNode 给单个节点补上缺失的默认值：协议、监听地址、内部 ID。
+//
+// 【为什么必须是一个"显式"的步骤，而不是塞回 Validate】
+// 校验（Validate）是**读路径**：App.Validate 持 RLock 调它，而 RLock 下可以有
+// 多个读者并发，任何回写都是 data race（详见 Validate 开头的注释）。
+// 所以补默认值只能由**写入路径**显式调用：
+//
+//	载入配置   config.Load -> normalize() -> NormalizeNode
+//	新增节点   App.AddNode
+//	更新节点   App.UpdateNode
+//
+// 写成独立方法而不是在 Validate 里顺手补，是为了让"谁在改配置"一眼可见 ——
+// 见到这个函数就说明是写操作。加/改默认值规则时请改这里，两处写入路径自动跟上。
+func (c *Config) NormalizeNode(n *Node) {
+	if n == nil {
+		return
+	}
+	n.Protocol = ProtocolOrDefault(n.Protocol)
+	if n.ListenHost == "" {
+		n.ListenHost = c.Settings.DefaultListenHost
+	}
+	if n.ID == "" {
+		n.ID = NewID()
+	}
+}
+
 // normalize 填补缺失字段，避免旧配置文件导致空值。
 func (c *Config) normalize() {
 	d := Default()
@@ -786,15 +826,11 @@ func (c *Config) normalize() {
 	}
 	for i := range c.Nodes {
 		n := &c.Nodes[i]
-		n.Protocol = ProtocolOrDefault(n.Protocol)
-		if n.ListenHost == "" {
-			n.ListenHost = s.DefaultListenHost
-		}
+		// 协议 / 监听地址 / ID 三项走 NormalizeNode —— 与 App 的新增、更新路径
+		// 共用同一份规则，避免"载入时补一套、校验时又补另一套"再次分叉。
+		c.NormalizeNode(n)
 		if n.Name == "" {
 			n.Name = fmt.Sprintf("节点%d", i+1)
-		}
-		if n.ID == "" {
-			n.ID = NewID()
 		}
 		if n.Transport.Network == "" {
 			n.Transport.Network = "tcp"

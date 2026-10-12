@@ -18,12 +18,11 @@ import (
 // 端口为 0 时自动分配一个空闲端口（规则见 internal/ports）。
 func (a *App) AddNode(n config.Node) (config.Node, error) {
 	a.mu.Lock()
-	if n.ID == "" {
-		n.ID = config.NewID()
-	}
-	if n.ListenHost == "" {
-		n.ListenHost = a.cfg.Settings.DefaultListenHost
-	}
+	// 【归一化必须在这里做，别指望 Validate】校验是读路径、不再回写配置
+	// （见 config.NormalizeNode 与 config.Validate 的注释）。补协议/监听地址/ID
+	// 只能由写入路径显式做，而且必须在下面按 ID 分配端口之前 ——
+	// 端口分配器的 key 就是节点 ID。
+	a.cfg.NormalizeNode(&n)
 	if n.ListenPort == 0 {
 		n.ListenPort = a.allocatorLocked(n.ID).Next()
 	}
@@ -55,6 +54,9 @@ func (a *App) UpdateNode(n config.Node) (config.Node, error) {
 		return config.Node{}, fmt.Errorf("未找到要更新的节点")
 	}
 	old := a.cfg.Nodes[idx]
+	// 编辑对话框可能把监听地址清空、或送来一个空协议；补默认值是**写路径**的活
+	// （Validate 已改成只读，不会再替我们补，见 config.NormalizeNode）。
+	a.cfg.NormalizeNode(&n)
 	// 保留运行时才知道的字段，避免编辑一次就把统计和最近使用时间清空
 	n.CreatedAt = old.CreatedAt
 	n.StatsDay = old.StatsDay

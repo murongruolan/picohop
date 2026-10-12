@@ -269,6 +269,15 @@ func (a *App) Save() error {
 }
 
 // Validate 返回当前配置的全部问题。
+//
+// 【这是读路径：持 RLock 就够了，但也要求 config.Validate **一行都不许写配置**】
+// 以前 config.Validate 会在锁内就地补节点 ID / 协议 / 监听地址 —— 而 RLock 允许
+// 多个读者同时进入，于是"点一下校验"会和并发的读者（节点列表、每秒统计、
+// Save 时的序列化）对同一份 Nodes 一读一写，是实实在在的 data race。
+// 现在补默认值全部挪到了显式写入路径（config.Load 的 normalize()、
+// AddNode / UpdateNode 里的 NormalizeNode），config.Validate 只读，这里才敢用 RLock。
+// 【后人注意】谁要是再往 Validate 里加回写语句，必须同时把这里换成 a.mu.Lock()；
+// 更正确的做法是继续留在写入路径里补。
 func (a *App) Validate() []config.Issue {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
