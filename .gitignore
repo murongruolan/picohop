@@ -37,3 +37,5 @@
 Thumbs.db
 desktop.ini
 .DS_Store
+# 应用以自定义配置路径运行时会落在当前目录的运行时产物
+cache.db

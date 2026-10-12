@@ -39,6 +39,8 @@ type MihomoUpstream struct {
 
 	mu  sync.Mutex
 	out C.ProxyAdapter
+	// built 是构造时就建好的出站实例；Stop 只清 out（激活态），built 留着以便重新激活。
+	built C.ProxyAdapter
 }
 
 // NewMihomo 构造一个走 mihomo 出站层的出口。
@@ -51,7 +53,15 @@ func NewMihomo(n config.Node, front config.Front, logf func(string, ...any)) (pr
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
-	return &MihomoUpstream{node: n, front: front, logf: logf}, nil
+	// 【为什么在构造时就把出站建出来】映射错误（字段缺失、传输不支持等）原本要等到
+	// Start 才暴露，那样上层就没法回退了 —— 用户会看到"节点激活失败"，
+	// 而这个节点在 sing-box 下本来是能用的。构造时就建好，让 proxy.NewUpstream
+	// 能按"构造失败 → 回退 sing-box"处理，换装期不会让任何节点从可用变不可用。
+	out, err := buildMihomoOutbound(n)
+	if err != nil {
+		return nil, err
+	}
+	return &MihomoUpstream{node: n, front: front, logf: logf, built: out}, nil
 }
 
 // mihomoSupports 目前只声明已经写好的协议。
@@ -82,11 +92,17 @@ func (u *MihomoUpstream) DialTimeout() time.Duration {
 func (u *MihomoUpstream) SupportsUDP() bool { return true }
 
 func (u *MihomoUpstream) Start(ctx context.Context, _ proxy.Front) error {
-	out, err := buildMihomoOutbound(u.node)
-	if err != nil {
-		return err
-	}
 	u.mu.Lock()
+	out := u.built
+	if out == nil {
+		// 兜底：正常流程里构造时就建好了
+		built, err := buildMihomoOutbound(u.node)
+		if err != nil {
+			u.mu.Unlock()
+			return err
+		}
+		u.built, out = built, built
+	}
 	u.out = out
 	u.mu.Unlock()
 	u.logf("「%s」mihomo 出站已就绪：%s（type=%v）", u.node.Name, out.Addr(), out.Type())

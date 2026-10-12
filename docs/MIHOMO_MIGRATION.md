@@ -404,6 +404,25 @@ NewUpstream 在五个 sing-box 协议分支之前插入：mode == "mihomo" 且 m
 
 **还没做**：界面上的开关（现在要改配置文件）；把默认翻成 mihomo；第 ⑥ 步。
 
+### 第 ⑮ 轮：端到端验开关 —— 通过，并暴露/修掉一个回退盲区
+
+用配置副本（不动用户配置）跑单节点激活：
+
+  A) engineMode=mihomo + 正常 vmess 节点 -> **日志出现**
+     「香港-39.109-CN2-VMess」mihomo 出站已就绪：39.109.57.15:11720（type=Vmess）
+     → 开关端到端生效（走的是我们的 mihomo 适配层，不是 sing-box）。
+
+  B) engineMode=mihomo + vmess 缺 uuid -> **激活直接失败**，没有回退。
+     原因：mihomoFactory 只在**构造时**检查协议，而**映射错误发生在 Start 里** ——
+     上层没法回退。这在换装期是真风险：某些 sing-box 能跑、mihomo 映射会拒绝的节点
+     会从"可用"变成"不可用"。
+
+**修法（本轮已改）**：`NewMihomo` 在**构造时就把出站建出来**（映射错误因此提前到构造期），
+实例存在 `built` 字段里、`Start` 只切换激活态、`Stop` 只清激活态。
+于是 `proxy.NewUpstream` 的"构造失败就回退 sing-box"能覆盖映射失败这一整类情况。
+
+**注**：`NewVless/NewVmess/...` 只是构造对象、不建连接，所以构造期建实例的代价可以忽略。
+
 ### 第 ⑩ 轮：UDP 试做后被实测否掉 —— 设计要件是"按目标建通道"
 
 按第 ⑨ 轮的思路写了 `mihomo_udp.go`（`C.PacketConn` → `proxy.UDPChannel`）并接上 `DialUDP`，
