@@ -42,6 +42,17 @@ type NodeView struct {
 	LatencyKind string  `json:"latencyKind"`
 	RealMs      int64   `json:"realMs"`
 	SpeedMBps   float64 `json:"speedMbps"`
+	// LatencyAt / LatencyFailed 说明「延迟」列里那个值是**什么时候**测出来的、
+	// 以及最近一次延迟测试有没有测出数值；SpeedAt / SpeedFailed 同理用于速度列。
+	//
+	// 【界面为什么要这三态】审查 #19：失败时不再把旧值写成 0，所以界面必须自己
+	// 分清"没测过（无值、无时间）/ 有效（有值、最近一次同类测试成功）/
+	// 上次成功值（有值但最近一次同类测试没测出，已过期）"。判断放在这里算好，
+	// 前端只负责显示（见 NodeCell.vue）。
+	LatencyAt     time.Time `json:"latencyAt"`
+	LatencyFailed bool      `json:"latencyFailed"`
+	SpeedAt       time.Time `json:"speedAt"`
+	SpeedFailed   bool      `json:"speedFailed"`
 	// ExitIP 是最近一次"出口 IP"测试的结果（不落盘）。
 	ExitIP string `json:"exitIp"`
 
@@ -169,6 +180,10 @@ func (a *App) buildView(n config.Node, st *proxyStats, errMsg string) NodeView {
 		LatencyKind:   n.LatencyKind,
 		RealMs:        n.RealMs,
 		SpeedMBps:     n.SpeedMBps,
+		LatencyAt:     n.LatencyAt,
+		LatencyFailed: n.LatencyFailed,
+		SpeedAt:       n.SpeedAt,
+		SpeedFailed:   n.SpeedFailed,
 		TodayUp:       n.UpBytes,
 		TodayDown:     n.DownBytes,
 		TodayTotal:    n.TotalBytes(),

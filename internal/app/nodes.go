@@ -100,6 +100,11 @@ func (a *App) CloneNode(id string) (config.Node, error) {
 	dup.CreatedAt = time.Now()
 	dup.LastUsed = time.Time{}
 	dup.LatencyMs, dup.RealMs, dup.SpeedMBps, dup.LatencyKind = 0, 0, 0, ""
+	// 克隆出来的节点从没测过：连"上次成功值的时间/失败标记"一起清掉。
+	// 只清数值不清标记的话，新节点会顶着原节点那份失败标记，界面把它的空值
+	// 显示成"失败"（审查 #19 引入的字段，克隆路径同样得跟上）。
+	dup.LatencyAt, dup.SpeedAt = time.Time{}, time.Time{}
+	dup.LatencyFailed, dup.SpeedFailed = false, false
 	dup.UpBytes, dup.DownBytes, dup.StatsDay = 0, 0, config.Today()
 	a.cfg.Nodes = append(a.cfg.Nodes, dup)
 	a.mu.Unlock()

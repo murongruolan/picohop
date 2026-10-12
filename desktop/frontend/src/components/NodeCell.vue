@@ -49,6 +49,18 @@ function latestLatency(r) {
   return r.latencyKind === 'real' ? r.realMs || 0 : r.latencyMs || 0
 }
 
+/**
+ * "上次成功值（已过期）"的提示语。
+ *
+ * 【为什么要专门说一句】测试失败时后端**不再**把旧数值写成 0（审查 #19），
+ * 于是这个数字是"以前测出来的"而不是"这次测出来的"。不解释的话，用户会以为
+ * 它是刚刚的结果 —— 那还不如显示空。所以变灰 + 悬停说明来源时间。
+ */
+function staleNote(what, at) {
+  const when = at ? `（${formatWhen(at)}）` : ''
+  return `最近一次${what}没有测出数值，这里是上次成功的结果${when}`
+}
+
 function latencyClass(v) {
   if (!v || v <= 0) return 'cp-dim'
   if (v < 300) return 'cp-lat-good'
@@ -113,27 +125,60 @@ async function copyPort() {
   </template>
 
   <!-- 延迟 -->
+  <!-- 三态：没测过（—）/ 有效（正常着色）/ 上次成功值（变灰 + 悬停说明来源时间） -->
   <template v-else-if="col === 'latency'">
     <el-icon v-if="testingFor('tcp') || testingFor('real')" class="cp-spin"><Loading /></el-icon>
-    <span v-else-if="latestLatency(row)" class="cp-num" :class="latencyClass(latestLatency(row))">
-      {{ formatMs(latestLatency(row)) }}
+    <el-tooltip
+      v-else-if="latestLatency(row)"
+      :disabled="!row.latencyFailed"
+      :content="staleNote('延迟测试', row.latencyAt)"
+      placement="top"
+      :show-after="300"
+    >
+      <span
+        class="cp-num"
+        :class="row.latencyFailed ? 'cp-stale' : latencyClass(latestLatency(row))"
+      >
+        {{ formatMs(latestLatency(row)) }}
+      </span>
+    </el-tooltip>
+    <!-- 测过但没测出数值、且从来没成功过：是"失败"，不是"没测过" -->
+    <span v-else-if="row.latencyFailed" class="cp-lat-mid" title="最近一次延迟测试失败">
+      失败
     </span>
     <span v-else class="cp-dim">—</span>
   </template>
 
   <template v-else-if="col === 'real'">
     <el-icon v-if="testingFor('real')" class="cp-spin"><Loading /></el-icon>
-    <span v-else-if="row.realMs" class="cp-num" :class="latencyClass(row.realMs)">
-      {{ formatMs(row.realMs) }}
-    </span>
+    <el-tooltip
+      v-else-if="row.realMs"
+      :disabled="!row.latencyFailed"
+      :content="staleNote('延迟测试', row.latencyAt)"
+      placement="top"
+      :show-after="300"
+    >
+      <span class="cp-num" :class="row.latencyFailed ? 'cp-stale' : latencyClass(row.realMs)">
+        {{ formatMs(row.realMs) }}
+      </span>
+    </el-tooltip>
     <span v-else class="cp-dim">—</span>
   </template>
 
   <template v-else-if="col === 'speed'">
     <el-icon v-if="testingFor('speed')" class="cp-spin"><Loading /></el-icon>
-    <span v-else-if="row.speedMbps" class="cp-num cp-lat-good">
-      {{ formatSpeed(row.speedMbps) }}
-    </span>
+    <el-tooltip
+      v-else-if="row.speedMbps"
+      :disabled="!row.speedFailed"
+      :content="staleNote('测速', row.speedAt)"
+      placement="top"
+      :show-after="300"
+    >
+      <span class="cp-num" :class="row.speedFailed ? 'cp-stale' : 'cp-lat-good'">
+        {{ formatSpeed(row.speedMbps) }}
+      </span>
+    </el-tooltip>
+    <span v-else-if="row.speedFailed" class="cp-lat-mid" title="最近一次测速失败">失败</span>
     <span v-else class="cp-dim">—</span>
   </template>
 
@@ -212,6 +257,13 @@ async function copyPort() {
 }
 .cp-lat-bad {
   color: var(--cp-danger);
+}
+/* "上次成功值"：变灰表示它不是这次测出来的（悬停有来源时间），
+   但底下留一条虚线下划线，免得被当成"没有数据"。 */
+.cp-stale {
+  color: var(--cp-text-3);
+  border-bottom: 1px dashed var(--cp-text-3);
+  cursor: help;
 }
 .cp-spin {
   animation: cp-rotate 1s linear infinite;

@@ -312,12 +312,25 @@ func runTest(args []string) {
 	}
 
 	fmt.Println("\n结果：")
+	// 【为什么要有星号】审查 #19 之后，测试失败**不再**把上一次的延迟/速度写成 0，
+	// 所以一个失败节点也会显示上一次成功测出来的数字。不打标记它会被读成
+	// "刚刚测出来就是这个数"，比显示空还糟。星号 = 本次没测出数值（见 staleMark）。
+	marked := false
 	for _, v := range a.Nodes() {
 		if !containsID(ids, v.ID) {
 			continue
 		}
-		fmt.Printf("  %-16s TCP %-8s 真连接 %-8s 速度 %-11s 出口 %s\n",
-			trunc(v.Name, 15), msText(v.LatencyMs), msText(v.RealMs), speedText(v.SpeedMBps), orDash(v.ExitIP))
+		tcp := staleMark(msText(v.LatencyMs), v.LatencyFailed)
+		real := staleMark(msText(v.RealMs), v.LatencyFailed)
+		spd := staleMark(speedText(v.SpeedMBps), v.SpeedFailed)
+		if strings.HasSuffix(tcp, "*") || strings.HasSuffix(real, "*") || strings.HasSuffix(spd, "*") {
+			marked = true
+		}
+		fmt.Printf("  %-16s TCP %-9s 真连接 %-9s 速度 %-12s 出口 %s\n",
+			trunc(v.Name, 15), tcp, real, spd, orDash(v.ExitIP))
+	}
+	if marked {
+		fmt.Println("  （* = 本次测试没有测出数值，显示的是上次成功值）")
 	}
 }
 
@@ -595,6 +608,18 @@ func speedText(v float64) string {
 func orDash(s string) string {
 	if strings.TrimSpace(s) == "" {
 		return "-"
+	}
+	return s
+}
+
+// staleMark 给"上次成功值"打一个星号。
+//
+// failed 表示最近一次同类测试没有测出数值；此时数值是**上一次**测出来的
+// （审查 #19 起不再清零），必须让读的人看出来。没有数值就还是 "-"，不加星号
+// （那是"没测过"，本来就看得出来）。
+func staleMark(s string, failed bool) string {
+	if failed && s != "-" {
+		return s + "*"
 	}
 	return s
 }

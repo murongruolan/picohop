@@ -31,9 +31,9 @@ func TestRemoveInvalidIgnoresUntestedAndRealOK(t *testing.T) {
 	}, config.Front{})
 
 	// 真连接延迟测试成功：LatencyMs 仍然是 0，成功与否只能看 updateTest 的显式标记
-	a.updateTest("realok", TestReal, false, 0, 0, "")
+	a.updateTest("realok", TestReal, false, measured{ok: true})
 	// TCP 测试成功但耗时 0ms（本机/局域网节点很常见）
-	a.updateTest("fast", TestTCP, false, 0, 0, "")
+	a.updateTest("fast", TestTCP, false, measured{ok: true})
 
 	p := a.PreviewInvalidNodes()
 	if len(p.IDs) != 0 {
@@ -72,10 +72,10 @@ func TestRemoveInvalidDeletesOnlyFailed(t *testing.T) {
 	}, config.Front{})
 
 	// 先失败、后成功：谁最后测谁覆盖，alive 不能被删
-	a.updateTest("alive", TestTCP, true, 0, 0, "")
-	a.updateTest("alive", TestTCP, false, 88, 0, "")
+	a.updateTest("alive", TestTCP, true, measured{})
+	a.updateTest("alive", TestTCP, false, measured{ok: true, ms: 88})
 	// TCP 握手失败 = 明确连不上
-	a.updateTest("dead", TestTCP, true, 0, 0, "")
+	a.updateTest("dead", TestTCP, true, measured{})
 
 	p := a.PreviewInvalidNodes()
 	if len(p.IDs) != 1 || p.IDs[0] != "dead" {
@@ -112,9 +112,9 @@ func TestRemoveInvalidIgnoresStaleAndChangedAddr(t *testing.T) {
 		{ID: "fresh", Name: "刚测失败", Protocol: config.ProtocolSOCKS5, Server: "f.example.com", Port: 1},
 	}, config.Front{})
 
-	a.updateTest("stale", TestTCP, true, 0, 0, "")
-	a.updateTest("moved", TestTCP, true, 0, 0, "")
-	a.updateTest("fresh", TestTCP, true, 0, 0, "")
+	a.updateTest("stale", TestTCP, true, measured{})
+	a.updateTest("moved", TestTCP, true, measured{})
+	a.updateTest("fresh", TestTCP, true, measured{})
 
 	// 把两条结论弄成"不再算数"：一个时间太久，一个地址对不上
 	a.mu.Lock()
@@ -159,14 +159,14 @@ func TestRemoveInvalidRechecksBeforeDelete(t *testing.T) {
 		{ID: "n1", Name: "先失败后跑通", Protocol: config.ProtocolSOCKS5, Server: "x.example.com", Port: 1},
 	}, config.Front{})
 
-	a.updateTest("n1", TestTCP, true, 0, 0, "")
+	a.updateTest("n1", TestTCP, true, measured{})
 	preview := a.PreviewInvalidNodes()
 	if len(preview.IDs) != 1 {
 		t.Fatalf("前提不成立：应当先判定为无效项，实际 %v", preview.Names)
 	}
 
 	// 用户还没点确认，后台测试刚好跑通了
-	a.updateTest("n1", TestTCP, false, 120, 0, "")
+	a.updateTest("n1", TestTCP, false, measured{ok: true, ms: 120})
 
 	// 界面仍然把预览时的那份 ids 送来 —— 后端必须自己再核一遍
 	n, err := a.RemoveInvalidNodes(preview.IDs)
@@ -183,7 +183,7 @@ func TestRemoveInvalidEmptyIDs(t *testing.T) {
 	a := newTestApp(t, []config.Node{
 		{ID: "dead", Name: "连不上", Protocol: config.ProtocolSOCKS5, Server: "d.example.com", Port: 1},
 	}, config.Front{})
-	a.updateTest("dead", TestTCP, true, 0, 0, "")
+	a.updateTest("dead", TestTCP, true, measured{})
 
 	n, err := a.RemoveInvalidNodes(nil)
 	if err != nil || n != 0 || a.CountNodes() != 1 {

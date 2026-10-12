@@ -212,6 +212,26 @@ type Node struct {
 	RealMs      int64   `json:"realMs,omitempty"`    // 真连接延迟
 	SpeedMBps   float64 `json:"speedMBps,omitempty"`
 
+	// LatencyAt / SpeedAt 是上面那些**数值**各自测出来的时间（零值 = 从没测出过），
+	// LatencyFailed / SpeedFailed 是"最近一次同类测试有没有测出数值"。
+	//
+	// 【为什么必须单独记，不能拿数值 0 去猜】（审查 #19）测试失败时以前会顺手把
+	// 延迟/速度一并写成 0：既抹掉了上一次真正测出来的数据，界面也从此分不清
+	// "没测过"和"测过但失败"。现在数值只在**真的测出来**时才覆盖（见
+	// app.updateTest），失败只把这一族的 Failed 置真，于是界面有三态：
+	//
+	//	没测过     ：数值为 0、时间为零值   → 显示 "—"
+	//	有效       ：数值非 0、Failed 为假  → 正常显示（按快慢着色）
+	//	上次成功值 ：数值非 0、Failed 为真  → 变灰 + 提示"这是上次成功的结果（xx 前）"
+	//
+	// Failed 是**按族**记的（延迟一族含 TCP 与真连接）：一次测速失败不该把延迟
+	// 也标成过期。反过来，跨族测试（例如测了一次速度）也不该把延迟值标成过期 ——
+	// 所以这里记的是"这一族最近一次测试"的结论，而不是全局那一次。
+	LatencyAt     time.Time `json:"latencyAt,omitempty"`
+	LatencyFailed bool      `json:"latencyFailed,omitempty"`
+	SpeedAt       time.Time `json:"speedAt,omitempty"`
+	SpeedFailed   bool      `json:"speedFailed,omitempty"`
+
 	// TestFailed / TestedAt / TestedAddr 是「最近一次测试的结论」，只服务于
 	// 一件事：判断这个节点算不算「测试无效」（见下面的 KnownUnreachable）。
 	//

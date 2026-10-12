@@ -22,11 +22,11 @@ func TestUpdateTestLatestWins(t *testing.T) {
 	}}
 	a.mu.Unlock()
 
-	a.updateTest("n1", TestReal, false, 759, 0, "")
+	a.updateTest("n1", TestReal, false, measured{ok: true, ms: 759})
 	if got := a.cfg.Nodes[0]; got.LatencyKind != "real" || got.RealMs != 759 {
 		t.Fatalf("真连接测试后应当 kind=real / realMs=759，实际 kind=%q realMs=%d", got.LatencyKind, got.RealMs)
 	}
-	a.updateTest("n1", TestTCP, false, 312, 0, "")
+	a.updateTest("n1", TestTCP, false, measured{ok: true, ms: 312})
 	if got := a.cfg.Nodes[0]; got.LatencyKind != "tcp" || got.LatencyMs != 312 {
 		t.Fatalf("TCP 测试后应当 kind=tcp / latencyMs=312，实际 kind=%q latencyMs=%d", got.LatencyKind, got.LatencyMs)
 	}
