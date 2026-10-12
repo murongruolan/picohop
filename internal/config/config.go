@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 )
 
 // CurrentVersion 是当前配置结构的版本号。
@@ -22,6 +23,13 @@ import (
 //	v1：只有 front + upstreams（socks5 / http / wireguard 三种住宅上游）
 //	v2：front + settings + nodes（8 种协议，每节点独立本地端口与前置选择）
 const CurrentVersion = 2
+
+// DefaultIdleTimeoutSec 是链路空闲断开的默认秒数（Settings.IdleTimeoutSec 为 0 或负数时用它）。
+//
+// 【为什么要有这个常量】这个默认值以前只写在 Default() 里，而 internal/proxy
+// 又自己写死了一个 300 —— 两处一旦分叉，"用户看到的默认值"和"真正生效的值"
+// 就会不一致。默认值只在这里定义一次，Default() / normalize() / Settings.IdleTimeout() 共用。
+const DefaultIdleTimeoutSec = 300
 
 // Settings 是全局设置。
 //
@@ -37,7 +45,9 @@ type Settings struct {
 	// PortStart 是新增节点时的本地端口起始值。
 	PortStart int `json:"portStart"`
 
-	// IdleTimeoutSec 是链路空闲多久后自动断开，0 表示用默认值。
+	// IdleTimeoutSec 是链路空闲多久后自动断开，0 表示用默认值
+	// （DefaultIdleTimeoutSec）。取用时请走 Settings.IdleTimeout()，
+	// 别自己乘 time.Second —— 那样会把 0 当成"永不超时"。
 	IdleTimeoutSec int `json:"idleTimeoutSec"`
 
 	// AutoActivateOnLaunch 为真时，程序启动后自动激活上次处于激活状态的节点。
@@ -116,6 +126,21 @@ type Settings struct {
 	ShortcutToggleAll string `json:"shortcutToggleAll"`
 }
 
+// IdleTimeout 返回链路空闲多久自动断开（对应界面「网络设置 → 空闲自动断开」）。
+//
+// 【为什么必须走这个方法，而不是直接用 IdleTimeoutSec】
+// 存储形式是"秒 + 0 表示没设过"，而下游中继（internal/proxy.Relay）里
+// idle <= 0 的含义是**不设空闲超时**（连接永远不断）。直接透传 0 就把
+// "没设过"变成了"永不超时" —— 从"15 秒就断"翻到另一个极端：死连接再也不回收。
+// 所以 0 和负数一律按默认值处理（fail-closed），调用方不要再自己去乘 time.Second。
+func (s Settings) IdleTimeout() time.Duration {
+	sec := s.IdleTimeoutSec
+	if sec <= 0 {
+		sec = DefaultIdleTimeoutSec
+	}
+	return time.Duration(sec) * time.Second
+}
+
 // Config 是完整的应用配置。
 type Config struct {
 	Version  int      `json:"version"`
@@ -141,7 +166,7 @@ func Default() *Config {
 			DefaultListenHost:      "127.0.0.1",
 			AllowLan:               false,
 			PortStart:              10810,
-			IdleTimeoutSec:         300,
+			IdleTimeoutSec:         DefaultIdleTimeoutSec,
 			AutoActivateOnLaunch:   true,
 			TCPTestTimeoutMs:       5000,
 			TestConcurrency:        8,
@@ -686,8 +711,10 @@ func (c *Config) normalize() {
 	if s.PortStart == 0 {
 		s.PortStart = d.Settings.PortStart
 	}
-	if s.IdleTimeoutSec == 0 {
-		s.IdleTimeoutSec = d.Settings.IdleTimeoutSec
+	// 0（没设过）与负数（非法值）都拉回默认值：负数如果原样留着，
+	// 下游 Relay 会把它当成"不设空闲超时"，等于永远不断开。
+	if s.IdleTimeoutSec <= 0 {
+		s.IdleTimeoutSec = DefaultIdleTimeoutSec
 	}
 	if s.TCPTestTimeoutMs == 0 {
 		s.TCPTestTimeoutMs = d.Settings.TCPTestTimeoutMs

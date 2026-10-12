@@ -544,7 +544,12 @@ func (a *App) startNode(id string) error {
 		return err
 	}
 
-	srv, err := proxy.NewServer(n, frontCfg, a.logfFor(n.Name))
+	// 空闲超时来自全局设置（界面「网络设置 → 空闲自动断开」默认 300s）。
+	// 【别再退回 node.Timeout()】那是拨号超时（固定 15s），拿它当空闲超时
+	// 会让这个设置彻底失效，并且 15 秒静默就掐断链路。
+	idle := a.cfg.Settings.IdleTimeout()
+
+	srv, err := proxy.NewServer(n, frontCfg, idle, a.logfFor(n.Name))
 	if err != nil {
 		a.setErrLocked(id, err.Error())
 		a.mu.Unlock()
