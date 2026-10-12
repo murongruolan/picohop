@@ -354,8 +354,26 @@ func (h *Handler) socksUDPAssociate(tcp net.Conn, br *bufio.Reader) {
 		}()
 	}
 
-	var clientUDP *net.UDPAddr
-	var clientOnce sync.Once
+	// clientUDP 是"回程往哪儿写"：SOCKS5 UDP ASSOCIATE 靠客户端的**第一份**数据报
+	// 确定客户端是从哪个地址发来的，之后所有回包都写回那里。写入方是下面
+	// 「客户端 -> 上游」的 goroutine，读取方是「上游 -> 客户端」的 goroutine。
+	//
+	// 【为什么必须是 atomic.Pointer，而不是裸变量 + sync.Once】sync.Once 只在**调用过
+	// Do 的** goroutine 之间建立先后关系（它保证的是"只执行一次"，不是"对谁都可见"）。
+	// 读取方从来没调用过 Do，于是这一读一写之间**没有任何 happens-before 边**：
+	// 这既是 data race（Go 内存模型下属 UB），也让读取方可以一直读到 nil、或者拿到一个
+	// 还没被完整发布的地址对象 —— 回程包会被静静丢掉，界面上表现为"客户端发得出去、
+	// 永远收不到回包"，而且只在弱内存序机器或激进优化下才现形。
+	// （-race 抓得到：WARNING: DATA RACE，读在「上游 -> 客户端」的循环里，
+	// 写侧原来在 sync.Once 里；连它指向的 IP/Port 字段一起报。）
+	// 改成 atomic.Pointer 后，Load 与 CompareAndSwap 之间自带 happens-before：
+	// 要么读到 nil（客户端还没发过数据报，此时丢掉回包本来就是对的），
+	// 要么读到一个**完整发布**的地址。
+	//
+	// 【为什么写侧用 CompareAndSwap(nil, ...) 而不是 Store】要保持旧实现"只认第一份
+	// 数据报"的语义：换成 Store 就成了"最后一份说了算"，任何能往本地中继口发包的人
+	// 都能把这条会话的回程劫走。别改回去。
+	var clientUDP atomic.Pointer[net.UDPAddr]
 
 	// 客户端 -> 上游
 	go func() {
@@ -375,7 +393,8 @@ func (h *Handler) socksUDPAssociate(tcp net.Conn, br *bufio.Reader) {
 				shutdown()
 				return
 			}
-			clientOnce.Do(func() { clientUDP = from })
+			// 只认第一份：CAS 失败说明回程地址已经定过了（见上面 clientUDP 的注释）。
+			clientUDP.CompareAndSwap(nil, from)
 			dh, dp, payload, perr := parseUDPHeader(buf[:n])
 			if perr != nil {
 				continue
@@ -404,7 +423,9 @@ func (h *Handler) socksUDPAssociate(tcp net.Conn, br *bufio.Reader) {
 				shutdown()
 				return
 			}
-			dst := clientUDP
+			// 原子读：与写入方之间的 happens-before 由原子操作本身建立
+			// （见上面 clientUDP 的注释，别再改回裸变量）。
+			dst := clientUDP.Load()
 			if dst == nil {
 				continue // 还没收到过客户端数据报，无法确定回程地址
 			}
