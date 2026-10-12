@@ -212,6 +212,17 @@ type Node struct {
 	RealMs      int64   `json:"realMs,omitempty"`    // 真连接延迟
 	SpeedMBps   float64 `json:"speedMBps,omitempty"`
 
+	// TestFailed / TestedAt / TestedAddr 是「最近一次测试的结论」，只服务于
+	// 一件事：判断这个节点算不算「测试无效」（见下面的 KnownUnreachable）。
+	//
+	// 【为什么必须单独记一个布尔，不能拿 LatencyMs == 0 当判据】
+	// 那正是审查 #8 的坑：用「真连接延迟」测时结果写进 RealMs，LatencyMs 恒为 0；
+	// 一次成功但耗时不足 1ms 的测试（本机 / 局域网节点）同样是 0。于是
+	// 「移除测试无效项」会把**所有**节点都当成无效项删掉。
+	TestFailed bool      `json:"testFailed,omitempty"` // 最近一次测试是否明确连不上
+	TestedAt   time.Time `json:"testedAt,omitempty"`   // 那次测试的完成时间
+	TestedAddr string    `json:"testedAddr,omitempty"` // 那次测试的地址指纹（server:port）
+
 	// ---- 今日统计（双向） ----
 	// StatsDay 是统计归属的日期（本地时区 "2006-01-02"）；
 	// 跨天时由上层清零，避免把昨天的量算进今天。
@@ -229,6 +240,43 @@ type Node struct {
 // Address 返回远端服务器的 host:port。
 func (n Node) Address() string {
 	return net.JoinHostPort(n.Server, strconv.Itoa(n.Port))
+}
+
+// TestResultTTL 是「测试结论」的有效期。
+//
+// 一次失败只能证明"测的那一刻它连不上"，不能证明现在仍然连不上（服务器可能已经
+// 恢复、线路可能只是抖了一下）。超过这个时间就请用户重新测一次再决定要不要删 ——
+// 删除不可撤销，宁可少删、让用户多测一次。
+//
+// 取 24 小时是为了不打扰"测完随手清理一遍"的正常用法：那种用法里测试与清理
+// 之间只隔几分钟到几小时。
+const TestResultTTL = 24 * time.Hour
+
+// TestKey 是"测试结论对应哪个连接目标"的指纹（小写 server + port）。
+//
+// 只看地址，不看别名/备注/前置：改别名不影响"它连不上"这个事实，
+// 但改服务器地址或端口之后，旧结论说的就是另一个目标了，不能再当删除依据。
+func (n Node) TestKey() string {
+	return net.JoinHostPort(strings.ToLower(strings.TrimSpace(n.Server)), strconv.Itoa(n.Port))
+}
+
+// KnownUnreachable 判断"最近一次测试明确证明它连不上，且这个结论现在还算数"。
+//
+// 这是「移除测试无效项」的唯一判据，三个条件缺一不可：
+//  1. TestFailed —— **测过**、且明确失败。从没测过的节点在这里直接返回 false，
+//     绝不因为"没有结论"就把人删掉；
+//  2. 结论没过 TestResultTTL —— 过期的失败不能作为删除依据；
+//  3. TestedAddr 与当前地址一致 —— 用户改过服务器地址/端口之后，
+//     旧结论描述的是另一个目标（这正是审查 #19 说的"结果不会过期"，
+//     这里只把删除判据管住，不改延迟列的显示语义）。
+func (n Node) KnownUnreachable(now time.Time) bool {
+	if !n.TestFailed || n.TestedAt.IsZero() {
+		return false
+	}
+	if now.Sub(n.TestedAt) > TestResultTTL {
+		return false
+	}
+	return n.TestedAddr != "" && n.TestedAddr == n.TestKey()
 }
 
 // FrontKind 归一化前置取值。

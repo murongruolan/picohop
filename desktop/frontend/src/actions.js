@@ -173,14 +173,64 @@ export function useActions() {
     }
   }
 
+  /**
+   * 移除「测试无效项」。
+   *
+   * 【为什么是"先预览、再确认、最后按名单删"】这是一次**不可撤销的批量删除**，
+   * 而审查 #8 之前它既没有确认弹窗，后端的判据还是 `latencyMs == 0` —— 用
+   * 「真连接延迟」测出来的结果根本不写 latencyMs（写 realMs），于是
+   * 「移除测试无效项」会一次性删光**全部**节点，且没有任何提示。
+   *
+   * 现在：后端只回名单（不删），界面把"删几个、叫什么、不可撤销"写清楚，
+   * 用户点确认后才把这份 ids 送回去删。中途测试刚好跑通/节点被改过的话，
+   * 后端还会再核一遍，那个节点就留下来了。
+   */
   async function removeInvalid() {
+    let preview
     try {
-      const n = await api.removeInvalidNodes()
-      if (n === 0) return
-      notify('success', '已移除测试无效项', `${n} 个节点`)
+      preview = await api.previewInvalidNodes()
+    } catch (e) {
+      fail('读取测试无效项失败', e)
+      return
+    }
+    const ids = preview?.ids || []
+    const names = preview?.names || []
+    if (!ids.length) {
+      // 一个都没选出来时把原因说清楚：从没测过 / 结论过期都不算"无效"
+      notify('info', '没有测试无效的节点', noInvalidReason(preview))
+      return
+    }
+    const { ElMessageBox } = await import('element-plus')
+    try {
+      await ElMessageBox.confirm(
+        `将移除 ${ids.length} 个测试无效的节点：\n${names.join('、')}\n\n` +
+          '此操作不可撤销（不会进回收站），正在运行的会先被停止并释放端口。',
+        '确认移除测试无效项',
+        { type: 'warning', confirmButtonText: '移除', cancelButtonText: '取消' },
+      )
+    } catch {
+      return
+    }
+    try {
+      const n = await api.removeInvalidNodes(ids)
+      if (n > 0) notify('success', '已移除测试无效项', `${n} 个节点`)
     } catch (e) {
       fail('移除失败', e)
     }
+  }
+
+  /** 一个都没删时给出的原因。后端把"从没测过"和"结论已失效"分开计数。 */
+  function noInvalidReason(p) {
+    const parts = []
+    if (p?.untested) parts.push(`${p.untested} 个从未测试过`)
+    if (p?.stale) {
+      parts.push(
+        `${p.stale} 个的测试结论已失效（超过 ${p?.staleAfterHours || 24} 小时，` +
+          '或改过服务器地址之后还没重测）',
+      )
+    }
+    if (!parts.length) return '所有节点最近一次测试都能连上'
+    return `${parts.join('；')}；这些都不作为删除依据，请先重新测试再清理`
   }
 
   // -----------------------------------------------------------------

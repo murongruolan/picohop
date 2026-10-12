@@ -781,19 +781,23 @@ func (a *API) ResetTodayStats(ids []string) error {
 	return nil
 }
 
-// RemoveInvalidNodes 移除"测试无效"（TCP 都连不上）的节点。
-func (a *API) RemoveInvalidNodes() (int, error) {
+// PreviewInvalidNodes 返回"测试无效"的节点名单（只读，不动配置）。
+//
+// 界面拿它弹确认框：写明要删几个、叫什么、不可撤销；用户确认后再把 ids
+// 原样交给 RemoveInvalidNodes。判据见 internal/app 的 PreviewInvalidNodes。
+func (a *API) PreviewInvalidNodes() (app.InvalidPreview, error) {
+	if a.app == nil {
+		return app.InvalidPreview{}, fmt.Errorf("应用尚未就绪")
+	}
+	return a.app.PreviewInvalidNodes(), nil
+}
+
+// RemoveInvalidNodes 删除界面确认过的这些节点。
+func (a *API) RemoveInvalidNodes(ids []string) (int, error) {
 	if a.app == nil {
 		return 0, fmt.Errorf("应用尚未就绪")
 	}
-	n, err := a.app.RemoveInvalidNodes()
-	if err != nil {
-		return n, err
-	}
-	if n == 0 {
-		a.app.Notify("info", "没有测试无效的节点", "所有节点都至少能完成一次 TCP 握手")
-	}
-	return n, nil
+	return a.app.RemoveInvalidNodes(ids)
 }
 
 // OpenPath 在资源管理器里打开某个路径。

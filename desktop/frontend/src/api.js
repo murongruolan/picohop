@@ -165,7 +165,10 @@ export const api = {
   setWindowTheme: (t) => call('SetWindowTheme', t),
   genWireGuardKey: () => call('GenWireGuardKey'),
   resetTodayStats: (ids) => call('ResetTodayStats', ids),
-  removeInvalidNodes: () => call('RemoveInvalidNodes'),
+  // 移除测试无效项是"先取名单、确认、再按名单删"两步：
+  // 预览只读，删除必须带上用户确认过的那份 ids（后端还会按当前配置再核一遍）。
+  previewInvalidNodes: () => call('PreviewInvalidNodes'),
+  removeInvalidNodes: (ids) => call('RemoveInvalidNodes', ids),
   openDataDir: () => call('OpenDataDir'),
   openConfigFile: () => call('OpenConfigFile'),
   openLogFile: () => call('OpenLogFile'),

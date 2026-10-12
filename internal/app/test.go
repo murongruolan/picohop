@@ -148,11 +148,11 @@ func (a *App) runOneTest(ctx context.Context, n config.Node, kind string) {
 		d, err := tester.TCPPing(ctx, n.Server, n.Port, timeout)
 		if err != nil {
 			a.Logf("「%s」TCP 延迟测试失败：%v", n.Name, err)
-			a.updateTest(n.ID, kind, 0, 0, "")
+			a.updateTest(n.ID, kind, true, 0, 0, "")
 			return
 		}
 		a.Logf("「%s」TCP 延迟 %d ms（%d ms 内完成）", n.Name, d.Milliseconds(), time.Since(start).Milliseconds())
-		a.updateTest(n.ID, kind, d.Milliseconds(), 0, "")
+		a.updateTest(n.ID, kind, false, d.Milliseconds(), 0, "")
 		return
 	}
 
@@ -160,7 +160,7 @@ func (a *App) runOneTest(ctx context.Context, n config.Node, kind string) {
 	chain, err := a.openTestChain(ctx, n)
 	if err != nil {
 		a.Logf("「%s」%s测试失败：无法建立链路：%v", n.Name, testLabel(kind), err)
-		a.updateTest(n.ID, kind, 0, 0, "")
+		a.updateTest(n.ID, kind, true, 0, 0, "")
 		return
 	}
 	defer chain.Close()
@@ -178,11 +178,13 @@ func (a *App) runOneTest(ctx context.Context, n config.Node, kind string) {
 		d, err := tester.RealPing(ctx, dial, url, 15*time.Second)
 		if err != nil {
 			a.Logf("「%s」真连接延迟测试失败：%v", n.Name, err)
-			a.updateTest(n.ID, kind, 0, 0, "")
+			// 链路已经建起来了 —— 请求失败说明不了节点无效（可能是目标站点
+			// 不可达/被墙），所以这里记"不算无效"，把之前可能的失败结论清掉。
+			a.updateTest(n.ID, kind, false, 0, 0, "")
 			return
 		}
 		a.Logf("「%s」真连接延迟 %d ms", n.Name, d.Milliseconds())
-		a.updateTest(n.ID, kind, d.Milliseconds(), 0, "")
+		a.updateTest(n.ID, kind, false, d.Milliseconds(), 0, "")
 
 	case TestSpeed:
 		url := s.SpeedTestURL
@@ -190,21 +192,23 @@ func (a *App) runOneTest(ctx context.Context, n config.Node, kind string) {
 		mbps, total, err := tester.Speed(ctx, dial, url, secs, 15*time.Second)
 		if err != nil {
 			a.Logf("「%s」速度测试失败：%v", n.Name, err)
-			a.updateTest(n.ID, kind, 0, 0, "")
+			// 同上：链路通了就算"节点有效"，测速失败与节点是否可用无关。
+			a.updateTest(n.ID, kind, false, 0, 0, "")
 			return
 		}
 		a.Logf("「%s」速度 %.2f MB/s（%s 用时约 %d 秒）", n.Name, mbps, FormatBytes(total), secs)
-		a.updateTest(n.ID, kind, 0, mbps, "")
+		a.updateTest(n.ID, kind, false, 0, mbps, "")
 
 	case TestExit:
 		res := tester.FetchIP(ctx, dial, "https://api.ipify.org?format=json", n.Name)
 		if !res.OK {
 			a.Logf("「%s」出口 IP 探测失败：%v", n.Name, res.Err)
-			a.updateTest(n.ID, kind, 0, 0, "")
+			// 同上：出口 IP 查不到 ≠ 节点不可用（查询服务本身也可能不通）。
+			a.updateTest(n.ID, kind, false, 0, 0, "")
 			return
 		}
 		a.Logf("「%s」出口 IP = %s（%d ms）", n.Name, res.IP, res.Latency.Milliseconds())
-		a.updateTest(n.ID, kind, 0, 0, res.IP)
+		a.updateTest(n.ID, kind, false, 0, 0, res.IP)
 	}
 }
 
@@ -254,10 +258,23 @@ func (a *App) openTestChain(ctx context.Context, n config.Node) (*chain, error) 
 }
 
 // updateTest 把测试结果写回节点并广播。
-func (a *App) updateTest(id, kind string, latencyMs int64, speed float64, exitIP string) {
+//
+// unreachable 是"本次测试明确证明这个节点连不上"，**必须由调用方显式给出**：
+// 绝不能从 latencyMs == 0 反推失败 —— 用「真连接延迟」测时结果写进 RealMs、
+// LatencyMs 恒为 0，而一次成功但耗时不足 1ms 的测试同样是 0（审查 #8 就是
+// 靠这个反推把全部节点判成了无效项）。
+//
+// 同时按"谁最后测谁覆盖"更新失败结论与时间戳：一次成功的测试必须把上一次的
+// 失败结论清掉，否则一个已经恢复的节点会一直被当成无效项。
+func (a *App) updateTest(id, kind string, unreachable bool, latencyMs int64, speed float64, exitIP string) {
 	a.mu.Lock()
 	idx := a.indexOfLocked(id)
 	if idx >= 0 {
+		a.cfg.Nodes[idx].TestFailed = unreachable
+		a.cfg.Nodes[idx].TestedAt = time.Now()
+		// 记下"这次结论是对哪个地址得出的"，供 KnownUnreachable 挡掉
+		// "改了服务器地址之后旧结论还被拿来删节点"。
+		a.cfg.Nodes[idx].TestedAddr = a.cfg.Nodes[idx].TestKey()
 		switch kind {
 		case TestTCP:
 			a.cfg.Nodes[idx].LatencyMs = latencyMs
@@ -317,17 +334,77 @@ func (a *App) ExitIPs() map[string]string {
 	return out
 }
 
-// RemoveInvalidNodes 删除"测试无效"的节点（TCP 延迟测不通的那些）。
+// InvalidPreview 是「移除测试无效项」的预览结果：界面据此弹确认框。
 //
-//主流客户端的"移除测试无效项"就是这个语义：删掉连服务器地址都握不上手的节点。
-func (a *App) RemoveInvalidNodes() (int, error) {
+// 【为什么要分成"预览 + 按名单删"两步】这是不可撤销的批量删除，界面必须
+// 先把"要删几个、叫什么"摆给用户看。所以后端不再"自己挑一批就删"，而是
+// 把名单交给界面，用户确认后原样送回来 —— 用户看到的名单就是被删的名单。
+type InvalidPreview struct {
+	IDs   []string `json:"ids"`
+	Names []string `json:"names"`
+
+	// Untested / Stale 是被**排除**的两类，计数给界面解释"为什么一个都没删"。
+	// 它们不是"无效项"，只是"没有证据"。
+	Untested int `json:"untested"` // 从没测过
+	Stale    int `json:"stale"`    // 测过且失败，但结论已经不算数（过期，或地址被改过）
+
+	// StaleAfterHours 是结论有效期（小时）。让界面直接引用后端的数字，
+	// 免得 24 这个值在前端再抄一份、改一处漏一处。
+	StaleAfterHours int `json:"staleAfterHours"`
+}
+
+// PreviewInvalidNodes 列出"测试无效"的节点：最近一次测试明确证明连不上，
+// 且结论仍然有效（见 config.Node.KnownUnreachable）。只读，不动配置。
+//
+// 【判据为什么不是 latencyMs == 0】见 updateTest 与 config.Node 的注释：
+// 那个判据会把从没测过的、以及用真连接延迟测通过的节点一起算成无效项。
+func (a *App) PreviewInvalidNodes() InvalidPreview {
+	now := time.Now()
+	out := InvalidPreview{
+		IDs:             []string{},
+		Names:           []string{},
+		StaleAfterHours: int(config.TestResultTTL.Hours()),
+	}
+
 	a.mu.RLock()
-	var bad []string
-	var names []string
+	defer a.mu.RUnlock()
 	for _, n := range a.cfg.Nodes {
-		if n.LatencyMs == 0 {
+		if n.KnownUnreachable(now) {
+			out.IDs = append(out.IDs, n.ID)
+			out.Names = append(out.Names, n.Name)
+			continue
+		}
+		// 没被选中的要分清原因：界面靠这两个计数给出"为什么没删"的解释。
+		// Stale 包含"结论过期"与"结论对应的地址已被改过"两种 —— 都不是删除依据。
+		if n.TestedAt.IsZero() {
+			out.Untested++
+		} else if n.TestFailed {
+			out.Stale++
+		}
+	}
+	return out
+}
+
+// RemoveInvalidNodes 删除这些节点（ids 来自 PreviewInvalidNodes）。
+//
+// 删除前**按当前配置再核一遍**：确认框还开着的时候测试可能刚好跑通、或者
+// 用户把服务器地址改掉了 —— 那些节点这时就不该删。宁可少删、绝不删错：
+// 删除不可撤销，而"少删了一个"用户再点一次就行。
+func (a *App) RemoveInvalidNodes(ids []string) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	want := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		want[id] = true
+	}
+
+	now := time.Now()
+	a.mu.RLock()
+	bad := make([]string, 0, len(ids))
+	for _, n := range a.cfg.Nodes {
+		if want[n.ID] && n.KnownUnreachable(now) {
 			bad = append(bad, n.ID)
-			names = append(names, n.Name)
 		}
 	}
 	a.mu.RUnlock()
@@ -338,6 +415,5 @@ func (a *App) RemoveInvalidNodes() (int, error) {
 	if err := a.DeleteNodes(bad); err != nil {
 		return 0, err
 	}
-	a.Notify("success", "已移除测试无效项", strings.Join(names, "、"))
 	return len(bad), nil
 }
