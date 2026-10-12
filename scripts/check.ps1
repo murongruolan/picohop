@@ -23,6 +23,7 @@ if ($LASTEXITCODE -ne 0) { $failed += 'go vet 失败' }
 Write-Host '[check] 前端构建（vite）…'
 Push-Location 'desktop/frontend'
 & npm run build 2>&1 | Select-Object -Last 3 | Out-Host
+    New-Item -ItemType File -Force (Join-Path $PSScriptRoot '..\desktop\frontend\dist\.keep') | Out-Null
 $feCode = $LASTEXITCODE
 Pop-Location
 if ($feCode -ne 0) { $failed += '前端构建失败' }
