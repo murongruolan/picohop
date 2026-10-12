@@ -1,0 +1,206 @@
+package engine
+
+import (
+	"testing"
+
+	"chainproxy/internal/config"
+)
+
+// TestVlessOptionMapping 锁死"我们的节点 → mihomo vless 选项"的映射。
+//
+// 为什么值得单测：这是整条迁移里最容易错、错了又最难查的一环
+// （症状是"节点连不上"，而原因可能只是 Host 放错了字段）。
+// 纯函数 + 表驱动：不用起网络就能断言每个字段落对了地方。
+//
+// 其中三条是**实测/源码确认过的**，特别容易被写错：
+//  1. mihomo 的 REALITY 必须显式给 client-fingerprint（否则报 uTLS 那句）；
+//  2. HTTPOptions 没有 Host 字段，Host 要放进 Headers；
+//  3. httpupgrade 在 mihomo 里复用 WSOpts（V2rayHttpUpgrade = true）；
+//  4. h2 用 HTTP2Opts（Host 是数组），不是 HTTPOpts。
+func TestVlessOptionMapping(t *testing.T) {
+	base := func() config.Node {
+		n := config.Node{
+			ID: "n1", Name: "测试节点", Protocol: config.ProtocolVLESS,
+			Server: "1.2.3.4", Port: 443, UUID: "11111111-2222-3333-4444-555555555555",
+		}
+		n.TLS.Enabled = true
+		n.TLS.ServerName = "www.example.com"
+		return n
+	}
+
+	t.Run("tcp 默认传输不写 transport 字段", func(t *testing.T) {
+		o, err := vlessOption(base())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if o.Network != "" {
+			t.Fatalf("tcp 时 Network 应为空，实际 %q", o.Network)
+		}
+		if o.Server != "1.2.3.4" || o.Port != 443 || o.ServerName != "www.example.com" {
+			t.Fatalf("基础字段映射错误：%+v", o)
+		}
+		if !o.TLS {
+			t.Fatal("TLS 没传过去")
+		}
+	})
+
+	t.Run("ws", func(t *testing.T) {
+		n := base()
+		n.Transport.Network = "ws"
+		n.Transport.Path = "/p"
+		n.Transport.Host = "cdn.example.com"
+		o, err := vlessOption(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if o.Network != "ws" || o.WSOpts.Path != "/p" {
+			t.Fatalf("ws 映射错误：net=%q path=%q", o.Network, o.WSOpts.Path)
+		}
+		if got := o.WSOpts.Headers["Host"]; got != "cdn.example.com" {
+			t.Fatalf("ws Host 应在 Headers[Host]，实际 %q", got)
+		}
+	})
+
+	t.Run("grpc", func(t *testing.T) {
+		n := base()
+		n.Transport.Network = "grpc"
+		n.Transport.ServiceName = "svc"
+		o, err := vlessOption(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if o.Network != "grpc" || o.GrpcOpts.GrpcServiceName != "svc" {
+			t.Fatalf("grpc 映射错误：net=%q svc=%q", o.Network, o.GrpcOpts.GrpcServiceName)
+		}
+	})
+
+	t.Run("http 伪装：Host 放 Headers 而不是 Host 字段", func(t *testing.T) {
+		n := base()
+		n.Transport.Network = "http"
+		n.Transport.Path = "/h"
+		n.Transport.Host = "h.example.com"
+		o, err := vlessOption(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if o.Network != "http" {
+			t.Fatalf("http 的 network 应为 http，实际 %q", o.Network)
+		}
+		if len(o.HTTPOpts.Path) != 1 || o.HTTPOpts.Path[0] != "/h" {
+			t.Fatalf("http Path 应是数组，实际 %v", o.HTTPOpts.Path)
+		}
+		if len(o.HTTPOpts.Headers["Host"]) != 1 || o.HTTPOpts.Headers["Host"][0] != "h.example.com" {
+			t.Fatalf("http Host 应放 Headers[Host]（HTTPOptions 没有 Host 字段），实际 %v", o.HTTPOpts.Headers)
+		}
+	})
+
+	t.Run("h2 用 HTTP2Opts", func(t *testing.T) {
+		n := base()
+		n.Transport.Network = "h2"
+		n.Transport.Path = "/h2"
+		n.Transport.Host = "h2.example.com"
+		o, err := vlessOption(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if o.Network != "http" { // mihomo 里 HTTP/2 也是 network="http"
+			t.Fatalf("h2 的 network 应为 http，实际 %q", o.Network)
+		}
+		if o.HTTP2Opts.Path != "/h2" || len(o.HTTP2Opts.Host) != 1 || o.HTTP2Opts.Host[0] != "h2.example.com" {
+			t.Fatalf("h2 映射错误：path=%q host=%v", o.HTTP2Opts.Path, o.HTTP2Opts.Host)
+		}
+	})
+
+	t.Run("httpupgrade 复用 WSOpts", func(t *testing.T) {
+		n := base()
+		n.Transport.Network = "httpupgrade"
+		n.Transport.Path = "/u"
+		n.Transport.Host = "u.example.com"
+		o, err := vlessOption(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if o.Network != "httpupgrade" || o.WSOpts.Path != "/u" || !o.WSOpts.V2rayHttpUpgrade {
+			t.Fatalf("httpupgrade 映射错误：net=%q path=%q flag=%v",
+				o.Network, o.WSOpts.Path, o.WSOpts.V2rayHttpUpgrade)
+		}
+	})
+
+	t.Run("xhttp（本次迁移的起因）", func(t *testing.T) {
+		n := base()
+		n.Transport.Network = "xhttp"
+		n.Transport.Path = "/63ffaa"
+		n.Transport.Host = "www.amazon.com"
+		o, err := vlessOption(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if o.Network != "xhttp" || o.XHTTPOpts.Path != "/63ffaa" || o.XHTTPOpts.Host != "www.amazon.com" {
+			t.Fatalf("xhttp 映射错误：net=%q path=%q host=%q", o.Network, o.XHTTPOpts.Path, o.XHTTPOpts.Host)
+		}
+	})
+
+	t.Run("REALITY 缺指纹必须在构造前拦住", func(t *testing.T) {
+		n := base()
+		n.TLS.RealityPublicKey = "PUBKEY"
+		n.TLS.RealityShortID = "abcd"
+		// 故意不设 Fingerprint
+		if _, err := vlessOption(n); err == nil {
+			t.Fatal("REALITY 缺 client-fingerprint 应当报错，而不是发出去让 mihomo 报 uTLS 那句")
+		}
+	})
+
+	t.Run("REALITY 带指纹正常映射", func(t *testing.T) {
+		n := base()
+		n.TLS.RealityPublicKey = "PUBKEY"
+		n.TLS.RealityShortID = "abcd"
+		n.TLS.Fingerprint = "chrome"
+		o, err := vlessOption(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if o.ClientFingerprint != "chrome" {
+			t.Fatalf("指纹没传过去：%q", o.ClientFingerprint)
+		}
+		if o.RealityOpts.PublicKey != "PUBKEY" || o.RealityOpts.ShortID != "abcd" {
+			t.Fatalf("RealityOpts 映射错误：%+v", o.RealityOpts)
+		}
+	})
+
+	t.Run("必填缺失与未知传输都要明确报错", func(t *testing.T) {
+		n := base()
+		n.Server = ""
+		if _, err := vlessOption(n); err == nil {
+			t.Fatal("缺服务器地址应报错")
+		}
+		n = base()
+		n.Port = 0
+		if _, err := vlessOption(n); err == nil {
+			t.Fatal("端口非法应报错")
+		}
+		n = base()
+		n.UUID = ""
+		if _, err := vlessOption(n); err == nil {
+			t.Fatal("缺 UUID 应报错")
+		}
+		n = base()
+		n.Transport.Network = "quic-unknown"
+		if _, err := vlessOption(n); err == nil {
+			t.Fatal("未知传输应报错")
+		}
+	})
+}
+
+// TestMihomoSupportsIsHonest 锁死"只声明已经接好的协议"。
+//
+// 迁移是分步做的：宁可构造时就明确报错，也不要等用户点了激活才发现没接。
+func TestMihomoSupportsIsHonest(t *testing.T) {
+	if !mihomoSupports(config.ProtocolVLESS) {
+		t.Fatal("vless 已接，应当返回 true")
+	}
+	for _, p := range []string{config.ProtocolVMess, config.ProtocolTrojan, config.ProtocolShadowsocks, config.ProtocolHysteria2} {
+		if mihomoSupports(p) {
+			t.Fatalf("%s 还没接，不该声称支持（否则用户激活时才炸）", p)
+		}
+	}
+}
