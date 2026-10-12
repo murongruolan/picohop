@@ -369,4 +369,49 @@ mihomo 侧（`constant.PacketConn`，v1.19.32 模块缓存里的源码）：
 
 **③ 验证方式不变**：经通道把 DNS 查询发到 `8.8.8.8:53`，看是否收到应答。
 
+### 第 ⑩ 轮：UDP 试做后被实测否掉 —— 设计要件是"按目标建通道"
+
+按第 ⑨ 轮的思路写了 `mihomo_udp.go`（`C.PacketConn` → `proxy.UDPChannel`）并接上 `DialUDP`，
+**编译一次通过**，但真实跑 DNS 验证时立刻失败：
+
+    ❌ DialUDP 失败：mihomo UDP 通道建立失败: can't resolve ip: couldn't find ip
+
+**原因（这就是第 ⑨ 轮留的那个疑点，现在被实测钉死）**：
+`pc.ResolveUDP(ctx, metadata)` **需要一个具体目标**才能解析出 IP；而我们的接口
+`DialUDP(ctx, front)` **不带目标**（目标按每个数据报给：`SendToUDP(payload, host, port)`）。
+传空 metadata → mihomo 报 "can't resolve ip"。
+
+**结论：不能"一次建一个通道"，必须"按目标建通道"。** 这不是小修补，是设计要件变了。
+（mihomo 自己的 UDP 也是按会话/目标建 PacketConn 的。）
+
+#### 下一轮的正确做法（已定，照着写即可）
+
+`mihomoUDPChannel` 内部维护 **`map[string]C.PacketConn`（key = "host:port"）**：
+
+1. `SendToUDP(payload, host, port)`：
+   - 先查 map；没有就 `ListenPacketContext(ctx, meta)` + `pc.ResolveUDP(ctx, meta)`，
+     其中 `meta = &C.Metadata{NetWork: C.UDP, Host: host, DstPort: uint16(port)}`
+     （能解析出 IP 时一并填 `DstIP`）；
+   - 然后 `pc.WriteTo(payload, &net.UDPAddr{...})`；
+   - **注意**：WireGuard 场景下目标会变化，所以必须**每个目标一个 conn**，不能复用。
+2. `ReceiveFromUDP(quit, buf)`：要能从**所有**已建 conn 收包。两种实现：
+   - （简单，先做这个）轮询所有 conn，每个给 100–200ms 读超时，检查 quit 后继续；
+     缺点是活跃 conn 会拖慢其它 conn 的读取；
+   - （更好，若轮询出问题再改）每个 conn 起一个读协程，把 `(payload, srcAddr)` 投进共享 chan，
+     `ReceiveFromUDP` 从 chan 取；`quit` 关闭时所有协程退出。
+3. `Close()`：关掉 map 里所有 conn。
+4. 失败路径：`ListenPacketContext` 返回 `C.ErrNotSupport` 时**照原样透传**（别包装），
+   让人一眼看出是内核不支持。
+
+#### 验证方式（不变，且已备好）
+
+经通道把 DNS 查询发到 `8.8.8.8:53`，看是否收到应答并核对 **DNS ID 是否匹配**（`0x1234`）。
+本轮临时程序就是干这个的（`udp_probe_main.go`，已删）；下一轮沿用即可。
+
+#### 本轮处置
+
+**回滚了 UDP 代码**（`mihomo_udp.go` 删除、`DialUDP` 还原为显式报错），
+因为一个"已知跑不通的 UDP"不该留在树里；事实与实现规格写进本文件，下一轮据此重做。
+（项目始终处于"可运行、测试全绿"的状态。）
+
 
