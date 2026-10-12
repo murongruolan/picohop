@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"chainproxy/internal/config"
-	"chainproxy/internal/proxy"
+	"github.com/murongruolan/picohop/internal/config"
+	"github.com/murongruolan/picohop/internal/proxy"
 )
 
 // ---------------------------------------------------------------------------
@@ -19,14 +19,14 @@ import (
 //
 // 默认跳过（避免日常 go test 依赖外部环境）。启用方式：
 //
-//	$env:CHAINPROXY_WG_REAL=1
-//	$env:CHAINPROXY_WG_ENDPOINT=203.0.113.10:51820
-//	$env:CHAINPROXY_WG_PRIVKEY=<base64 私钥>
-//	$env:CHAINPROXY_WG_PUBKEY=<base64 对端公钥>
-//	$env:CHAINPROXY_WG_PSK=<base64 预共享密钥，可留空>
-//	$env:CHAINPROXY_WG_ADDR=10.8.0.2/32
-//	$env:CHAINPROXY_WG_ALLOWED=192.168.31.0/24, 10.8.0.0/24
-//	$env:CHAINPROXY_WG_FRONT=direct|socks5
+//	$env:PICOHOP_WG_REAL=1
+//	$env:PICOHOP_WG_ENDPOINT=203.0.113.10:51820
+//	$env:PICOHOP_WG_PRIVKEY=<base64 私钥>
+//	$env:PICOHOP_WG_PUBKEY=<base64 对端公钥>
+//	$env:PICOHOP_WG_PSK=<base64 预共享密钥，可留空>
+//	$env:PICOHOP_WG_ADDR=10.8.0.2/32
+//	$env:PICOHOP_WG_ALLOWED=192.168.31.0/24, 10.8.0.0/24
+//	$env:PICOHOP_WG_FRONT=direct|socks5
 //	go test ./internal/wgproxy -run TestWireGuardRealServer -v
 //
 // 这个测试的价值在于：它把"握手失败"拆成可判定的几步
@@ -35,11 +35,11 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestWireGuardRealServer(t *testing.T) {
-	if os.Getenv("CHAINPROXY_WG_REAL") == "" {
-		t.Skip("未设置 CHAINPROXY_WG_REAL，跳过真实服务端测试")
+	if os.Getenv("PICOHOP_WG_REAL") == "" {
+		t.Skip("未设置 PICOHOP_WG_REAL，跳过真实服务端测试")
 	}
 
-	endpoint := envOr("CHAINPROXY_WG_ENDPOINT", "203.0.113.10:51820")
+	endpoint := envOr("PICOHOP_WG_ENDPOINT", "203.0.113.10:51820")
 	host, portStr, err := net.SplitHostPort(endpoint)
 	if err != nil {
 		t.Fatalf("端点格式错误 %q：%v", endpoint, err)
@@ -54,21 +54,21 @@ func TestWireGuardRealServer(t *testing.T) {
 		Server:     host,
 		Port:       port,
 		WireGuard: &config.WireGuardConfig{
-			PrivateKey:          os.Getenv("CHAINPROXY_WG_PRIVKEY"),
-			Address:             envOr("CHAINPROXY_WG_ADDR", "10.8.0.2/32"),
-			PeerPublicKey:       os.Getenv("CHAINPROXY_WG_PUBKEY"),
-			PresharedKey:        os.Getenv("CHAINPROXY_WG_PSK"),
-			AllowedIPs:          envOr("CHAINPROXY_WG_ALLOWED", "10.8.0.0/24"),
+			PrivateKey:          os.Getenv("PICOHOP_WG_PRIVKEY"),
+			Address:             envOr("PICOHOP_WG_ADDR", "10.8.0.2/32"),
+			PeerPublicKey:       os.Getenv("PICOHOP_WG_PUBKEY"),
+			PresharedKey:        os.Getenv("PICOHOP_WG_PSK"),
+			AllowedIPs:          envOr("PICOHOP_WG_ALLOWED", "10.8.0.0/24"),
 			PersistentKeepalive: 25,
 			MTU:                 1420,
 		},
 	}
 	if node.WireGuard.PrivateKey == "" || node.WireGuard.PeerPublicKey == "" {
-		t.Fatal("必须设置 CHAINPROXY_WG_PRIVKEY 与 CHAINPROXY_WG_PUBKEY")
+		t.Fatal("必须设置 PICOHOP_WG_PRIVKEY 与 PICOHOP_WG_PUBKEY")
 	}
 
 	// ---- 第 0 步：先确认 UDP 到端点根本没被拦 ----
-	t.Logf("端点 %s，本机前置模式 = %s", endpoint, envOr("CHAINPROXY_WG_FRONT", "direct"))
+	t.Logf("端点 %s，本机前置模式 = %s", endpoint, envOr("PICOHOP_WG_FRONT", "direct"))
 
 	// 先把"本端公钥"算出来打印。服务端的 peer 配置里必须就是这一个，
 	// 否则 WireGuard 只会静默丢包，看不出任何错误。
@@ -80,7 +80,7 @@ func TestWireGuardRealServer(t *testing.T) {
 	t.Logf("对端公钥（我们用来连接的服务端）= %s", node.WireGuard.PeerPublicKey)
 
 	frontCfg := config.Front{Type: config.FrontTypeDirect, TimeoutMs: 8000}
-	if envOr("CHAINPROXY_WG_FRONT", "direct") == "socks5" {
+	if envOr("PICOHOP_WG_FRONT", "direct") == "socks5" {
 		frontCfg = config.Front{Type: config.FrontTypeSocks5, Host: "127.0.0.1", Port: 10808, TimeoutMs: 8000}
 	}
 	front := proxy.NewFront(frontCfg)
@@ -131,7 +131,7 @@ func TestWireGuardRealServer(t *testing.T) {
 	//   - 连上了             → 隧道通了，且目标端口有服务
 	//   - connection refused → 隧道通了（SYN 进隧道、对端回了 RST），只是该端口没服务
 	//   - timeout            → 才是真的没通
-	target := envOr("CHAINPROXY_WG_TARGET", "10.8.0.1:80")
+	target := envOr("PICOHOP_WG_TARGET", "10.8.0.1:80")
 	c, err := real.Dial(dctx, front, target)
 	switch {
 	case err == nil:

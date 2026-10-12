@@ -65,7 +65,7 @@ func restrictDataDir(dir string) error {
 // dataDirAllowed 返回数据目录唯一允许的 ACE 列表（SDDL 片段，不含 "D:" 前缀）。
 //
 // OI/CI 让目录下**新建**的文件与子目录自动继承同一套权限：
-// config.json、chainproxy.log、原子写用的 .tmp、sysproxy-backup.json 都靠它。
+// config.json、picohop.log、原子写用的 .tmp、sysproxy-backup.json 都靠它。
 func dataDirAllowed() (string, error) {
 	// GetCurrentProcessToken 拿到的是伪句柄，不需要（也不该）Close；
 	// GetTokenUser 的内存是 Go 堆上的，SID 指针在本次调用内一直有效。

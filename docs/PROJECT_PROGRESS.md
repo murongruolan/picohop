@@ -7,8 +7,12 @@
 > 保留原样不删是为了留下决策与踩坑的痕迹；本次 v2 重构的完整记录在文末
 > [「v2 重构」](#v2-重构wails--vue-3-界面--内嵌-sing-box2026-10-11) 一节。
 > 因此前半部分里出现的 "6 次提交"、"界面自检脚本"、`internal/gui`、
-> "dist\chainproxy.exe 是图形界面" 之类的说法，描述的都是**当时**的状态，
+> "dist\picohop.exe 是图形界面" 之类的说法，描述的都是**当时**的状态，
 > 现在已不成立 —— 这是刻意保留历史的结果，不是笔误。
+>
+> **改名（2026-10-13）**：本文成文时项目叫 ChainProxy，2026-10-13 改名为 **PicoHop**
+> （Go module 路径 `github.com/murongruolan/picohop`）。正文里的旧名已统一替换，
+> 除名字之外的内容未做任何改动。
 
 ---
 
@@ -80,7 +84,7 @@
 | 一键测试面板 | ✅ | 日志区实时输出 |
 | 布局体检（越界/截断/重叠） | ✅ | GDI 实测文字宽度，四方向越界 + 重叠检测 |
 | 点击模拟 | ✅ | BM_CLICK + 按 ID 精确计数 + 预期效果断言 |
-| 自检脚本 | ✅ | `CHAINPROXY_UI_DUMP` + `scripts/test_ui.ps1` |
+| 自检脚本 | ✅ | `PICOHOP_UI_DUMP` + `scripts/test_ui.ps1` |
 
 ## 任务 5：WireGuard 上游 ✅
 
@@ -141,7 +145,7 @@ PersistentKeepalive = 25
 | SOCKS5 与 HTTP 两种客户端 | ✅ 均可用（mixed 协议） |
 | 延迟 | 直连 1.23s → 经隧道 0.62s |
 
-结论：**ChainProxy 的 WireGuard 实现在真实公网出口上完全可用**，
+结论：**PicoHop 的 WireGuard 实现在真实公网出口上完全可用**，
 `0.0.0.0/0` 全隧道、`endpoint` 走公网直连、以及"经前置代理"两种前置方式都通过。
 
 > 之前对另一台共享服务器（`203.0.113.10:31496`，NAT 映射到容器内）反复失败，
@@ -192,7 +196,7 @@ PersistentKeepalive = 25
 
 | # | 标准 | 结果 |
 |---|---|---|
-| 1 | `dist\chainproxy-cli.exe` 双击运行，原生窗口，无控制台残留 | ✅ 10 MB 单文件 |
+| 1 | `dist\picohop-cli.exe` 双击运行，原生窗口，无控制台残留 | ✅ 10 MB 单文件 |
 | 2 | 前置 10808 + 住宅 → 本地端口 10810 | ✅ |
 | 3 | SOCKS5 客户端经 10810 得到与前置不同的 IP | ✅ |
 | 4 | HTTP 客户端经 10810 同样可用 | ✅ |
@@ -235,14 +239,14 @@ PersistentKeepalive = 25
 | 列表 | 等宽自绘表格 | 默认 8 列 + 「列显示」共 19 列可选 |
 | 命令行 | 兼做界面入口 | 纯无界面工具（`ls / run / test / validate / fetch / import / express / wgkey / engines`） |
 
-界面窗口默认 1180x740、最小 920x580；产物是 `dist\chainproxy-cli.exe`（图形界面）与
-`dist\chainproxy-cli.exe`（命令行）。
+界面窗口默认 1180x740、最小 920x580；产物是 `dist\picohop-cli.exe`（图形界面）与
+`dist\picohop-cli.exe`（命令行）。
 
 ## 技术选型的为什么
 
 ### 为什么内嵌 sing-box **库**，而不是拉起一个外部 core 进程
 
-- **单文件分发**：产物就是一个 `chainproxy-cli.exe`，不用另外附带 core 的二进制、也不用给它准备配置目录。
+- **单文件分发**：产物就是一个 `picohop-cli.exe`，不用另外附带 core 的二进制、也不用给它准备配置目录。
 - **生命周期一致**：出口跟着节点启停，进程退出就一起回收，不会留下孤儿 core 进程，也不需要自己写"生成配置 → 启动 → 探活 → 重启"的进程管理。
 - **少一跳**：`internal/engine` 直接拿到 `adapter.Outbound` 调 `DialContext` / `ListenPacket`，
   不需要"本地再开一个 socks 入口、再连它"——那会多占一个端口、多一次转发。
@@ -414,7 +418,7 @@ go test -tags "with_utls,with_quic" ./...     全绿，22.5 秒
    `offset`，导致同一个 tick 连发 5 条时全部叠在一起（只看得见最后一条）。
    改成自己实现（`src/notify.js` + `components/Notifications.vue`），
    用 flex 列布局同时拿到"固定位置"与"正确堆叠"。
-2. **WebView2 数据目录越界**：默认落在 `%APPDATA%\ChainProxy`，属于项目目录之外，
+2. **WebView2 数据目录越界**：默认落在 `%APPDATA%\PicoHop`，属于项目目录之外，
    违反本项目"一切都在 F:\chain_proxy 内"的规矩。
    用 `WebviewUserDataPath` 显式指到 `data\webview\`。
 3. **"仅端口"小窗的端口输入框偏窄**，10810 显示成 "1081"（和添加节点对话框
@@ -660,15 +664,15 @@ Wails v2 没有任何创建窗口的 API。经对比 v2/v3（见 `MIGRATION_wail
 |---|---|
 | 界面在 v3 下正常工作 | 截图：节点 2/2、今日流量、通栏表格、填充列全部正常 |
 | 前端桥 `Call.ByName` | 界面能拉到数据、能激活节点 —— 说明服务调用通了 |
-| **构建不依赖 wails3 CLI / Taskfile** | `.\scripts\build.ps1` 成功产出 `dist\ChainProxy.exe`（46.23 MB） |
-| **WebView2 数据目录留在项目内** | `data\webview\EBWebView` 存在；`%APPDATA%\ChainProxy`、`\chainproxy`、`\wails` **都不存在** |
+| **构建不依赖 wails3 CLI / Taskfile** | `.\scripts\build.ps1` 成功产出 `dist\PicoHop.exe`（46.23 MB） |
+| **WebView2 数据目录留在项目内** | `data\webview\EBWebView` 存在；`%APPDATA%\PicoHop`、`\picohop`、`\wails` **都不存在** |
 | **托盘已建立** | 日志：`外壳：托盘已就绪（图标 21017 字节）` |
 | **全局快捷键已注册** | 日志：`外壳：已注册全局快捷键 Ctrl+Alt+C（显示/隐藏主窗口）、Ctrl+Alt+A（激活全部节点 / 停止全部）` |
 | **关窗不退出（托盘常驻）** | 关窗前：窗口可见（hwnd 1411250）、`MainWindowHandle=21041744`；关窗后：**可见窗口列表里已无该窗口**、`MainWindowHandle=0`、**进程仍在**、**10810/10811 仍由同一 pid 监听**；日志：`窗口关闭被拦下：已收进托盘，进程与代理继续运行` |
 | **托盘菜单动作** | 自测直接调菜单背后的方法：复制本地地址 → 程序外用 `Get-Clipboard` 读出 `socks5://127.0.0.1:10810`；停止全部 → 运行中 0/2；激活全部 → 运行中 2/2 |
 | **标题栏明暗同步（运行期）** | 新增 `-open theme`：`setWindowTheme(dark/light/dark)` 三次都返回 `true`（找到窗口并调用 Dwm 成功）；启动时配置是 `light`，切到 dark 后截图里标题栏确实变深 —— 这是**运行期**生效，不是创建时定死 |
 | `-open` 自测钩子 | 新增 `closetotray` / `trayactions` 两项并实际使用；原有各项沿用 |
-| sing-box 构建标签透传 | `chainproxy engines` 自检通过；节点真实启动、端口真实监听 |
+| sing-box 构建标签透传 | `picohop engines` 自检通过；节点真实启动、端口真实监听 |
 | 全量校验 | `gofmt` 干净、`go vet` 干净、8 个测试包全过、`lint.ps1` 4/4 |
 
 ### 诚实说明的两点
@@ -712,7 +716,7 @@ Wails v2 没有任何创建窗口的 API。经对比 v2/v3（见 `MIGRATION_wail
 
 | 项 | 证据 |
 |---|---|
-| 弹窗是独立窗口 | `uishot -list`：`820x680 @(1000,300) ChainProxy · 添加 / 编辑节点` 与 `1180x740 @(370,146) ChainProxy · 链式代理` 是两个窗口 |
+| 弹窗是独立窗口 | `uishot -list`：`820x680 @(1000,300) PicoHop · 添加 / 编辑节点` 与 `1180x740 @(370,146) PicoHop · 链式代理` 是两个窗口 |
 | **它确实跑到主窗口之外** | 主窗口右边缘 1550、下边缘 886；浮动窗口右边缘 **1820**、下边缘 **980** → 分别超出 **270px / 94px**，且整框仍在屏幕内（1920x1080） |
 | 视觉佐证 | 整屏截图里它压在别的程序上面，并明显伸出主窗口右/下边界 |
 | **结果回传 + 自动关窗** | `-open floatpassthrough`：主窗口 `await` 收到 `{"submitted":false,"via":"float-self-test"}`，且浮动窗口自动关闭（可见窗口列表里消失）。链路：对话框关闭 → `ui.onNodeDialogClosed` → `SubmitFloatDialog` → Go 唤醒等待方 |
@@ -801,7 +805,7 @@ Go 的 `LazyProc` 找不到这个过程名 → **panic** → panic 发生在窗�
 
 | | 修复前 | 修复后 |
 |---|---|---|
-| 拖拽后可见窗口 | **无**（主窗口没回来） | `1180x740 @(370,146) ChainProxy · 链式代理` ✓ |
+| 拖拽后可见窗口 | **无**（主窗口没回来） | `1180x740 @(370,146) PicoHop · 链式代理` ✓ |
 | 进程 | **已死** | 活着 ✓ |
 | stderr | `panic: Failed to find TextOutW …` | 无 panic ✓ |
 | 日志选区 | `(0,0)-(0,0)`（错乱） | `(800,400)-(1200,600)`（正确）✓ |

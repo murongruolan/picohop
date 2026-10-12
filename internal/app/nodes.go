@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"chainproxy/internal/config"
-	"chainproxy/internal/proxy"
+	"github.com/murongruolan/picohop/internal/config"
+	"github.com/murongruolan/picohop/internal/proxy"
 )
 
 // ------------------------------------------------------------------

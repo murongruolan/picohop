@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# ChainProxy 界面截图（开发期自测）
+# PicoHop 界面截图（开发期自测）
 #
 #   .\scripts\ui_shot.ps1                  截主界面
 #   .\scripts\ui_shot.ps1 -Open settings   启动时直接打开"设置"面板再截图
@@ -23,7 +23,7 @@
 # bottomPanelOpen 写成了 false（用户下次启动发现面板是收起的），
 # -open netpanel 还把空闲断开从 300 改成了 240。
 #
-# 现在：把真实 data\config.json **复制**一份到隔离目录，用 CHAINPROXY_DATA_DIR
+# 现在：把真实 data\config.json **复制**一份到隔离目录，用 PICOHOP_DATA_DIR
 # 启动程序 —— 自测再怎么点都只写在副本上；跑完还会核对真实配置的哈希，
 # 一旦被改就报错（而不是默默把用户状态换掉）。纪律见 docs/VERIFY_DISCIPLINE.md。
 # ---------------------------------------------------------------------------
@@ -40,7 +40,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'env.ps1')
 
 $Root = Split-Path -Parent $PSScriptRoot
-$Exe  = Join-Path $Root 'desktop\build\bin\ChainProxy.exe'
+$Exe  = Join-Path $Root 'desktop\build\bin\PicoHop.exe'
 
 if (-not $Out) {
     $name = if ($Open) { $Open } else { 'main' }
@@ -77,16 +77,16 @@ if (-not $NoBuild -or -not (Test-Path $Exe)) {
 # ---------------------------------------------------------------------------
 # 2. 只留一个实例
 # ---------------------------------------------------------------------------
-Get-Process ChainProxy -ErrorAction SilentlyContinue | ForEach-Object { $_.Kill() | Out-Null }
+Get-Process PicoHop -ErrorAction SilentlyContinue | ForEach-Object { $_.Kill() | Out-Null }
 Start-Sleep -Milliseconds 1200
 
 # ---------------------------------------------------------------------------
 # 2.5 数据目录隔离（见文件头的说明）
 #
-# $env: 是**进程级**的，脚本跑完不能留着 —— 否则用户接着双击 dist\ChainProxy.exe
+# $env: 是**进程级**的，脚本跑完不能留着 —— 否则用户接着双击 dist\PicoHop.exe
 # 会莫名其妙用上截图用的那份配置。所以先记下原值，退出前一定还原。
 # ---------------------------------------------------------------------------
-$prevDataDir = $env:CHAINPROXY_DATA_DIR
+$prevDataDir = $env:PICOHOP_DATA_DIR
 $realCfg = Join-Path $Root 'data\config.json'
 $realHashBefore = if (Test-Path $realCfg) { (Get-FileHash $realCfg -Algorithm SHA256).Hash } else { '' }
 
@@ -98,7 +98,7 @@ if (Test-Path $realCfg) {
     Copy-Item $realCfg (Join-Path $DataDir 'config.json') -Force
 }
 Write-Host "[ui_shot] 数据目录（隔离）：$DataDir"
-$env:CHAINPROXY_DATA_DIR = $DataDir
+$env:PICOHOP_DATA_DIR = $DataDir
 
 try {
     # -----------------------------------------------------------------------
@@ -113,7 +113,7 @@ try {
     # 4. 截图
     # -----------------------------------------------------------------------
     Set-Location $Root
-    & go run ./cmd/uishot -title ChainProxy -out $Out -wait 15
+    & go run ./cmd/uishot -title PicoHop -out $Out -wait 15
     if ($LASTEXITCODE -ne 0) { throw "截图失败" }
 
     Write-Host ""
@@ -123,15 +123,15 @@ try {
     # -----------------------------------------------------------------------
     # 5. 还原环境变量 + 核对用户的真实配置没被动过
     # -----------------------------------------------------------------------
-    if ($null -eq $prevDataDir) { Remove-Item Env:\CHAINPROXY_DATA_DIR -ErrorAction SilentlyContinue }
-    else { $env:CHAINPROXY_DATA_DIR = $prevDataDir }
+    if ($null -eq $prevDataDir) { Remove-Item Env:\PICOHOP_DATA_DIR -ErrorAction SilentlyContinue }
+    else { $env:PICOHOP_DATA_DIR = $prevDataDir }
 
     $realHashAfter = if (Test-Path $realCfg) { (Get-FileHash $realCfg -Algorithm SHA256).Hash } else { '' }
     if ($realHashBefore -ne $realHashAfter) {
         throw ("用户的真实配置被改动了：$realCfg`n" +
                "  跑之前：$realHashBefore`n" +
                "  跑之后：$realHashAfter`n" +
-               "截图脚本必须只写 $DataDir。若是别的 ChainProxy 实例（或人手）在这期间写过，请先关掉它再跑。")
+               "截图脚本必须只写 $DataDir。若是别的 PicoHop 实例（或人手）在这期间写过，请先关掉它再跑。")
     }
     Write-Host "[ui_shot] 用户的真实配置未被改动（sha256 前后一致）"
 }

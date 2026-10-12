@@ -1,4 +1,4 @@
-# ChainProxy 使用手册
+# PicoHop 使用手册
 
 > 面向使用者的完整说明。想知道"为什么这么设计"请看
 > [`ARCHITECTURE.md`](ARCHITECTURE.md)；想快速上手看
@@ -11,7 +11,7 @@
 你有一个前置代理（通常是主流客户端，监听 `127.0.0.1:10808`），
 还有一个住宅 IP 服务商。日常上网不需要住宅 IP，但个别对 IP 敏感的网站必须用。
 
-ChainProxy 把这两者串成链，并给每个出口开一个**独立的本地端口**：
+PicoHop 把这两者串成链，并给每个出口开一个**独立的本地端口**：
 
 ```
 浏览器 → 127.0.0.1:10810 → (前置) → 住宅代理 → 目标网站
@@ -24,7 +24,7 @@ ChainProxy 把这两者串成链，并给每个出口开一个**独立的本地�
 
 ## 2. 启动界面
 
-双击 `dist\ChainProxy.exe`。（`dist\chainproxy-cli.exe` 是**命令行版**，不是界面。）
+双击 `dist\PicoHop.exe`。（`dist\picohop-cli.exe` 是**命令行版**，不是界面。）
 
 界面从上到下三块：
 
@@ -53,7 +53,7 @@ ChainProxy 把这两者串成链，并给每个出口开一个**独立的本地�
 顺带说明一句：屏幕圈选与二维码识别**全程只在内存里**，识别完不留任何缓存产物。
 `internal/qrscan` 包里没有任何写文件的调用；截下来的图是一块内存（`image.RGBA`），
 用完即被回收，而且现在只截**选区那一小块**（不是整屏）。
-`data\` 目录下永远只有 `config.json`、`chainproxy.log` 和 WebView2 的 `webview\`。
+`data\` 目录下永远只有 `config.json`、`picohop.log` 和 WebView2 的 `webview\`。
 唯一会往磁盘写图片的是「分享 → 下载图片」，那是你自己选路径保存的结果。
 ### 托盘常驻（关窗不等于退出）
 
@@ -61,7 +61,7 @@ ChainProxy 把这两者串成链，并给每个出口开一个**独立的本地�
 
 - **点右上角的 × 不会退出程序**，只是把窗口收进系统托盘。代理、本地端口、
   正在进行的连接都不受影响；第一次收进托盘时会弹一条 Windows 通知提醒你。
-- **想真正退出**：右键托盘图标 →「退出 ChainProxy」，或者界面右上角那个退出按钮。
+- **想真正退出**：右键托盘图标 →「退出 PicoHop」，或者界面右上角那个退出按钮。
 - **左键单击托盘图标** = 把窗口叫回来。
 - **托盘右键菜单**：显示主窗口 / 激活全部节点 / 停止全部节点 / 复制本地代理地址 / 退出。
 
@@ -84,7 +84,7 @@ ChainProxy 把这两者串成链，并给每个出口开一个**独立的本地�
 > 装了它们就抢不到，所以默认改成 `Ctrl+Alt+Shift+A`。
 
 快捷键被别的程序占用时**不会打断启动**：保存后会弹一次提示、日志里也会写明
-是哪一条被谁占用了（`data\chainproxy.log` 里搜"全局快捷键"）。
+是哪一条被谁占用了（`data\picohop.log` 里搜"全局快捷键"）。
 
 ---
 
@@ -241,18 +241,18 @@ ChainProxy 把这两者串成链，并给每个出口开一个**独立的本地�
 
 ## 8. 命令行（排障用）
 
-界面出问题、或者想写脚本自动化时用 `dist\chainproxy-cli.exe`：
+界面出问题、或者想写脚本自动化时用 `dist\picohop-cli.exe`：
 
 ```powershell
-chainproxy ls                    # 看节点与状态
-chainproxy fetch                 # 看前置与各节点的出口 IP（最常用）
-chainproxy test -kind real       # 跑测试：tcp / real / speed / exit
-chainproxy run -seconds 30       # 前台跑一会儿（脚本里用）
-chainproxy validate              # 只校验配置
-chainproxy import "<分享链接>"    # 导入
-chainproxy express <节点>        # 导出分享链接
-chainproxy engines               # 检查内嵌引擎构建标签
-chainproxy wgkey --psk           # 生成 WireGuard 密钥对
+picohop ls                    # 看节点与状态
+picohop fetch                 # 看前置与各节点的出口 IP（最常用）
+picohop test -kind real       # 跑测试：tcp / real / speed / exit
+picohop run -seconds 30       # 前台跑一会儿（脚本里用）
+picohop validate              # 只校验配置
+picohop import "<分享链接>"    # 导入
+picohop express <节点>        # 导出分享链接
+picohop engines               # 检查内嵌引擎构建标签
+picohop wgkey --psk           # 生成 WireGuard 密钥对
 ```
 
 常用参数：`-config <路径>`（默认自动定位到项目里的 `data\config.json`）、
@@ -280,17 +280,17 @@ chainproxy wgkey --psk           # 生成 WireGuard 密钥对
 
 1. 这个节点的「前置节点」是不是选错了（例如本该直连却挂了全局前置）；
 2. 出口服务器的账号密码/端口是否真的能用；
-3. 用 `chainproxy fetch` 对照着看前置与各节点的出口 IP。
+3. 用 `picohop fetch` 对照着看前置与各节点的出口 IP。
 
 ### WireGuard 连不上
 
 WireGuard 协议本身**不会告诉你**是密钥不对还是网络不通，所以按顺序排除：
 
 1. **前置必须支持 UDP**。WireGuard 的外层是 UDP；如果你用的是 HTTP 前置，
-   它天然不支持 UDP。`chainproxy fetch` 只能测 TCP，
+   它天然不支持 UDP。`picohop fetch` 只能测 TCP，
    UDP 能力要用 `scripts\test_wg.ps1` 测（它第 [0] 步就是查前置的 UDP 能力）。
 2. **公钥/私钥配对**：私钥是本机的、公钥是服务端的，两者不能搞反。
-   用 `chainproxy wgkey -private <你的私钥>` 可以反推公钥来核对。
+   用 `picohop wgkey -private <你的私钥>` 可以反推公钥来核对。
 3. **PresharedKey**：服务端如果开了，客户端不填会一直握手失败。
 4. **AllowedIPs**：一般 `0.0.0.0/0, ::/0`；只想走隧道到内网就填内网网段。
 5. **Keepalive**：填 25。填 0 且没有数据要发时不会主动发起握手。
@@ -302,7 +302,7 @@ WireGuard 协议本身**不会告诉你**是密钥不对还是网络不通，所
 说明节点的某个字段 mihomo 接不了（例如 REALITY 没填「指纹」、vmess 用了 xhttp 传输、
 trojan 用了它没有的传输选项）。**这不是构建问题**：内核是内嵌的 mihomo、不需要任何构建标签
 （`with_utls` / `with_quic` 那套已随 sing-box 一起删除）。
-按日志里那句错误改节点配置即可；用 `chainproxy engines` 可以确认内核确实被编进来了。
+按日志里那句错误改节点配置即可；用 `picohop engines` 可以确认内核确实被编进来了。
 （历史上这条曾经是"缺少构建标签"，那条路已不存在。）
 
 ### 导入的链接解析不了

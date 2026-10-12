@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"chainproxy/internal/config"
+	"github.com/murongruolan/picohop/internal/config"
 )
 
 // TestUpstreamHasNoFallback 锁死"没有第二个内核、也不许假装能跑"。

@@ -1,4 +1,4 @@
-﻿# 一键验证 WireGuard 出口：先查前置 UDP -> 启动服务 -> 经本地端口取出口 IP -> 报告
+﻿﻿# 一键验证 WireGuard 出口：先查前置 UDP -> 启动服务 -> 经本地端口取出口 IP -> 报告
 #
 # 用法：
 #   .\scripts\test_wg.ps1
@@ -23,7 +23,7 @@ if (-not $Config) { $Config = Join-Path $PSScriptRoot '..\dist\data\config.json'
 
 $ErrorActionPreference = 'Continue'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..')
-$console = Join-Path $root 'dist\chainproxy-console.exe'
+$console = Join-Path $root 'dist\picohop-console.exe'
 $dataDir = Split-Path $Config -Parent
 
 function FetchIp([string[]]$proxyArgs) {
@@ -124,7 +124,7 @@ $pk = "$($wg.wireguard.privateKey)".Trim()
 if ($pk -like '*<<<*' -or $pk -like 'PASTE_YOUR_FULL_PRIVATE_KEY*') {
     Write-Host "X 私钥还没填（当前是占位符）。" -ForegroundColor Red
     Write-Host "  私钥固定 44 个字符、以 = 结尾。可用下面命令生成，避免界面复制不全："
-    Write-Host "    .\dist\chainproxy-console.exe wgkey" -ForegroundColor Yellow
+    Write-Host "    .\dist\picohop-console.exe wgkey" -ForegroundColor Yellow
     exit 1
 }
 if ($pk.Length -ne 44 -or -not $pk.EndsWith('=')) {
@@ -154,12 +154,12 @@ if ($useFront) {
 Write-Host ""
 
 # ---- 启动服务 ----
-Write-Host "[3] 启动 ChainProxy ..." -ForegroundColor Cyan
-Get-Process chainproxy-console -ErrorAction SilentlyContinue | Stop-Process -Force
+Write-Host "[3] 启动 PicoHop ..." -ForegroundColor Cyan
+Get-Process picohop-console -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 500
 
-$logFile = Join-Path $env:TEMP ("chainproxy-wgtest-{0}.log" -f (Get-Random))
-$env:CHAINPROXY_DATA_DIR = $dataDir
+$logFile = Join-Path $env:TEMP ("picohop-wgtest-{0}.log" -f (Get-Random))
+$env:PICOHOP_DATA_DIR = $dataDir
 $proc = Start-Process -FilePath $console -ArgumentList @('run', '-config', $Config) `
     -PassThru -RedirectStandardOutput $logFile -RedirectStandardError ($logFile + '.err')
 

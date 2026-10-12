@@ -1,4 +1,4 @@
-// Package app 是 ChainProxy 的应用状态机：
+// Package app 是 PicoHop 的应用状态机：
 // 持有配置、管理所有节点服务的生命周期、维护今日统计、对外广播事件。
 //
 // 它是界面层（desktop/）唯一需要打交道的对象 —— 界面不直接碰 proxy 包。
@@ -14,8 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"chainproxy/internal/config"
-	"chainproxy/internal/proxy"
+	"github.com/murongruolan/picohop/internal/config"
+	"github.com/murongruolan/picohop/internal/proxy"
 )
 
 // 节点运行状态。
@@ -138,7 +138,7 @@ func New(cfgPath string) (*App, error) {
 	//
 	// 为什么卡在这个位置：data\ 里是**全套凭据**（config.json），而它默认建在仓库
 	// 目录下、继承盘符根目录那条 `Authenticated Users:(M)` —— 同机任何一个本地用户
-	// 都能读改。这里必须早于日志文件被创建：晚一步，chainproxy.log（里面有本机出口
+	// 都能读改。这里必须早于日志文件被创建：晚一步，picohop.log（里面有本机出口
 	// IP 与节点别名）就会带着宽松的继承权限落盘。详见 config.EnsureDataDir。
 	//
 	// 失败不阻断启动（数据目录可能被指到 FAT/网络盘上，那里没有 NTFS ACL），

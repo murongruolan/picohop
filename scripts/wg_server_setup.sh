@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 在一台干净的云服务器上把 WireGuard 服务端搭起来，并输出客户端配置。
 #
-# 目的：把 ChainProxy 的 WireGuard 客户端放到一个**完全可控**的服务端上验证，
+# 目的：把 PicoHop 的 WireGuard 客户端放到一个**完全可控**的服务端上验证，
 # 排除掉"共享服务器/端口映射/防火墙"这些干扰因素。
 #
 # 用法（在服务器上以 root 执行）：
@@ -71,7 +71,7 @@ PostUp   = sysctl -w net.ipv4.ip_forward=1; iptables -t nat -A POSTROUTING -s 10
 PostDown = iptables -t nat -D POSTROUTING -s 10.200.0.0/24 -o $(ip route show default | awk '{print $5; exit}') -j MASQUERADE
 
 [Peer]
-# ChainProxy 客户端
+# PicoHop 客户端
 PublicKey = $(cat "$OUT_DIR/client.pub")
 AllowedIPs = ${CLI_TUNNEL}
 EOF
@@ -90,7 +90,7 @@ echo
 echo "公网出口 IP（客户端全隧道后应当看到这个）："
 curl -s --max-time 8 https://ifconfig.me/ip || curl -s --max-time 8 https://api.ipify.org || echo "  (取不到)"
 
-log "生成客户端配置（复制到 ChainProxy 里）"
+log "生成客户端配置（复制到 PicoHop 里）"
 cat > "$OUT_DIR/client.conf" <<EOF
 [Interface]
 PrivateKey = $(cat "$OUT_DIR/client.key")

@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# ChainProxy 构建脚本
+# PicoHop 构建脚本
 #
 #   .\scripts\build.ps1                 构建图形界面 + 命令行两个可执行文件
 #   .\scripts\build.ps1 -Cli            只构建命令行版（快）
@@ -8,11 +8,11 @@
 #   .\scripts\build.ps1 -SkipFrontend   跳过前端 npm 构建（前端没改时省时间）
 #
 # 产物都在 dist\ 内：
-#   dist\ChainProxy.exe        图形界面（Wails + Vue）—— 平时双击这个
-#   dist\chainproxy-cli.exe    命令行（排障、自动化测试）
+#   dist\PicoHop.exe        图形界面（Wails + Vue）—— 平时双击这个
+#   dist\picohop-cli.exe    命令行（排障、自动化测试）
 #
-# 【为什么命令行版不能叫 chainproxy.exe】
-# NTFS 文件名**不区分大小写**，`ChainProxy.exe` 与 `chainproxy.exe` 是同一个文件。
+# 【为什么命令行版不能叫 picohop.exe】
+# NTFS 文件名**不区分大小写**，`PicoHop.exe` 与 `picohop.exe` 是同一个文件。
 # 早先就是这么命名的，结果图形界面那一步把命令行版直接覆盖掉了 ——
 # 表现是"想用命令行却弹出界面"，而且 PE 子系统变成了 GUI，
 # 在控制台里跑它既不输出也不退出（挂住）。
@@ -49,12 +49,12 @@ Set-Location $Root
 # ---------------------------------------------------------------------------
 if ($buildCli) {
     $ldflags = "-s -w -X main.Version=$Version"
-    $cliName = 'chainproxy-cli.exe'
-    Write-Host "[ChainProxy] 编译命令行版（version=$Version）……"
-    go build -trimpath -ldflags $ldflags -o (Join-Path $OutDir $cliName) ./cmd/chainproxy
+    $cliName = 'picohop-cli.exe'
+    Write-Host "[PicoHop] 编译命令行版（version=$Version）……"
+    go build -trimpath -ldflags $ldflags -o (Join-Path $OutDir $cliName) ./cmd/picohop
     if ($LASTEXITCODE -ne 0) { throw "命令行版编译失败" }
     $size = (Get-Item (Join-Path $OutDir $cliName)).Length
-    Write-Host "[ChainProxy] 完成：dist\$cliName  ($([math]::Round($size/1MB,2)) MB)"
+    Write-Host "[PicoHop] 完成：dist\$cliName  ($([math]::Round($size/1MB,2)) MB)"
 }
 
 # ---------------------------------------------------------------------------
@@ -74,10 +74,10 @@ if ($buildGui) {
     $desktop = Join-Path $Root 'desktop'
 
     if (-not $SkipFrontend) {
-        Write-Host "[ChainProxy] 构建前端……"
+        Write-Host "[PicoHop] 构建前端……"
         Push-Location (Join-Path $desktop 'frontend')
         if (-not (Test-Path 'node_modules')) {
-            Write-Host "[ChainProxy] 安装前端依赖……"
+            Write-Host "[PicoHop] 安装前端依赖……"
             npm install --no-audit --no-fund
             if ($LASTEXITCODE -ne 0) { Pop-Location; throw "npm install 失败" }
         }
@@ -89,18 +89,18 @@ if ($buildGui) {
         Pop-Location
     }
 
-    Write-Host "[ChainProxy] 编译图形界面（version=$Version, tags=production）……"
+    Write-Host "[PicoHop] 编译图形界面（version=$Version, tags=production）……"
     $guiLdflags = "-s -w -H windowsgui -X main.Version=$Version"
     go build -tags "production" -trimpath -buildvcs=false `
-        -ldflags $guiLdflags -o (Join-Path $OutDir 'ChainProxy.exe') ./desktop
+        -ldflags $guiLdflags -o (Join-Path $OutDir 'PicoHop.exe') ./desktop
     if ($LASTEXITCODE -ne 0) { throw "图形界面编译失败" }
 
-    $size = (Get-Item (Join-Path $OutDir 'ChainProxy.exe')).Length
-    Write-Host "[ChainProxy] 完成：dist\ChainProxy.exe  ($([math]::Round($size/1MB,2)) MB)"
+    $size = (Get-Item (Join-Path $OutDir 'PicoHop.exe')).Length
+    Write-Host "[PicoHop] 完成：dist\PicoHop.exe  ($([math]::Round($size/1MB,2)) MB)"
 }
 
 Set-Location $Root
 Write-Host ""
-Write-Host "[ChainProxy] 全部完成。产物在 dist\ 内。"
-Write-Host "  图形界面： dist\ChainProxy.exe      （双击运行）"
-Write-Host "  命令行：   dist\chainproxy-cli.exe  （ls / run / test / fetch / import / express）"
+Write-Host "[PicoHop] 全部完成。产物在 dist\ 内。"
+Write-Host "  图形界面： dist\PicoHop.exe      （双击运行）"
+Write-Host "  命令行：   dist\picohop-cli.exe  （ls / run / test / fetch / import / express）"

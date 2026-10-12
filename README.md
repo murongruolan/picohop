@@ -1,4 +1,4 @@
-# ChainProxy
+# PicoHop
 
 > **测试版。** 功能还会改，接口和界面都可能变。别把它当成唯一的翻墙通道 ——
 > 它是挂在别的代理后面的，前置挂了它也跟着不通。
@@ -13,7 +13,7 @@ Windows 上的本地代理前端。给每个节点开一个独立的本地端口
 日常上网不需要住宅 IP，住宅 IP 又慢又贵。只有少数对 IP 敏感的站点必须用。
 但主流客户端、主流客户端这类客户端一次只能用一个出站。
 
-ChainProxy 的做法是：把「前置」和「出口」拆开，一个出口一个本地端口。
+PicoHop 的做法是：把「前置」和「出口」拆开，一个出口一个本地端口。
 
 ```
 浏览器 → 127.0.0.1:10810 →（前置主流客户端）→ 住宅节点 → 目标网站
@@ -130,11 +130,11 @@ xray 或 sing-box 的可执行文件。
 
 产物：
 
-- `dist\ChainProxy.exe` —— 图形界面，双击运行
-- `dist\chainproxy-cli.exe` —— 命令行版
+- `dist\PicoHop.exe` —— 图形界面，双击运行
+- `dist\picohop-cli.exe` —— 命令行版
 
-两个文件名不能只靠大小写区分：NTFS 不区分文件名大小写，`ChainProxy.exe` 与
-`chainproxy.exe` 是同一个文件。早先就是这样，图形界面版把命令行版静默覆盖了。
+两个文件名不能只靠大小写区分：NTFS 不区分文件名大小写，`PicoHop.exe` 与
+`picohop.exe` 是同一个文件。早先就是这样，图形界面版把命令行版静默覆盖了。
 
 图形界面版**不走 `wails3 build`**。那条链是 Taskfile 驱动的，要额外装 `task`，
 而它做的事就是「前端 `npm run build` → `go build -tags production`」。
@@ -144,17 +144,17 @@ xray 或 sing-box 的可执行文件。
 命令行（排障用）：
 
 ```powershell
-chainproxy                     # 等价于 ls
-chainproxy ls                  # 列出节点与运行状态
-chainproxy run                 # 启动节点并前台运行（Ctrl+C 退出）
-chainproxy run -seconds 30     # 跑 30 秒后自动退出（脚本里用）
-chainproxy test -kind real     # tcp / real / speed / exit
-chainproxy fetch               # 探测前置与各节点的出口 IP
-chainproxy validate            # 只校验配置，不启动任何服务
-chainproxy import "<链接>"     # 从分享链接导入节点
-chainproxy express <节点>      # 导出节点的分享链接
-chainproxy engines             # 自检内嵌 mihomo 是否注册上了
-chainproxy wgkey               # 生成 WireGuard 密钥对
+picohop                     # 等价于 ls
+picohop ls                  # 列出节点与运行状态
+picohop run                 # 启动节点并前台运行（Ctrl+C 退出）
+picohop run -seconds 30     # 跑 30 秒后自动退出（脚本里用）
+picohop test -kind real     # tcp / real / speed / exit
+picohop fetch               # 探测前置与各节点的出口 IP
+picohop validate            # 只校验配置，不启动任何服务
+picohop import "<链接>"     # 从分享链接导入节点
+picohop express <节点>      # 导出节点的分享链接
+picohop engines             # 自检内嵌 mihomo 是否注册上了
+picohop wgkey               # 生成 WireGuard 密钥对
 ```
 
 通用参数：`-config <路径>`、`-node <ID或别名>`。
@@ -215,7 +215,7 @@ chainproxy wgkey               # 生成 WireGuard 密钥对
 - **UDP 是轮询实现。** `internal/engine/mihomo_udp.go` 逐个 conn 给一小段读超时、
   谁有包就返回。节点一多，这条路的开销会体现出来。
 - **CLI 把 `-h` / `-help` 当普通参数。** 命令行版没有真正的 `-h`，写
-  `chainproxy -h` 会被当成一个节点名，然后真的去执行 `ls`。已知，没修。
+  `picohop -h` 会被当成一个节点名，然后真的去执行 `ls`。已知，没修。
 - **只支持 Windows。** `internal/config/datadir_other.go` 之类的非 Windows 分支
   编译得过，但没用过，界面的系统代理、托盘、全局快捷键都是 Windows 实现。
 - **每个激活的节点一个 mihomo 实例**，节点多的时候常驻内存会线性上去。
@@ -237,4 +237,5 @@ chainproxy wgkey               # 生成 WireGuard 密钥对
 | [docs/COMMIT_HISTORY.md](docs/COMMIT_HISTORY.md) | 每次提交的详细说明，含踩过的坑 |
 | [docs/DEPLOY_reality_xhttp.md](docs/DEPLOY_reality_xhttp.md) | 在一台 NAT 服务器上部署 VLESS+Reality 的过程 |
 | [docs/MIGRATION_wails_v3.md](docs/MIGRATION_wails_v3.md) | 迁移到 Wails v3 的技术验证 |
+| [docs/NAMING_DECISION.md](docs/NAMING_DECISION.md) | 项目为什么叫 PicoHop，以及被否掉的候选与重名数据 |
 | [refs/README.md](refs/README.md) | 参考项目的来源与 commit 登记 |

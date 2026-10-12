@@ -3,8 +3,8 @@ package app
 import (
 	"testing"
 
-	"chainproxy/internal/config"
-	"chainproxy/internal/proxy"
+	"github.com/murongruolan/picohop/internal/config"
+	"github.com/murongruolan/picohop/internal/proxy"
 )
 
 func openEvent(id uint64, at int64, target string) proxy.ConnEvent {

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"chainproxy/internal/config"
+	"github.com/murongruolan/picohop/internal/config"
 )
 
 // 审查 #8 的回归测试。

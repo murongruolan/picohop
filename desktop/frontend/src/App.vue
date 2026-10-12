@@ -829,9 +829,9 @@ async function handleDevOpen(name) {
       out.push(`① 子串「启动」→ ${shown()} 行`)
 
       // ② 正则（用 ^ 锚点：子串匹配里 "^启动" 是匹配不到的，能区分两种模式）
-      setFilter('^ChainProxy')
+      setFilter('^PicoHop')
       await wait(500)
-      out.push(`② 正则「^ChainProxy」→ ${shown()} 行（子串模式会是 0）`)
+      out.push(`② 正则「^PicoHop」→ ${shown()} 行（子串模式会是 0）`)
 
       // ③ 坏正则：不该崩、不该清空，退化成子串
       setFilter('[')
@@ -839,7 +839,7 @@ async function handleDevOpen(name) {
       out.push(`③ 坏正则「[」→ ${shown()} 行（不崩即为通过）`)
 
       // ④ 大小写：先用小写找只有大写开头的行
-      setFilter('chainproxy')
+      setFilter('picohop')
       await wait(500)
       const ciCount = shown()
       flag('Aa')?.click()
@@ -847,7 +847,7 @@ async function handleDevOpen(name) {
       const csCount = shown()
       flag('Aa')?.click() // 还原
       await wait(300)
-      out.push(`④ 「chainproxy」不区分大小写=${ciCount} 行，区分后=${csCount} 行`)
+      out.push(`④ 「picohop」不区分大小写=${ciCount} 行，区分后=${csCount} 行`)
 
       // ⑤ 匹配计数显示
       setFilter('启动')

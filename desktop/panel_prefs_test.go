@@ -5,8 +5,8 @@ package main
 import (
 	"testing"
 
-	"chainproxy/internal/app"
-	"chainproxy/internal/config"
+	"github.com/murongruolan/picohop/internal/app"
+	"github.com/murongruolan/picohop/internal/config"
 )
 
 // TestResetSettingsKeepsBottomPanelLayout 是"恢复默认设置把界面布局偏好也抹掉"
@@ -24,7 +24,7 @@ import (
 // 别为了保住布局偏好把「恢复默认设置」弄成"什么都不恢复"。
 func TestResetSettingsKeepsBottomPanelLayout(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("CHAINPROXY_DATA_DIR", dir)
+	t.Setenv("PICOHOP_DATA_DIR", dir)
 
 	inst, err := app.New(config.ConfigPath())
 	if err != nil {

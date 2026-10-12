@@ -64,9 +64,9 @@ var floatSizes = map[string][2]int{
 //
 // 窗口是无边框的，所以在界面上看不到它 —— 但标题仍然有用：
 // 它决定任务栏/Alt+Tab 里显示什么，也是自测截图按标题定位窗口的依据
-// （主窗口叫"ChainProxy · 链式代理"，浮动窗口必须能区分开）。
+// （主窗口叫"PicoHop · 链式代理"，浮动窗口必须能区分开）。
 var floatTitles = map[string]string{
-	"node": "ChainProxy · 添加 / 编辑节点",
+	"node": "PicoHop · 添加 / 编辑节点",
 }
 
 // OpenFloatDialog 打开一个浮动对话框，并**阻塞等待**它的结果。
@@ -131,7 +131,7 @@ func (a *API) OpenFloatDialog(kind, payloadJSON, devOpen string) (string, error)
 
 	title := floatTitles[kind]
 	if title == "" {
-		title = "ChainProxy · " + kind
+		title = "PicoHop · " + kind
 	}
 	// 不是 AlwaysOnTop：用户明确说过"它只比主窗口优先级高就行，现在是比任何应用
 	// 优先级都高"。所以改成把浮动窗口设成**主窗口的附属窗口**：

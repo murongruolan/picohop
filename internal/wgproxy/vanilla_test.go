@@ -14,13 +14,13 @@ import (
 )
 
 // TestVanillaLoopback 是"对照组"：两端都用 wireguard-go 自带的 conn.NewDefaultBind()，
-// 完全不经过 ChainProxy 的 socksBind。
+// 完全不经过 PicoHop 的 socksBind。
 //
 // 目的：把问题切开。
 //   - 如果这个测试能握手成功 → 说明"服务端配置 + API 用法 + 本机回环 UDP"都没问题，
 //     那么之前 e2e 失败一定是 socksBind/plainUDPChannel 这一层的问题；
 //   - 如果这个也失败 → 说明是我的测试脚手架（回环 + 双栈 UDP 等）有问题，
-//     而不是 ChainProxy 的实现。
+//     而不是 PicoHop 的实现。
 //
 // 这种"对照组"排查方式比反复猜有用得多。
 func TestVanillaLoopback(t *testing.T) {

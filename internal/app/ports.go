@@ -4,8 +4,8 @@ import (
 	"errors"
 	"strconv"
 
-	"chainproxy/internal/config"
-	"chainproxy/internal/ports"
+	"github.com/murongruolan/picohop/internal/config"
+	"github.com/murongruolan/picohop/internal/ports"
 )
 
 // portProbe 只在测试里被赋值（见 ports_lock_test.go），生产恒为 nil（真去 bind）。

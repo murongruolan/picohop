@@ -7,7 +7,7 @@ import (
 	"net"
 	"time"
 
-	"chainproxy/internal/config"
+	"github.com/murongruolan/picohop/internal/config"
 )
 
 // Upstream 是"出口"：负责把客户端要访问的目标地址，变成一条真正连到目标的连接。

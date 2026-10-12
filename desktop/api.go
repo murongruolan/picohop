@@ -14,10 +14,10 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 
-	"chainproxy/internal/app"
-	"chainproxy/internal/config"
-	"chainproxy/internal/ports"
-	"chainproxy/internal/wgproxy"
+	"github.com/murongruolan/picohop/internal/app"
+	"github.com/murongruolan/picohop/internal/config"
+	"github.com/murongruolan/picohop/internal/ports"
+	"github.com/murongruolan/picohop/internal/wgproxy"
 )
 
 // Version 由构建脚本注入。
@@ -96,7 +96,7 @@ func (a *API) ServiceStartup(ctx context.Context, options application.ServiceOpt
 	}
 	a.app = inst
 	if inst == nil {
-		a.dialogError("ChainProxy 启动失败",
+		a.dialogError("PicoHop 启动失败",
 			fmt.Sprintf("无法读取配置：%v\n\n请检查 %s", err, config.ConfigPath()))
 		return nil
 	}
@@ -109,7 +109,7 @@ func (a *API) ServiceStartup(ctx context.Context, options application.ServiceOpt
 		a.Emit("cp:"+e.Kind, e.Text)
 	})
 
-	inst.Logf("ChainProxy %s 已启动，配置文件：%s", Version, config.ConfigPath())
+	inst.Logf("PicoHop %s 已启动，配置文件：%s", Version, config.ConfigPath())
 
 	// 把外壳（托盘/快捷键）的初始化结果写进日志，并把后端就绪前攒下的告警补投给界面。
 	a.reportShellStatus(inst)
@@ -177,7 +177,7 @@ func systemProxyNeedsRestore(flagOn bool) bool {
 
 // reportShellStatus 把托盘/快捷键的初始化结果写进日志，并补投攒下的告警。
 //
-// 这是"GUI 版没有控制台"这一约束下的取证手段：结果写进 data\chainproxy.log，
+// 这是"GUI 版没有控制台"这一约束下的取证手段：结果写进 data\picohop.log，
 // 出问题时能直接读到托盘与快捷键到底有没有建起来。
 func (a *API) reportShellStatus(inst *app.App) {
 	if inst == nil {

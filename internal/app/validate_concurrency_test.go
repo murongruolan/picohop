@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"chainproxy/internal/config"
+	"github.com/murongruolan/picohop/internal/config"
 )
 
 // TestValidateConcurrentDoesNotWrite 是审查 #13 的回归测试。

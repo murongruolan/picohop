@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"chainproxy/internal/config"
+	"github.com/murongruolan/picohop/internal/config"
 )
 
 // NodeView 是界面列表里的一行 —— 把配置、运行状态、统计合成一份扁平数据。

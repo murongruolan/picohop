@@ -4,7 +4,7 @@
 > 项目现在只有 **mihomo 一个内核**：没有回退、没有 `engineMode` 开关、
 > `with_utls` / `with_quic` 构建标记已删除、`go.mod`/`go.sum` 里不再有 `sagernet/sing-box`。
 > 配了前置的节点由 mihomo 出站自己的拨号器**真的经前置**拨号（TCP 与 UDP，第 ⑰ 轮）。
-> **实测打包体积**：`dist\ChainProxy.exe` **35.86 MB**、`dist\chainproxy-cli.exe` **24.46 MB**
+> **实测打包体积**：`dist\PicoHop.exe` **35.86 MB**、`dist\picohop-cli.exe` **24.46 MB**
 > —— 详见文末《第 ⑱ 轮：结项报告》，那里也解释了为什么 GUI 比 CLI 大 ~11 MB。
 >
 > ⚠️ 下面各轮记录里的"回退 / 换装开关 / 保留 sing-box / 58.46 MB"都是**当时**的状态，
@@ -256,7 +256,7 @@ type XHTTPOptions struct {
 
 ## 5. 已知但**暂不处理**的问题（用户明确指示）
 
-- `chainproxy-cli.exe run --help` 会把 `--help` 当普通参数**真的执行 `run`**（会激活节点并保存配置）。
+- `picohop-cli.exe run --help` 会把 `--help` 当普通参数**真的执行 `run`**（会激活节点并保存配置）。
   用户："cli 也就是你自己能用…除非还要提供 linux 版本" → **暂不修**，等确定要不要出 Linux 版再说。
 ---
 
@@ -318,10 +318,10 @@ type XHTTPOptions struct {
 
   第 4 条的完整配方（**临时数据目录 + 走真实导入路径**，见第 13 节）：
   ```
-  $env:CHAINPROXY_DATA_DIR = <仓库内 .cache 下的临时目录>     # 绝不碰 data/config.json
-  chainproxy-cli.exe import -port 18099 "<hysteria2 分享链接>"   # 导入即顺带验证导入器
-  chainproxy-cli.exe test -kind real -timeout 60                # 经我们自己的 mihomo 适配层
-  chainproxy-cli.exe run -node <节点> -seconds 40               # 激活本地端口
+  $env:PICOHOP_DATA_DIR = <仓库内 .cache 下的临时目录>     # 绝不碰 data/config.json
+  picohop-cli.exe import -port 18099 "<hysteria2 分享链接>"   # 导入即顺带验证导入器
+  picohop-cli.exe test -kind real -timeout 60                # 经我们自己的 mihomo 适配层
+  picohop-cli.exe run -node <节点> -seconds 40               # 激活本地端口
   curl.exe -x socks5h://127.0.0.1:18099 -o NUL -w "%{http_code}" \
         http://www.gstatic.com/generate_204                     # 期望 204
   curl.exe -x socks5h://127.0.0.1:18099 https://api.ipify.org    # 期望出口 IP ≠ 本机 IP
@@ -549,8 +549,8 @@ dialer-proxy**：我们自己实现一个 `C.Dialer` 装进去即可（`internal
 全局前置指向一个一次性 SOCKS5 探针（`.cache/cpprobe`，未入库），节点前置选「全局」：
 
 ```
-# CHAINPROXY_DATA_DIR=<临时目录>；front=socks5 127.0.0.1:18080；node=vless 127.0.0.1:18082, front="global"
-chainproxy-cli.exe test --kind real --node probe-node
+# PICOHOP_DATA_DIR=<临时目录>；front=socks5 127.0.0.1:18080；node=vless 127.0.0.1:18082, front="global"
+picohop-cli.exe test --kind real --node probe-node
   → [探针节点] 「探针节点」mihomo 出站已就绪：127.0.0.1:18082（type=Vless）；经前置 SOCKS5 127.0.0.1:18080
   → 探针侧：CONNECT 127.0.0.1:18082          ← 连"节点服务器"那一跳确实经前置
 # 对照：同一节点 front=""（直连）
@@ -807,10 +807,10 @@ chainproxy-cli.exe test --kind real --node probe-node
 
 | 产物 | 字节数 | 实测 MB |
 |---|---|---|
-| `dist\ChainProxy.exe`（图形界面） | 37,598,720 B | **35.86 MB** |
-| `dist\chainproxy-cli.exe`（命令行） | 25,646,592 B | **24.46 MB** |
+| `dist\PicoHop.exe`（图形界面） | 37,598,720 B | **35.86 MB** |
+| `dist\picohop-cli.exe`（命令行） | 25,646,592 B | **24.46 MB** |
 
-| 阶段 | `ChainProxy.exe`（GUI，同口径） | 相对现在 |
+| 阶段 | `PicoHop.exe`（GUI，同口径） | 相对现在 |
 |---|---|---|
 | 换装前：纯 sing-box | 46.40 MB | 现在小 **10.54 MB** |
 | 过渡期：sing-box + mihomo 并存 | 58.46 MB | 现在小 **22.60 MB** |
@@ -821,7 +821,7 @@ chainproxy-cli.exe test --kind real --node probe-node
 ### 体积归因：GUI 为什么比 CLI 大 ~11.4 MB（不是 sing-box 残留）
 
 先确认没有残留：
-  - `go version -m dist\ChainProxy.exe`：模块清单里 **没有** `github.com/sagernet/sing-box`
+  - `go version -m dist\PicoHop.exe`：模块清单里 **没有** `github.com/sagernet/sing-box`
     （GUI 98 个依赖 / CLI 92 个，多出来的正是 wails 那几个）；
   - 二进制里 `findstr /M /C:"sing-box"` **无匹配**；`go.mod`/`go.sum` 也零残留。
 
@@ -837,7 +837,7 @@ GUI 必然要再多一个 ~10 MB 的桌面外壳 + 1.5 MB 界面资源。
 
 ### 删掉回退之后，前置仍然真的生效（本轮重测，同口径）
 
-用**新编出来的** `dist\chainproxy-cli.exe`（无任何引擎标签）走真实 CLI 与 app 解析链，
+用**新编出来的** `dist\picohop-cli.exe`（无任何引擎标签）走真实 CLI 与 app 解析链，
 临时数据目录 + 一次性 SOCKS5 探针；**并故意在配置里留着已经被删除的
 `settings.engineMode = "singbox"`**（验证老配置照旧能载入、且不再影响内核选择）：
 
@@ -882,10 +882,10 @@ mihomo 成为唯一内核，开关与 `Settings.EngineMode` 一起删除。
 
 ### 13.1 复现（先不改代码）：走真实导入路径 + 临时数据目录
 
-`CHAINPROXY_DATA_DIR` 指向仓库内 `.cache` 下的临时目录（**没碰 `data/config.json`**，
+`PICOHOP_DATA_DIR` 指向仓库内 `.cache` 下的临时目录（**没碰 `data/config.json`**，
 其 mtime 实测未变），用 CLI 的导入路径造配置：
 
-    chainproxy-cli.exe import -port 18099 "<hysteria2 分享链接>"
+    picohop-cli.exe import -port 18099 "<hysteria2 分享链接>"
       ✅ 已导入「…」（Hysteria2，本地端口 18099）
 
 **导入器（`internal/share`）的解析结果是完整的**（逐字段核对落盘配置）：
@@ -901,7 +901,7 @@ mihomo 成为唯一内核，开关与 `Settings.EngineMode` 一起删除。
 
 ### 13.2 原始现象与报错（复现一次，0.46 s 就失败）
 
-    chainproxy-cli.exe test -kind real -timeout 60
+    picohop-cli.exe test -kind real -timeout 60
       「…」mihomo 出站已就绪：203.0.113.14:50000（type=Hysteria2）
       「…」真连接延迟测试失败：Get "http://cp.cloudflare.com/generate_204":
         mihomo 建立链路失败: CRYPTO_ERROR 0x12a (local):
@@ -957,7 +957,7 @@ mihomo 成为唯一内核，开关与 `Settings.EngineMode` 一起删除。
 
 再走**完整产品路径**（激活本地端口后用 curl）：
 
-    chainproxy-cli.exe run -node <节点> -seconds 40
+    picohop-cli.exe run -node <节点> -seconds 40
       已启动，监听 127.0.0.1:18099（前置：直连；出口：Hysteria2 203.0.113.14:50000）
       SOCKS5 隧道建立 → www.gstatic.com:80 / api.ipify.org:443 …
     curl.exe -x socks5h://127.0.0.1:18099 -o NUL -w "%{http_code}" http://www.gstatic.com/generate_204
@@ -1003,12 +1003,12 @@ mihomo 成为唯一内核，开关与 `Settings.EngineMode` 一起删除。
 
 ### 14.1 复现（先不改代码）：走真实导入路径 + 临时数据目录
 
-`CHAINPROXY_DATA_DIR` 指向仓库内 `.cache\` 下的临时目录（**没碰 `data/config.json`**，
+`PICOHOP_DATA_DIR` 指向仓库内 `.cache\` 下的临时目录（**没碰 `data/config.json`**，
 其 mtime 实测仍是 `2026/10/12 19:31:23`），用 CLI 的导入路径造配置：
 
-    chainproxy-cli.exe import -port 18091 "<trojan 分享链接>"
+    picohop-cli.exe import -port 18091 "<trojan 分享链接>"
       ✅ 已导入「…」（Trojan，本地端口 18091）
-    chainproxy-cli.exe import -port 18092 "<ss 分享链接>"
+    picohop-cli.exe import -port 18092 "<ss 分享链接>"
       ✅ 已导入「…」（Shadowsocks，本地端口 18092）
 
 ### 14.2 导入器解析完整性：**通过**（逐字段核对落盘配置）
@@ -1062,7 +1062,7 @@ mihomo 成为唯一内核，开关与 `Settings.EngineMode` 一起删除。
 
   - `data/config.json` 里**没有**这两个节点（它只有两条 socks5 住宅节点）；
   - 系统剪贴板里也没有这两条链接；
-  - 因此**无法**把真实凭据交给 `chainproxy-cli import`。
+  - 因此**无法**把真实凭据交给 `picohop-cli import`。
 
 **为什么不用猜的密码硬跑**：那得到的任何结果都不可归因 —— 既不能证明映射对，
 也不能证明服务端可用，属于"看起来跑过了"的假证据。所以这条如实记 failed。
@@ -1143,18 +1143,18 @@ mihomo 成为唯一内核，开关与 `Settings.EngineMode` 一起删除。
 ### 15.1 配方（与前几轮一致，**临时数据目录**，不碰 `data/config.json`）
 
 ```
-$env:CHAINPROXY_DATA_DIR = .cache\<临时目录>\<协议>     # 每个协议一个独立数据目录
-chainproxy-cli.exe import -port <空闲端口> "<分享链接>"   # 链接由用户直接给出，不抄进任何文件
-chainproxy-cli.exe test -kind real -timeout 45 -node <名字>   # 真连接延迟
-chainproxy-cli.exe test -kind exit -timeout 45 -node <名字>   # 出口 IP
-chainproxy-cli.exe run -node <名字> -seconds 40               # 完整产品路径：激活 + 本地 SOCKS5 端口
+$env:PICOHOP_DATA_DIR = .cache\<临时目录>\<协议>     # 每个协议一个独立数据目录
+picohop-cli.exe import -port <空闲端口> "<分享链接>"   # 链接由用户直接给出，不抄进任何文件
+picohop-cli.exe test -kind real -timeout 45 -node <名字>   # 真连接延迟
+picohop-cli.exe test -kind exit -timeout 45 -node <名字>   # 出口 IP
+picohop-cli.exe run -node <名字> -seconds 40               # 完整产品路径：激活 + 本地 SOCKS5 端口
 curl.exe -s -x socks5h://127.0.0.1:<端口> -o NUL -w "%{http_code}" \
       http://www.gstatic.com/generate_204                     # 期望 204
 curl.exe -s -x socks5h://127.0.0.1:<端口> https://api.ipify.org # 期望出口 IP = 节点地址
 ```
 
 两条链接**只经环境变量交给 `import`**，中转文件一个都不建；两个临时数据目录用完即删
-（删掉的文件里只有 `config.json` + `chainproxy.log`，`data/config.json` 的 mtime 与 sha256
+（删掉的文件里只有 `config.json` + `picohop.log`，`data/config.json` 的 mtime 与 sha256
 在整轮里逐次采样，**始终是 `2026/10/13 01:31:16` / `62EFBA0AE48F2318`**，见 15.4）。
 
 ### 15.2 落盘配置逐字段核对（`import` 之后直接读临时 `config.json`）
@@ -1224,13 +1224,13 @@ trojan 节点用的是自签证书、`sni` 也是自造域名，而 `real`/`exit
 `TrojanOption.SkipCertVerify` 之后应有的表现 —— 所以 15.2 落盘核对 + 15.3 无证书错误，
 两件事同时成立，判定"映射已通"。
 
-**本轮没有改任何代码**：`git status` 修改前为空，`dist\chainproxy-cli.exe` 由当前源码
+**本轮没有改任何代码**：`git status` 修改前为空，`dist\picohop-cli.exe` 由当前源码
 `.\scripts\build.ps1 -Cli` 重新构建后又把两条链路复核了一遍（证据相同）。
 
 ### 15.5 意外记录（必须留痕）：CLI 的 `-h` 会**真执行**，本轮把真实数据目录写脏过一次
 
-`cmd\chainproxy\main.go` 的子命令用 `flag.NewFlagSet(..., flag.ContinueOnError)` 且
-**`_ = fs.Parse(args)` 丢掉了返回值** → `chainproxy-cli.exe run -h` 不会只打印用法，
+`cmd\picohop\main.go` 的子命令用 `flag.NewFlagSet(..., flag.ContinueOnError)` 且
+**`_ = fs.Parse(args)` 丢掉了返回值** → `picohop-cli.exe run -h` 不会只打印用法，
 而是把 `-h` 当普通参数、**真的把节点激活起来**（这是第 5 节早就记过的已知问题）。
 本轮我在读用法时踩了它：`test -h` 在**真实数据目录**上跑了一轮真连接测试，
 `run -h` 又把 `住宅代理1` 激活了一次。
@@ -1246,6 +1246,6 @@ trojan 节点用的是自签证书、`sni` 也是自造域名，而 `real`/`exit
 - 已把 mtime 设回 `2026/10/12 19:31:23`（与同批的 `data\webview` 一致），但**这不等于内容还原**。
 
 **教训**：凡是"只想知道怎么用"就**不要**对真实数据目录跑这个 CLI ——
-先 `$env:CHAINPROXY_DATA_DIR` 指到临时目录，或者干脆只读源码里的 `flag` 定义。
+先 `$env:PICOHOP_DATA_DIR` 指到临时目录，或者干脆只读源码里的 `flag` 定义。
 第 5 节那条"`-h` 会真执行、暂不修"的结论**升级**为：它已经造成过一次真实数据污染。
 

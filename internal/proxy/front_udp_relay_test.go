@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	"chainproxy/internal/config"
+	"github.com/murongruolan/picohop/internal/config"
 )
 
 // fakeRelayReply 是假 SOCKS5 服务端要回给客户端的 BND.ADDR / BND.PORT。

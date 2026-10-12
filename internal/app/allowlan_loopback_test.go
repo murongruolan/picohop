@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"chainproxy/internal/config"
+	"github.com/murongruolan/picohop/internal/config"
 )
 
 // TestStartNodeForcesLoopbackWhenAllowLanOff 是从"到底 bind 了哪块网卡"这一层

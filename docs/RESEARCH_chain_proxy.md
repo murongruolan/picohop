@@ -26,11 +26,11 @@
 对应的报文序列（以最常见的 SOCKS5 为例）：
 
 ```
-1. 浏览器            ──SOCKS5 greeting──>          ChainProxy(10810)         [本地监听]
-2. ChainProxy(10810) ──TCP connect──>                前置代理(127.0.0.1:10808)  [主流客户端]
-3. ChainProxy        ──SOCKS5 CONNECT 前置代理──>     前置代理
+1. 浏览器            ──SOCKS5 greeting──>          PicoHop(10810)         [本地监听]
+2. PicoHop(10810) ──TCP connect──>                前置代理(127.0.0.1:10808)  [主流客户端]
+3. PicoHop        ──SOCKS5 CONNECT 前置代理──>     前置代理
 4. 前置代理          ──在其隧道内──>                   住宅代理(如 hk.xxx.com:10000)
-5. ChainProxy        ──SOCKS5/auth+CONNECT 住宅代理──> 住宅代理（这就是"第二次握手"）
+5. PicoHop        ──SOCKS5/auth+CONNECT 住宅代理──> 住宅代理（这就是"第二次握手"）
 6. 住宅代理          ──> 目标站点
 7. 之后全部是裸 TCP 双向搬运
 ```
@@ -258,7 +258,7 @@ mihomo 还有 `type: relay` 的代理组，它和 `dialer-proxy` 是**两种不�
 
 ## 3. 两个项目的共同点与差异
 
-| 维度 |主流客户端|主流客户端| **ChainProxy（本项目）** |
+| 维度 |主流客户端|主流客户端| **PicoHop（本项目）** |
 |---|---|---|---|
 | 谁做转发 | Xray / sing-box 内核（外部进程） | mihomo 内核（sidecar） | **自己用 Go 实现** |
 | 链的表达 | `sockopt.dialerProxy` / `detour` | `dialer-proxy` | **Go 对象图（Upstream 接口）** |
@@ -321,14 +321,14 @@ mihomo 还有 `type: relay` 的代理组，它和 `dialer-proxy` 是**两种不�
 
 ---
 
-## 5. ChainProxy 的架构决策（研究 → 设计的映射）
+## 5. PicoHop 的架构决策（研究 → 设计的映射）
 
-| 研究得到的结论 | ChainProxy 的落地 |
+| 研究得到的结论 | PicoHop 的落地 |
 |---|---|
 | 链 = 套接字逐跳创建 | `proxy.Dialer` 逐层包装：`client → FrontDialer → UpstreamDialer → target` |
 | `dialer-proxy = 上一跳` | `Upstream` 接口只有一个方法 `Dial(ctx, network, addr) (net.Conn, error)` |
 | 链里可以混不同协议 | 所以 `Upstream` 的实现有 `socks5` / `http` / `wireguard` 三种，**可自由组合** |
-| 出口 = 路由表里选中的那个 tag | 所以 ChainProxy 让**每个上游绑定独立端口**，浏览器选端口 = 选出口，最直观 |
+| 出口 = 路由表里选中的那个 tag | 所以 PicoHop 让**每个上游绑定独立端口**，浏览器选端口 = 选出口，最直观 |
 | 链式代理显著降速 | 所以**默认关闭**，界面上显式画出两跳，测试按钮实时反馈延迟与出口 IP |
 | 至少 2 跳 | 所以前置代理为空时**不允许启动**，直接报错 |
 | 端口必须互斥 | 所以启动前做三重校验：重复检测 / 占用检测 / 与前置端口冲突检测 |
@@ -350,7 +350,7 @@ if (outbound["streamSettings"]?["sockopt"]?["dialerProxy"].ToString().IsNullOrEm
 即：**把配置里所有还没有上游的出站，统一挂到同一个"前置代理"节点上**。
 效果等价于"所有出站都要先经过我指定的这个前置节点"。
 
-这正是 ChainProxy 里"前置代理（全局单例）"这一概念的来源，
+这正是 PicoHop 里"前置代理（全局单例）"这一概念的来源，
 只是我们把它做成了**运行期**的（改完立即生效、无需重启内核、可以多条链同时用同一个前置），
 而不是主流客户端那种**配置期**的（改完要重写配置并重启内核）。
 

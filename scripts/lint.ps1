@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# ChainProxy 静态检查
+# PicoHop 静态检查
 #
 #   .\scripts\lint.ps1
 #
@@ -45,7 +45,7 @@ if ($LASTEXITCODE -ne 0) { $failed++ } else { Write-Host "  OK" }
 
 # ---------------------------------------------------------------------------
 Write-Host "[lint] 3/4 配置校验 ……"
-& go run ./cmd/chainproxy validate 2>&1
+& go run ./cmd/picohop validate 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  配置有问题（见上面的输出）"
     $failed++
@@ -55,7 +55,7 @@ if ($LASTEXITCODE -ne 0) {
 
 # ---------------------------------------------------------------------------
 Write-Host "[lint] 4/4 内嵌内核自检 ……"
-& go run ./cmd/chainproxy engines 2>&1
+& go run ./cmd/picohop engines 2>&1
 if ($LASTEXITCODE -ne 0) { $failed++ } else { Write-Host "  OK" }
 
 # ---------------------------------------------------------------------------

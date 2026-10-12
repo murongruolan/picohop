@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# ChainProxy 端到端测试
+# PicoHop 端到端测试
 #
 #   .\scripts\test_e2e.ps1
 #   .\scripts\test_e2e.ps1 -Config data\config.json -HoldSeconds 25
@@ -8,7 +8,7 @@
 #
 # 流程：
 #   1. 记录全局前置代理的出口 IP 作为基准
-#   2. 后台启动 chainproxy run（把所有节点拉起来，占用各自的本地端口）
+#   2. 后台启动 picohop run（把所有节点拉起来，占用各自的本地端口）
 #   3. 用 curl 分别以 SOCKS5 与 HTTP 两种方式走每个本地端口访问 IP 查询服务
 #   4. 断言：本地端口的出口 IP 必须与前置出口 IP **不同**
 #      —— 这正是"链式代理真的生效"的定义
@@ -49,7 +49,7 @@ if (-not $cfg.nodes -or $cfg.nodes.Count -eq 0) {
 }
 
 Write-Host "========================================"
-Write-Host "ChainProxy 端到端测试"
+Write-Host "PicoHop 端到端测试"
 Write-Host "配置：$Config"
 Write-Host "节点：$($cfg.nodes.Count) 个"
 Write-Host "========================================"
@@ -59,7 +59,7 @@ Write-Host "========================================"
 # ---------------------------------------------------------------------------
 Write-Host ""
 Write-Host "[1/4] 取全局前置代理出口 IP（基准）"
-$fetchOut = & go run ./cmd/chainproxy fetch -config $Config -node '' 2>&1 | Out-String
+$fetchOut = & go run ./cmd/picohop fetch -config $Config -node '' 2>&1 | Out-String
 Write-Host $fetchOut
 
 $frontIP = ''
@@ -78,7 +78,7 @@ Write-Host ""
 Write-Host "[2/4] 后台启动节点（$HoldSeconds 秒）"
 $runOut = Join-Path $Root '.cache\e2e-run.log'
 $proc = Start-Process -FilePath 'go' `
-    -ArgumentList @('run', './cmd/chainproxy', 'run', '-config', $Config, '-seconds', "$HoldSeconds") `
+    -ArgumentList @('run', './cmd/picohop', 'run', '-config', $Config, '-seconds', "$HoldSeconds") `
     -WorkingDirectory $Root -RedirectStandardOutput $runOut -RedirectStandardError "$runOut.err" -PassThru
 Start-Sleep -Seconds 6
 Write-Host "  已启动（pid=$($proc.Id)），日志：$runOut"
@@ -172,8 +172,8 @@ foreach ($n in $cfg.nodes) {
 # ---------------------------------------------------------------------------
 Write-Host ""
 Write-Host "[4/4] 停止并确认端口已释放"
-& go run ./cmd/chainproxy validate -config $Config | Out-Null
-Get-Process chainproxy -ErrorAction SilentlyContinue | ForEach-Object { $_.Kill() | Out-Null }
+& go run ./cmd/picohop validate -config $Config | Out-Null
+Get-Process picohop -ErrorAction SilentlyContinue | ForEach-Object { $_.Kill() | Out-Null }
 if ($proc -and -not $proc.HasExited) { $proc.Kill() | Out-Null }
 Start-Sleep -Seconds 2
 

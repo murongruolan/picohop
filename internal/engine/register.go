@@ -1,6 +1,6 @@
 package engine
 
-import "chainproxy/internal/proxy"
+import "github.com/murongruolan/picohop/internal/proxy"
 
 // init 把 mihomo 出口的构造器注册给 proxy 包。
 //

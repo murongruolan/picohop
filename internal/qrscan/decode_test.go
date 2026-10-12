@@ -15,7 +15,7 @@ import (
 
 // testQRText 用一条真实的分享链接：既有长 URL 的量级，也顺带验证中文/特殊字符
 // （# 片段）能原样读回。
-const testQRText = "ss://YWVzLTEyOC1nY206cGFzc3dvcmQ@1.2.3.4:8388#ChainProxy节点"
+const testQRText = "ss://YWVzLTEyOC1nY206cGFzc3dvcmQ@1.2.3.4:8388#PicoHop节点"
 
 // mustQRImage 用 go-qrcode 生成一张二维码图片。
 func mustQRImage(t *testing.T, size int) image.Image {

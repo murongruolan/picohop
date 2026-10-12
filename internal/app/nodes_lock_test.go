@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"chainproxy/internal/config"
-	"chainproxy/internal/engine"
-	"chainproxy/internal/proxy"
+	"github.com/murongruolan/picohop/internal/config"
+	"github.com/murongruolan/picohop/internal/engine"
+	"github.com/murongruolan/picohop/internal/proxy"
 )
 
 // blockingStopUpstream 是"Stop 会一直卡住直到测试放行"的假出口。

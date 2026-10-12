@@ -8,7 +8,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 
-	"chainproxy/internal/config"
+	"github.com/murongruolan/picohop/internal/config"
 )
 
 // ---------------------------------------------------------------------------
@@ -25,7 +25,7 @@ import (
 // ---------------------------------------------------------------------------
 
 // 主窗口标题。托盘图标定位、标题栏明暗同步都要按它找窗口，所以集中在这里。
-const mainWindowTitle = "ChainProxy · 链式代理"
+const mainWindowTitle = "PicoHop · 链式代理"
 
 // setTitleBarTheme 按 system/light/dark 同步主窗口标题栏明暗。
 //
@@ -105,7 +105,7 @@ func (a *API) notify(title, body string) {
 	}
 	if err := a.notif.SendNotification(notifications.NotificationOptions{
 		// 同一个 ID 会替换掉上一条，正是这里想要的（状态类提示不需要堆积）
-		ID:    "chainproxy-" + strings.ReplaceAll(title, " ", "-"),
+		ID:    "picohop-" + strings.ReplaceAll(title, " ", "-"),
 		Title: title,
 		Body:  body,
 	}); err != nil {
@@ -145,7 +145,7 @@ func (a *API) flushWarnings() {
 // logf 写一行应用日志。
 //
 // 【为什么要有它】直接用标准库 log.Printf 是写 stderr —— 而 GUI 构建是
-// -H windowsgui（没有控制台），那些行**一行都到不了 data\chainproxy.log**。
+// -H windowsgui（没有控制台），那些行**一行都到不了 data\picohop.log**。
 // 浮动窗口那边踩过这个坑（"日志里怎么没有那行"），所以统一走这里。
 func (a *API) logf(format string, args ...any) {
 	if a.app != nil {
@@ -308,7 +308,7 @@ func (a *API) reportShortcuts(list []ShortcutStatus) {
 // 这是最容易被误解的状态。只提示一次，之后他应该已经知道了。
 func (a *API) notifyMinimisedToTray() {
 	a.trayHintOnce.Do(func() {
-		a.notify("ChainProxy 仍在运行",
+		a.notify("PicoHop 仍在运行",
 			"窗口已收进托盘，代理不受影响。右键托盘图标可激活/停止节点或退出。")
 	})
 }

@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-	"chainproxy/internal/config"
+	"github.com/murongruolan/picohop/internal/config"
 )
 
 // TestNetworkLogCursor 锁死"游标式拉取"的语义：只给没见过的那部分。

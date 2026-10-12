@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"chainproxy/internal/app"
-	"chainproxy/internal/config"
+	"github.com/murongruolan/picohop/internal/app"
+	"github.com/murongruolan/picohop/internal/config"
 )
 
 // TestSystemProxyNeedsRestore 是审查 #5（「恢复默认设置」→ 退出跳过系统代理还原 →
@@ -19,10 +19,10 @@ import (
 //   - 开关开着但备份没了（被人删了/写失败）→ 也要还原（fail-closed）；
 //   - 两者都没有 → **绝不能**动注册表，否则会清掉用户自己配的系统代理。
 //
-// 测试只用 CHAINPROXY_DATA_DIR + 真实的备份文件，不碰真注册表。
+// 测试只用 PICOHOP_DATA_DIR + 真实的备份文件，不碰真注册表。
 func TestSystemProxyNeedsRestore(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("CHAINPROXY_DATA_DIR", dir)
+	t.Setenv("PICOHOP_DATA_DIR", dir)
 
 	backup := sysProxySnapshotPath()
 	if filepath.Dir(backup) != config.DataDir() {
@@ -71,7 +71,7 @@ func TestSystemProxyNeedsRestore(t *testing.T) {
 // 没开过全局代理（无备份）时不该去碰注册表，设置照常恢复成默认值。
 func TestResetSettingsKeepsWorking(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("CHAINPROXY_DATA_DIR", dir)
+	t.Setenv("PICOHOP_DATA_DIR", dir)
 
 	inst, err := app.New(config.ConfigPath())
 	if err != nil {

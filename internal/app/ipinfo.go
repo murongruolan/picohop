@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"chainproxy/internal/proxy"
+	"github.com/murongruolan/picohop/internal/proxy"
 )
 
 // ------------------------------------------------------------------
@@ -77,7 +77,7 @@ func (a *App) FetchIPInfo(ctx context.Context) IPInfo {
 	if err != nil {
 		return IPInfo{Err: err.Error(), At: time.Now().UnixMilli()}
 	}
-	req.Header.Set("User-Agent", "ChainProxy")
+	req.Header.Set("User-Agent", "PicoHop")
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -228,7 +228,7 @@ func testOneSite(ctx context.Context, nodeID, nodeName string, port int, site st
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err == nil {
-		req.Header.Set("User-Agent", "ChainProxy")
+		req.Header.Set("User-Agent", "PicoHop")
 		req.Header.Set("Range", "bytes=0-2047") // 只要头一点点，测的是连通性不是带宽
 		var resp *http.Response
 		resp, err = client.Do(req)

@@ -1,4 +1,4 @@
-// Package config 定义 ChainProxy 的配置模型、默认值、持久化与校验。
+// Package config 定义 PicoHop 的配置模型、默认值、持久化与校验。
 //
 // 配置是纯 JSON，存放在 <dataDir>/config.json，方便手工查看与备份。
 package config
@@ -870,7 +870,7 @@ func (c *Config) normalize() {
 //
 // 解析顺序（每一步都刻意留了，因为运行方式实在太多）：
 //
-//  1. 环境变量 CHAINPROXY_DATA_DIR
+//  1. 环境变量 PICOHOP_DATA_DIR
 //  2. 从可执行文件所在目录**向上找 go.mod**，找到就用 <仓库根>/data
 //     —— 这一条同时覆盖了两种情况：
 //     wails dev / wails build 产物在 desktop\build\bin\，
@@ -879,7 +879,7 @@ func (c *Config) normalize() {
 //  4. 兜底：当前工作目录下的 data\
 //
 // 之所以要"向上找 go.mod"而不是简单地看 exe 同级目录：
-// `go run ./cmd/chainproxy validate` 生成的可执行文件位于 Go 构建缓存里，
+// `go run ./cmd/picohop validate` 生成的可执行文件位于 Go 构建缓存里，
 // 按 exe 同级目录算会得到一个**缓存目录里的 data\**，于是命令行读到的
 // 和界面读到的根本不是同一份配置 —— 这个坑实测踩过一次。
 //
@@ -887,7 +887,7 @@ func (c *Config) normalize() {
 // "当前用户 + Administrators + SYSTEM"（见 datadir.go / datadir_windows.go），
 // 不要绕过它自己去创建目录。
 func DataDir() string {
-	if v := strings.TrimSpace(os.Getenv("CHAINPROXY_DATA_DIR")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("PICOHOP_DATA_DIR")); v != "" {
 		return v
 	}
 	if exe, err := os.Executable(); err == nil {
@@ -921,7 +921,7 @@ func findRepoRoot(start string) string {
 func ConfigPath() string { return filepath.Join(DataDir(), "config.json") }
 
 // LogPath 返回默认日志文件路径。
-func LogPath() string { return filepath.Join(DataDir(), "chainproxy.log") }
+func LogPath() string { return filepath.Join(DataDir(), "picohop.log") }
 
 // Today 返回本地时区下的今天日期字符串。
 func Today() string { return nowTime().Format("2006-01-02") }

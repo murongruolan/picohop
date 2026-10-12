@@ -15,7 +15,7 @@
 #   3) 自测入口（-open <面板名>）不擦用户状态：这类入口为了截图会切底部栏视图，
 #      以前它会把偏好写进配置 —— 实测 -open globaltag 能把 bottomPanelOpen 写成 false。
 #
-# 全程只在 CHAINPROXY_DATA_DIR 指向的**临时副本**上跑；跑完核对用户真实
+# 全程只在 PICOHOP_DATA_DIR 指向的**临时副本**上跑；跑完核对用户真实
 # data\config.json 的 sha256 没变（纪律见 docs/VERIFY_DISCIPLINE.md）。
 #
 # 【为什么用文件内容做断言】偏好本来就落在 config.json 里，它是"程序认为用户
@@ -23,10 +23,10 @@
 # 就加 -Shot，截出来的图应当：面板是展开的、高亮在「网站测试」上。
 # ---------------------------------------------------------------------------
 param(
-    [string]$Exe = "",           # 默认为 dist\ChainProxy.exe
+    [string]$Exe = "",           # 默认为 dist\PicoHop.exe
     [int]$WaitSeconds = 10,      # 每次启动等多久再看（WebView2 冷启动偏慢）
     [switch]$Shot,               # 顺便截图
-    [switch]$Force               # 允许杀掉已经在跑的 ChainProxy
+    [switch]$Force               # 允许杀掉已经在跑的 PicoHop
 )
 
 $ErrorActionPreference = 'Stop'
@@ -34,7 +34,7 @@ $ErrorActionPreference = 'Stop'
 
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
-if (-not $Exe) { $Exe = Join-Path $Root 'dist\ChainProxy.exe' }
+if (-not $Exe) { $Exe = Join-Path $Root 'dist\PicoHop.exe' }
 
 # 断言用的那组偏好：**刻意都不是默认值**（默认是 收起 / logs / 260），
 # 否则"存住了"和"被默认值顶掉了"看起来一模一样。
@@ -74,9 +74,9 @@ if (-not (Test-Path $Exe)) {
     exit 1
 }
 
-$running = @(Get-Process ChainProxy -ErrorAction SilentlyContinue)
+$running = @(Get-Process PicoHop -ErrorAction SilentlyContinue)
 if ($running.Count -and -not $Force) {
-    Write-Host "已经有 ChainProxy 在跑（pid: $($running.Id -join ', ')）。" -ForegroundColor Yellow
+    Write-Host "已经有 PicoHop 在跑（pid: $($running.Id -join ', ')）。" -ForegroundColor Yellow
     Write-Host "本脚本要独占一个实例；请先从托盘退出它，或加 -Force 让脚本杀掉它。" -ForegroundColor Yellow
     exit 1
 }
@@ -128,7 +128,7 @@ $cfg = [ordered]@{
 }
 
 function Start-App([string]$DevOpen) {
-    $env:CHAINPROXY_DATA_DIR = $dataDir
+    $env:PICOHOP_DATA_DIR = $dataDir
     $args = @()
     if ($DevOpen) { $args = @('-open', $DevOpen) }
     Start-Process -FilePath $Exe -WorkingDirectory $Root -ArgumentList $args | Out-Null
@@ -136,7 +136,7 @@ function Start-App([string]$DevOpen) {
 }
 
 function Stop-App {
-    Get-Process ChainProxy -ErrorAction SilentlyContinue | ForEach-Object { $_.Kill() | Out-Null }
+    Get-Process PicoHop -ErrorAction SilentlyContinue | ForEach-Object { $_.Kill() | Out-Null }
     Start-Sleep -Seconds 2
 }
 
@@ -148,7 +148,7 @@ Write-Host "程序：$Exe"
 Write-Host "数据目录（隔离）：$dataDir"
 Write-Host '========================================' -ForegroundColor Cyan
 
-$prevDataDir = $env:CHAINPROXY_DATA_DIR
+$prevDataDir = $env:PICOHOP_DATA_DIR
 try {
     # ---------- 1. 启动后不被默认值反写 ----------
     Write-Host ''
@@ -171,7 +171,7 @@ try {
         # 变量别叫 $shot：PowerShell 变量名大小写不敏感，会撞上开关参数 $Shot
         # （撞上就会报"无法把 String 转成 SwitchParameter"，实测踩过）。
         $shotPath = Join-Path $Root '.cache\shots\panel-prefs-after-restart.png'
-        & go run ./cmd/uishot -title ChainProxy -out $shotPath -wait 15 | Out-Host
+        & go run ./cmd/uishot -title PicoHop -out $shotPath -wait 15 | Out-Host
         if ($LASTEXITCODE -ne 0) { Fail '截图失败' } else { Ok "截图：$shotPath" }
     }
 
@@ -185,8 +185,8 @@ try {
     AssertPanelPrefs '自测入口跑过之后' $cfgPath
 } finally {
     Stop-App
-    if ($null -eq $prevDataDir) { Remove-Item Env:\CHAINPROXY_DATA_DIR -ErrorAction SilentlyContinue }
-    else { $env:CHAINPROXY_DATA_DIR = $prevDataDir }
+    if ($null -eq $prevDataDir) { Remove-Item Env:\PICOHOP_DATA_DIR -ErrorAction SilentlyContinue }
+    else { $env:PICOHOP_DATA_DIR = $prevDataDir }
 
     # ---------- 4. 用户的真实配置一根汗毛都没动 ----------
     Write-Host ''

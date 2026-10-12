@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"chainproxy/internal/config"
+	"github.com/murongruolan/picohop/internal/config"
 )
 
 // 本文件是审查 #28 的回归测试：端口占用探测（net.Listen）不许在全局锁里做。

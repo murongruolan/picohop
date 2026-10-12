@@ -27,5 +27,5 @@ git clone --depth 1 https://github.com/主流客户端/主流客户端.git F:\ch
 另一个表达成 mihomo 的 `dialer-proxy` 字段。它们都**不自己实现转发**，
 而是由各自的内核（Xray / sing-box / mihomo）去实现真正的逐跳拨号与中继。
 
-本项目 ChainProxy 则是**自己实现这一层转发**：用 Go 直接写出
+本项目 PicoHop 则是**自己实现这一层转发**：用 Go 直接写出
 "客户端 → 前置代理 → 住宅代理 → 目标" 的三级套接字串联与双向搬运。

@@ -7,18 +7,18 @@ import (
 	"strconv"
 	"testing"
 
-	"chainproxy/internal/config"
-	"chainproxy/internal/ports"
+	"github.com/murongruolan/picohop/internal/config"
+	"github.com/murongruolan/picohop/internal/ports"
 )
 
 // newTestApp 造一个干净的 App 实例。
 //
-// 把 CHAINPROXY_DATA_DIR 指到 t.TempDir()，避免测试往项目真实的
+// 把 PICOHOP_DATA_DIR 指到 t.TempDir()，避免测试往项目真实的
 // data\ 目录里写日志和配置。
 func newTestApp(t *testing.T, nodes []config.Node, front config.Front) *App {
 	t.Helper()
 	dir := t.TempDir()
-	t.Setenv("CHAINPROXY_DATA_DIR", dir)
+	t.Setenv("PICOHOP_DATA_DIR", dir)
 
 	cfg := config.Default()
 	cfg.Nodes = nodes
@@ -173,7 +173,7 @@ func TestResolveFront(t *testing.T) {
 //
 // 【为什么必须动态找，不能写死 10810/10815】
 // 这几个测试依赖真实的端口占用情况。早先写死了端口，结果开发机上正跑着
-// ChainProxy（占着 10810/10811）时测试就红了 —— 与代码无关，却极易被
+// PicoHop（占着 10810/10811）时测试就红了 —— 与代码无关，却极易被
 // 误判成回归。真踩过一次。
 func freeBase(t *testing.T, from, n int) int {
 	t.Helper()
@@ -197,7 +197,7 @@ func freeBase(t *testing.T, from, n int) int {
 
 // TestPortAllocationFollowsRules 锁死端口分配的三条界面规则。
 func TestPortAllocationFollowsRules(t *testing.T) {
-	// 找一段空闲端口，避免受"本机正在跑 ChainProxy"之类的干扰
+	// 找一段空闲端口，避免受"本机正在跑 PicoHop"之类的干扰
 	base := freeBase(t, 12000, 8)
 
 	cfgNodes := []config.Node{
@@ -424,7 +424,7 @@ func TestSaveAndReloadConfig(t *testing.T) {
 	if dir := config.DataDir(); dir != filepath.Dir(path) {
 		t.Errorf("DataDir 与配置路径应当一致：%s vs %s", dir, path)
 	}
-	if _, err := os.Stat(filepath.Join(filepath.Dir(path), "chainproxy.log")); err != nil {
+	if _, err := os.Stat(filepath.Join(filepath.Dir(path), "picohop.log")); err != nil {
 		t.Logf("日志文件未生成（可接受）：%v", err)
 	}
 }

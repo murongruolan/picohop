@@ -616,7 +616,7 @@ func registerOverlayClass() (uint16, error) {
 	var atom uint16
 	var regErr error
 	overlayClassOnce.Do(func() {
-		name, err := syscall.UTF16PtrFromString("ChainProxyQRScanOverlay")
+		name, err := syscall.UTF16PtrFromString("PicoHopQRScanOverlay")
 		if err != nil {
 			regErr = fmt.Errorf("qrscan: 窗口类名转换失败: %w", err)
 			return

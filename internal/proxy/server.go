@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"chainproxy/internal/config"
+	"github.com/murongruolan/picohop/internal/config"
 )
 
 // Server 是一个节点的本地监听服务：绑定一个端口，处理所有客户端连接。

@@ -6,7 +6,7 @@
 // 用法：
 //
 //	go run ./cmd/uishot -list                              # 列出可见窗口标题
-//	go run ./cmd/uishot -title ChainProxy -out shot.png     # 截指定窗口的客户区
+//	go run ./cmd/uishot -title PicoHop -out shot.png     # 截指定窗口的客户区
 //
 // 【为什么没有"模拟点击"】【重要】
 // 早期版本里做过真实鼠标注入（SetCursorPos + mouse_event）来点开对话框，
@@ -33,7 +33,7 @@ import (
 	"time"
 	"unsafe"
 
-	"chainproxy/internal/qrscan"
+	"github.com/murongruolan/picohop/internal/qrscan"
 )
 
 var (

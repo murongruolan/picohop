@@ -18,8 +18,8 @@ import (
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun/netstack"
 
-	"chainproxy/internal/config"
-	"chainproxy/internal/proxy"
+	"github.com/murongruolan/picohop/internal/config"
+	"github.com/murongruolan/picohop/internal/proxy"
 )
 
 // ---------------------------------------------------------------------------
@@ -57,12 +57,12 @@ func genKeys(t *testing.T) testKeys {
 func TestWireGuardEndToEnd(t *testing.T) {
 	// 当前状态（2026-10-10）：隧道握手对"本地假服务端"尚未跑通，
 	// 因此默认跳过，避免 CI/日常 `go test ./...` 变红。
-	// 想复现请设置 CHAINPROXY_WG_E2E=1 后运行：
-	//   $env:CHAINPROXY_WG_E2E=1; go test ./internal/wgproxy/ -run TestWireGuardEndToEnd -v
+	// 想复现请设置 PICOHOP_WG_E2E=1 后运行：
+	//   $env:PICOHOP_WG_E2E=1; go test ./internal/wgproxy/ -run TestWireGuardEndToEnd -v
 	// 外层能力（SOCKS5 UDP ASSOCIATE 经前置代理）是已验证通过的，
 	// 见 TestSocksUDPAssociateThroughFront。
-	if os.Getenv("CHAINPROXY_WG_E2E") == "" {
-		t.Skip("隧道端到端握手尚未验证通过，默认跳过；设置 CHAINPROXY_WG_E2E=1 可复现")
+	if os.Getenv("PICOHOP_WG_E2E") == "" {
+		t.Skip("隧道端到端握手尚未验证通过，默认跳过；设置 PICOHOP_WG_E2E=1 可复现")
 	}
 
 	serverKeys := genKeys(t)
@@ -132,7 +132,7 @@ func TestWireGuardEndToEnd(t *testing.T) {
 			Address:       clientIP + "/32",
 			PeerPublicKey: serverKeys.pubHex,
 			// 可用环境变量换成全隧道写法，用来验证用户的 "0.0.0.0/0, ::/0" 配置
-			AllowedIPs: envOr("CHAINPROXY_WG_E2E_ALLOWED", "10.77.0.0/24"), MTU: 1420,
+			AllowedIPs: envOr("PICOHOP_WG_E2E_ALLOWED", "10.77.0.0/24"), MTU: 1420,
 			PersistentKeepalive: 25,
 		},
 	}
@@ -158,7 +158,7 @@ func TestWireGuardEndToEnd(t *testing.T) {
 	t.Logf("✅ 隧道握手完成，耗时 %d ms", time.Since(start).Milliseconds())
 
 	// 若配的是全隧道，必须确认两条前缀都真的生效了
-	want := envOr("CHAINPROXY_WG_E2E_ALLOWED", "")
+	want := envOr("PICOHOP_WG_E2E_ALLOWED", "")
 	if strings.Contains(want, "::") {
 		st := up.dumpDeviceState()
 		hasV4 := strings.Contains(st, "allowed_ip=0.0.0.0/0")
@@ -176,7 +176,7 @@ func TestWireGuardEndToEnd(t *testing.T) {
 	}
 	defer conn.Close()
 
-	payload := []byte("chainproxy wireguard over socks5-udp")
+	payload := []byte("picohop wireguard over socks5-udp")
 	if _, err := conn.Write(payload); err != nil {
 		t.Fatalf("写入失败：%v", err)
 	}

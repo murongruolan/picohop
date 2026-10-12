@@ -1,5 +1,12 @@
 # 提交记录说明（COMMIT_HISTORY）
 
+> **改名说明（2026-10-13）**：本文档成文时项目叫 ChainProxy。2026-10-13 项目改名为
+> **PicoHop**（Go module 路径 `github.com/murongruolan/picohop`）。
+> **本文正文一律保留旧名不改写** —— 这份文档的价值就在于它是当时真实状态的记录，
+> 把名字替换掉等于伪造历史。因此本文里出现的 `ChainProxy` / `chainproxy` /
+> `CHAINPROXY_*` / `dist\chainproxy-cli.exe` 等，指的都是今天的 PicoHop，
+> 只是当时的名字与文件名。
+
 > 这个文档的用途：**几个月后回来还能看懂自己每一行代码是怎么来的、为什么这么写。**
 >
 > 维护约定：
@@ -59,6 +66,12 @@
 | 021 | `feat(desktop)!: 桌面外壳从 Wails v2 迁移到 v3（托盘常驻/多窗口/全局快捷键/系统通知）` | 2026-10-11 | main.go 全重写 + 新增 shell.go/theme_*.go；API 改 v3 服务钩子；前端桥换 @wailsio/runtime（只改 api.js）；删 wailsjs 与 wails.json；构建改裸 go build（不依赖 wails3 CLI/task）；实测托盘/快捷键/关窗常驻/数据目录全部通过 | [详情](#021) |
 | 022 | `feat(desktop): 添加/编辑节点改为独立置顶浮动窗口（可拖到主窗口之外）` | 2026-10-11 | 新增 float.go：OpenFloatDialog 建无边框置顶窗口并阻塞等结果；复用同一份前端（?float=kind + body class），无需第二个入口；结果经 ui.onNodeDialogClosed → SubmitFloatDialog 回传；实测超出主窗口右 270px/下 94px 且不被裁剪 | [详情](#022) |
 | 023 | `feat(config): 全局快捷键可自定义 + 设置新增「快捷键」页` | 2026-10-11 | Settings 增 ShortcutToggleWindow/ShortcutToggleAll（空=默认、none=关闭）；默认改 Ctrl+Alt+Shift+A 以避开微信截图的 Ctrl+Alt+A；ApplyShortcuts 先注销再注册并逐条报结果；设置页新增录制框，只按一个键会被拒绝 | [详情](#023) |
+| 024 | `refactor: 项目改名为 PicoHop（Go module 改为 github.com/murongruolan/picohop）` | 2026-10-13 | 三类大小写敏感替换共 423 处 / 102 文件；module 与 98 处 import 同步改名；历史文档只加横幅、不改写正文；门禁全绿，产物体积与改名前一致 | [详情](#024) |
+
+> **索引缺口（如实记录）**：上表止于 023（2026-10-11），从那里到 024 之间还有 **90 个提交没有登记**
+> —— 包括 sing-box → mihomo 的整轮换装、24 项审计修复、底部栏偏好修复等。那些提交的内容
+> 以各自的 commit message 为准；换装那一段另有
+> [`MIHOMO_MIGRATION.md`](MIHOMO_MIGRATION.md) 的全程记录。**索引尚未补齐，这是已知缺口。**
 
 ---
 
@@ -2140,3 +2153,69 @@ DOM 浮层做不到 —— 元素只能画在所属窗口的客户区里，到�
 （截图里看到仍然是第一页才发现。）
 
 全量校验：gofmt / go vet 干净、8 个测试包全过。
+
+---
+
+## 024
+
+**commit**: `refactor: 项目改名为 PicoHop（Go module 改为 github.com/murongruolan/picohop）`
+
+**目的**：把开发期的临时名 `ChainProxy` 定下来。新名 **PicoHop** —— 释义
+*Next-hop Node in a Pico Container*（微型容器里的下一跳节点），命中 GitHub `in:name`
+**0 个**同名仓库，念得出也拼得出，并且保住了"微型自包含"与"下一跳"两层语义。
+被否掉的候选（NexFlux / NexHop / Npiko / FluxGate / PicoRelay …）与重名数据
+见 [`NAMING_DECISION.md`](NAMING_DECISION.md)。
+
+### 改了什么
+
+三类**大小写敏感**的替换，覆盖全部已跟踪文本文件，共 **423 处 / 102 个文件**：
+
+| 旧 | 新 | 指什么 |
+|---|---|---|
+| `CHAINPROXY` | `PICOHOP` | 环境变量前缀（`PICOHOP_DATA_DIR`、`PICOHOP_WG_*`、`PICOHOP_UDP_*`、`PICOHOP_ROOT` 等） |
+| `ChainProxy` | `PicoHop` | 品牌：窗口标题、托盘菜单与提示、通知、`User-Agent`、`Proxy-Agent`、文档正文 |
+| `chainproxy` | `picohop` | 小写标识：Go 包名、二进制名（`PicoHop.exe` / `picohop-cli.exe`）、日志名（`picohop.log`） |
+
+此外：
+
+- `cmd/chainproxy/` → `cmd/picohop/`（含 `main_test.go`），用 `git mv` 保留文件历史；
+- Go module 由 `chainproxy` 改为 `github.com/murongruolan/picohop`，**98 处 import** 同步改写
+  —— 这一步的好处是：漏改的 import 会在**编译期**直接暴露，不需要靠 grep 兜底；
+- `desktop/build/config.yml` 的 `companyName` / `productIdentifier` / `copyright` 改为账号名；
+- 仓库级 git 提交身份由占位身份 `chainproxy-dev <chainproxy@local>` 改为
+  `murongruolan <89505739+murongruolan@users.noreply.github.com>`（只影响后续提交，
+  历史提交的作者不动）；
+- 起名用的临时文档 `docs/NAMING_BRIEF.md` 转为永久决策记录 `docs/NAMING_DECISION.md`，原文件删除。
+
+### 刻意**不改**的地方
+
+| 位置 | 处理 | 为什么 |
+|---|---|---|
+| `docs/COMMIT_HISTORY.md` | 正文保留旧名，只在顶部加改名横幅 | 改了等于伪造历史 |
+| `docs/bench/AB-singbox-vs-mihomo.md` | 同上 | 归档实测数据，且**没有用新名字重测** |
+| `chain_proxy`（下划线） | 不动 | 它指仓库目录 `F:\chain_proxy` 与 `RESEARCH_chain_proxy.md` 的文件名，改目录时一并处理 |
+| `refs/local-refs`、`refs/local-refs` | 不动 | 别人的源码 |
+
+### 验证方式
+
+1. `scripts/check.ps1` 全绿（gofmt / vite 前端构建 / `go vet -unsafeptr=false ./...` /
+   `go test ./...`），输出里的包路径已是 `github.com/murongruolan/picohop/...`；
+2. `go version -m dist\PicoHop.exe`：`mod github.com/murongruolan/picohop`，
+   且模块清单里没有 `sagernet/sing-box`；
+3. **隔离数据目录**（`PICOHOP_DATA_DIR` 指向 `.cache\cli-smoke`）跑
+   `picohop-cli.exe version` 与 `ls`：自报 `PicoHop 1.0.0 (windows/amd64, go1.25.5)`，
+   并在该目录里生成了 `picohop.log` —— 证明**新环境变量与新日志名在运行时真的生效**，
+   而不是只改了字符串；
+4. 真实 `data\config.json` 的 sha256 改名前与改名后都是 `85F201D4D1C2E823…`，**全程未被触碰**；
+5. 产物体积 35.87 MB / 24.47 MB，与改名前（35.86 / 24.46）一致 —— 改名没有引入任何膨胀。
+
+### 已知遗留
+
+- `dist\` 里改名前产出的 `ChainProxy.exe` / `chainproxy-cli.exe` 已删除（构建产物，不进仓库）；
+- **注册表里有一条旧名字留下的通知标识**：`HKCU\Software\Classes\AppUserModelId\ChainProxy`
+  （Wails 的 `application.Options.Name` 会进 Windows 通知的程序名归属）。已核实存在；
+  它只影响通知里的程序名显示，不影响功能，新名字第一次发通知时会注册自己的键。
+  删不删由用户决定，本轮**没有动它**；
+- **仓库目录仍叫 `F:\chain_proxy`**：改目录名会让当前会话的工作目录、
+  `internal/config/config_test.go` 里"仓库根必须叫 `chain_proxy`"的断言、
+  以及 21 处 `F:\chain_proxy\…` 绝对路径同时失效，所以刻意单独一步做（须重启程序与会话）。

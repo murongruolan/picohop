@@ -1,4 +1,4 @@
-// Command desktop 是 ChainProxy 的图形界面入口（Wails v3 + Vue 3）。
+// Command desktop 是 PicoHop 的图形界面入口（Wails v3 + Vue 3）。
 //
 // 界面层的职责边界很清晰：它只通过 API（见 api.go）与后端交互，
 // 不直接碰 proxy / engine / config 这些包 —— 协议知识只存在于后端一处。
@@ -28,11 +28,11 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/events"
 	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 
-	"chainproxy/internal/config"
+	"github.com/murongruolan/picohop/internal/config"
 
 	// 注册两种出口实现（proxy 通过注册函数解耦，见各自的 register.go）
-	_ "chainproxy/internal/engine"
-	_ "chainproxy/internal/wgproxy"
+	_ "github.com/murongruolan/picohop/internal/engine"
+	_ "github.com/murongruolan/picohop/internal/wgproxy"
 )
 
 //go:embed all:frontend/dist
@@ -71,7 +71,7 @@ func main() {
 	notif := notifications.New()
 
 	wapp := application.New(application.Options{
-		Name:        "ChainProxy",
+		Name:        "PicoHop",
 		Description: "链式代理",
 		Services: []application.Service{
 			// API 走 ServiceStartup/ServiceShutdown 钩子（见 api.go）
@@ -140,7 +140,7 @@ func main() {
 func setupTray(wapp *application.App, api *API) {
 	tray := wapp.SystemTray.New()
 	tray.SetIcon(trayIcon)
-	tray.SetTooltip("ChainProxy · 链式代理")
+	tray.SetTooltip("PicoHop · 链式代理")
 
 	menu := application.NewMenu()
 	menu.Add("显示主窗口").OnClick(func(*application.Context) {
@@ -161,7 +161,7 @@ func setupTray(wapp *application.App, api *API) {
 		api.CopyFirstLocalAddress()
 	})
 	menu.AddSeparator()
-	menu.Add("退出 ChainProxy").OnClick(func(*application.Context) {
+	menu.Add("退出 PicoHop").OnClick(func(*application.Context) {
 		api.Quit()
 	})
 	tray.SetMenu(menu)

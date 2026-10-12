@@ -11,7 +11,7 @@ import (
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 
-	"chainproxy/internal/proxy"
+	"github.com/murongruolan/picohop/internal/proxy"
 )
 
 // socksBind 实现 wireguard-go 的 conn.Bind 接口，

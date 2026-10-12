@@ -1,7 +1,7 @@
 // Package qrscan 提供「从屏幕上圈选一块矩形 → 识别其中的二维码」所需的底层能力：
 // Windows 下基于 GDI 的纯 syscall 截图，以及基于 gozxing 的跨平台二维码识别。
 //
-// 这里刻意不依赖 cgo / x/image：ChainProxy 要保证「单个 exe、零外部依赖」，
+// 这里刻意不依赖 cgo / x/image：PicoHop 要保证「单个 exe、零外部依赖」，
 // 而 CGO_ENABLED=0 也决定了任何需要 C 编译器的截图库都用不了。
 //
 // 本包只负责「截图 + 识别」；全屏圈选窗口属于上层 UI 的工作。

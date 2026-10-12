@@ -8,10 +8,10 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
-	"chainproxy/internal/config"
-	"chainproxy/internal/ports"
-	"chainproxy/internal/qrscan"
-	"chainproxy/internal/share"
+	"github.com/murongruolan/picohop/internal/config"
+	"github.com/murongruolan/picohop/internal/ports"
+	"github.com/murongruolan/picohop/internal/qrscan"
+	"github.com/murongruolan/picohop/internal/share"
 )
 
 // ------------------------------------------------------------------
@@ -210,7 +210,7 @@ func (a *API) BeginScreenScan() ImportResult {
 
 	// 圈选这条链路很长（排除/隐藏窗口 → 调 Win32 建全屏遮罩 → 等用户拖 → 截图 → 识别），
 	// 而且**用户报过"点完就什么都没了"**。所以每一步都写日志 + 计时：
-	// 出问题时能从 data\chainproxy.log 看出卡在哪一步、慢在哪一步，而不是只能猜。
+	// 出问题时能从 data\picohop.log 看出卡在哪一步、慢在哪一步，而不是只能猜。
 	if a.app != nil {
 		a.app.Logf("屏幕圈选：主窗口已挪出屏幕，准备创建遮罩（%dms）", sinceMs(tStart))
 	}
@@ -430,7 +430,7 @@ func (a *API) IsTesting() bool {
 func safeFileName(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return "chainproxy-node"
+		return "picohop-node"
 	}
 	repl := func(r rune) rune {
 		switch r {

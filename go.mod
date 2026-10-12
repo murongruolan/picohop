@@ -1,4 +1,4 @@
-module chainproxy
+module github.com/murongruolan/picohop
 
 go 1.25.5
 

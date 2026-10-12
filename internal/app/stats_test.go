@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-	"chainproxy/internal/config"
+	"github.com/murongruolan/picohop/internal/config"
 )
 
 // TestTrafficHistoryServesLastN 锁死"返回最近 N 个、按时间升序、且是副本"。

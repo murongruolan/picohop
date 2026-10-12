@@ -66,7 +66,7 @@ const themeTip = computed(() => {
   <div class="cp-toolbar">
     <div class="cp-brand">
       <span class="cp-brand-dot" :class="{ 'is-on': running > 0 }" />
-      <span>ChainProxy</span>
+      <span>PicoHop</span>
     </div>
 
     <div class="cp-stat">

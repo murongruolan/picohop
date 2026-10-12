@@ -1,4 +1,4 @@
-// Package proxy 实现 ChainProxy 的协议核心：
+// Package proxy 实现 PicoHop 的协议核心：
 //   - Front   ：把一条 TCP/UDP 连接"经由前置代理"送到某个地址（第一跳）
 //   - Upstream：在一���已经连通前置"的流里，再建立到最终目标的连接（第二跳）
 //   - Handler ：对外的 mixed 监听器，同时服务 SOCKS5 与 HTTP 客户端

@@ -105,8 +105,8 @@ func TestRestrictDataDirRemovesInheritedAuthenticatedUsers(t *testing.T) {
 	assertNoForeignAccess(t, old)
 
 	// 新建的文件/子目录必须继承同一套权限（config.json 的原子写、
-	// chainproxy.log、webview 目录都靠这条）。
-	fresh := filepath.Join(dir, "chainproxy.log")
+	// picohop.log、webview 目录都靠这条）。
+	fresh := filepath.Join(dir, "picohop.log")
 	if err := os.WriteFile(fresh, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestRestrictDataDirRemovesInheritedAuthenticatedUsers(t *testing.T) {
 	assertNoForeignAccess(t, sub)
 
 	// 收紧不能把自己锁在外面：写、改名、删都得照常能用。
-	renamed := filepath.Join(dir, "chainproxy.log.1")
+	renamed := filepath.Join(dir, "picohop.log.1")
 	if err := os.Rename(fresh, renamed); err != nil {
 		t.Fatalf("收紧后无法改名（把自己锁在外面了）: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestRestrictDataDirIsIdempotent(t *testing.T) {
 // 且在写任何文件之前就已经是收紧后的权限。
 func TestEnsureDataDirCreatesAndTightens(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "data")
-	t.Setenv("CHAINPROXY_DATA_DIR", dir)
+	t.Setenv("PICOHOP_DATA_DIR", dir)
 
 	if err := EnsureDataDir(); err != nil {
 		t.Fatalf("EnsureDataDir 失败: %v", err)

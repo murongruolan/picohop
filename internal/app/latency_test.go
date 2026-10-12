@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-	"chainproxy/internal/config"
+	"github.com/murongruolan/picohop/internal/config"
 )
 
 // TestUpdateTestLatestWins 锁死「延迟」列的取值规则：谁最后测谁覆盖。

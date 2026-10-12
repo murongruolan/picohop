@@ -32,8 +32,8 @@ import (
 
 	C "github.com/metacubex/mihomo/constant"
 
-	"chainproxy/internal/config"
-	"chainproxy/internal/proxy"
+	"github.com/murongruolan/picohop/internal/config"
+	"github.com/murongruolan/picohop/internal/proxy"
 )
 
 // mihomoDialer 是满足 mihomo C.Dialer 的拨号器：所有连接都交给 proxy.Front。

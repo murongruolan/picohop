@@ -8,7 +8,7 @@ import (
 // EnsureDataDir 创建数据目录，并把它收紧到"只有当前用户、Administrators、SYSTEM"。
 //
 // 【为什么要收紧】data\ 是**运行期目录**：config.json（节点的全部凭据 —— 密码、
-// UUID、WireGuard 私钥）和 chainproxy.log 都在里面。它默认落在仓库目录下，而仓库
+// UUID、WireGuard 私钥）和 picohop.log 都在里面。它默认落在仓库目录下，而仓库
 // 往往就在某个盘符根目录下面，于是继承了盘符根那条
 //
 //	NT AUTHORITY\Authenticated Users:(I)(M)
@@ -26,7 +26,7 @@ import (
 // OI/CI 的 ACE **自动传播到已经存在的子对象**上（实测确认，连子文件上的
 // Authenticated Users 一起收掉），所以这里只需要对目录调一次。
 //
-// 【返回错误为什么不致命】数据目录允许被指到别处（CHAINPROXY_DATA_DIR），
+// 【返回错误为什么不致命】数据目录允许被指到别处（PICOHOP_DATA_DIR），
 // 可能落在 FAT/exFAT 分区或网络盘上 —— 那里没有 NTFS ACL，收紧必然失败。
 // 这种情况**继续启动**、但由调用方把警告明确打出来（stderr + 日志），
 // 比让整个程序起不来更有用；但绝不能静默放过。

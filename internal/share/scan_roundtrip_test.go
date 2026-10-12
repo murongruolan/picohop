@@ -5,8 +5,8 @@ import (
 	"image/png"
 	"testing"
 
-	"chainproxy/internal/config"
-	"chainproxy/internal/qrscan"
+	"github.com/murongruolan/picohop/internal/config"
+	"github.com/murongruolan/picohop/internal/qrscan"
 )
 
 // TestQRScanToNodeRoundTrip 是本项目"分享 → 二维码 → 屏幕识别 → 导入"这条

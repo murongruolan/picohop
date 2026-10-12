@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"chainproxy/internal/config"
-	"chainproxy/internal/proxy"
+	"github.com/murongruolan/picohop/internal/config"
+	"github.com/murongruolan/picohop/internal/proxy"
 )
 
 // TestNewMihomoFrontPlan 锁死"第一跳怎么走、哪些必须拒绝"。

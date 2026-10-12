@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"chainproxy/internal/config"
-	"chainproxy/internal/proxy"
+	"github.com/murongruolan/picohop/internal/config"
+	"github.com/murongruolan/picohop/internal/proxy"
 )
 
 // TestPlainUDPTransport 把 UDP 传输层单独拎出来验证：
@@ -25,7 +25,7 @@ func TestPlainUDPTransport(t *testing.T) {
 	recvAddr := recv.LocalAddr().(*net.UDPAddr)
 	t.Logf("接收端 %v", recvAddr)
 
-	// 发送方：ChainProxy 的直连 UDP 通道
+	// 发送方：PicoHop 的直连 UDP 通道
 	front := proxy.NewFront(config.Front{Type: config.FrontTypeDirect, TimeoutMs: 5000})
 	defer front.Close()
 	ch, err := front.DialUDP(context.Background())
@@ -34,7 +34,7 @@ func TestPlainUDPTransport(t *testing.T) {
 	}
 	defer ch.Close()
 
-	want := []byte("chainproxy-udp-transport-probe")
+	want := []byte("picohop-udp-transport-probe")
 	if err := ch.SendToUDP(want, recvAddr.IP.String(), recvAddr.Port); err != nil {
 		t.Fatalf("发送失败：%v", err)
 	}

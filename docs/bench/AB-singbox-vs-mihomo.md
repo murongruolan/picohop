@@ -1,5 +1,10 @@
 # sing-box（现状） vs mihomo A/B 性能对比
 
+> **改名说明（2026-10-13）**：本文是**改名前的实测归档**。正文里的 `chainproxy-cli.exe`
+> 是当时二进制的真实文件名，**原样保留不改写**。项目后来改名为 PicoHop（今天对应的
+> 产物是 `picohop-cli.exe`），但下面的数字**没有用新名字重测过** —— 它们描述的是
+> 2026-10 那次 A/B，不要当成新名字下的新数据。
+
 节点：`node-vmess-hk`（VMess / tcp / 无 TLS）｜本机：Windows 11 25H2，Ryzen 5 9600X（6C/12T），31.8 GB RAM，Wi-Fi AX210
 A = `dist\chainproxy-cli.exe`（内嵌 sing-box v1.14.3，1 个进程 = 1 个内核实例 + 1 个本地 mixed 口 127.0.0.1:10813）
 B = `.cache\mihomo.exe`（Mihomo Meta，1 个进程 = 1 个引擎，mixed-port 127.0.0.1:10888）

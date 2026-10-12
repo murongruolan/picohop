@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"chainproxy/internal/config"
+	"github.com/murongruolan/picohop/internal/config"
 )
 
 // stubMihomoFactory 把内核工厂换成一个不联网的假出口，用完恢复。

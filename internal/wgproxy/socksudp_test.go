@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"chainproxy/internal/config"
-	"chainproxy/internal/proxy"
+	"github.com/murongruolan/picohop/internal/config"
+	"github.com/murongruolan/picohop/internal/proxy"
 )
 
 // dialFrontIfAvailable 返回一个连到本地主流客户端的前置代理；没有就跳过测试。
@@ -62,9 +62,9 @@ func TestSocksUDPAssociateThroughFront(t *testing.T) {
 
 	// 目标可用环境变量覆盖，用来区分"公网 UDP"与"私有地址 UDP"：
 	//主流客户端之类的前置通常对 TCP 私有地址走直连，但 UDP 未必同样处理。
-	dstHost := envOr("CHAINPROXY_UDP_TEST_HOST", "1.1.1.1")
+	dstHost := envOr("PICOHOP_UDP_TEST_HOST", "1.1.1.1")
 	dstPort := 53
-	if pv := os.Getenv("CHAINPROXY_UDP_TEST_PORT"); pv != "" {
+	if pv := os.Getenv("PICOHOP_UDP_TEST_PORT"); pv != "" {
 		if n, e := strconv.Atoi(pv); e == nil {
 			dstPort = n
 		}

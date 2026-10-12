@@ -41,7 +41,7 @@ func TestEnableSystemProxyWritesAddressBeforeEnable(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			t.Setenv("CHAINPROXY_DATA_DIR", t.TempDir())
+			t.Setenv("PICOHOP_DATA_DIR", t.TempDir())
 
 			orig := sysProxyWrite
 			t.Cleanup(func() { sysProxyWrite = orig })

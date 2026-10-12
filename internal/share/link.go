@@ -22,7 +22,7 @@ import (
 	"strconv"
 	"strings"
 
-	"chainproxy/internal/config"
+	"github.com/murongruolan/picohop/internal/config"
 )
 
 // 包级错误。抽出来是为了让调用方（和测试）能用 errors.Is 判定原因，

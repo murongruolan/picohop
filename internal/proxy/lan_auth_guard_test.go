@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"chainproxy/internal/config"
+	"github.com/murongruolan/picohop/internal/config"
 )
 
 // TestNewServerRefusesAnonymousLanListen 锁死审查 #22：

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"chainproxy/internal/config"
+	"github.com/murongruolan/picohop/internal/config"
 )
 
 // ------------------------------------------------------------------

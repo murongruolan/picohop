@@ -42,7 +42,7 @@ Write-Host "本机源地址: $local" -ForegroundColor Green
 $sent = 0
 for ($i = 1; $i -le $Count; $i++) {
     # 标记串里带上序号，方便在抓包结果里数清楚到底到了几个
-    $tag = "CHAINPROXY-PROBE-#$i-of-$Count"
+    $tag = "PICOHOP-PROBE-#$i-of-$Count"
     $bytes = [System.Text.Encoding]::ASCII.GetBytes($tag)
     try {
         $udp.Send($bytes, $bytes.Length) | Out-Null

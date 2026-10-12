@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"chainproxy/internal/config"
-	"chainproxy/internal/proxy"
+	"github.com/murongruolan/picohop/internal/config"
+	"github.com/murongruolan/picohop/internal/proxy"
 )
 
 // TestSocksUDPRelayToLAN 专门验证一件事：前置代理（主流客户端）
@@ -21,19 +21,19 @@ import (
 //
 // 用回声服务而不是 DNS，是为了避免"前置自己答了 DNS"这种假阳性。
 //
-// 启用：CHAINPROXY_UDP_LAN_TEST=1（可选 CHAINPROXY_UDP_LAN_IP 指定本机局域网 IP）
+// 启用：PICOHOP_UDP_LAN_TEST=1（可选 PICOHOP_UDP_LAN_IP 指定本机局域网 IP）
 func TestSocksUDPRelayToLAN(t *testing.T) {
-	if os.Getenv("CHAINPROXY_UDP_LAN_TEST") == "" {
-		t.Skip("未设置 CHAINPROXY_UDP_LAN_TEST，跳过")
+	if os.Getenv("PICOHOP_UDP_LAN_TEST") == "" {
+		t.Skip("未设置 PICOHOP_UDP_LAN_TEST，跳过")
 	}
 
 	// 本机局域网 IP
-	lanIP := os.Getenv("CHAINPROXY_UDP_LAN_IP")
+	lanIP := os.Getenv("PICOHOP_UDP_LAN_IP")
 	if lanIP == "" {
 		lanIP = detectLANIP()
 	}
 	if lanIP == "" {
-		t.Fatal("无法确定本机局域网 IP，请设置 CHAINPROXY_UDP_LAN_IP")
+		t.Fatal("无法确定本机局域网 IP，请设置 PICOHOP_UDP_LAN_IP")
 	}
 
 	// UDP 回声服务
@@ -85,7 +85,7 @@ func TestSocksUDPRelayToLAN(t *testing.T) {
 
 	// 发送长度可调：用来验证"前置是不是按包大小/内容丢包"
 	sendLen := 9
-	if v := os.Getenv("CHAINPROXY_UDP_LAN_TEST_LEN"); v != "" {
+	if v := os.Getenv("PICOHOP_UDP_LAN_TEST_LEN"); v != "" {
 		if n, e := strconv.Atoi(v); e == nil && n > 0 {
 			sendLen = n
 		}
@@ -94,7 +94,7 @@ func TestSocksUDPRelayToLAN(t *testing.T) {
 	for i := range payload {
 		payload[i] = byte(i)
 	}
-	if os.Getenv("CHAINPROXY_UDP_LAN_TEST_WG") != "" {
+	if os.Getenv("PICOHOP_UDP_LAN_TEST_WG") != "" {
 		payload[0] = 0x01 // 伪装成 WireGuard 握手类型，排查按协议嗅探丢弃
 	}
 	t.Logf("发送 %d 字节（首字节=0x%02x）", sendLen, payload[0])

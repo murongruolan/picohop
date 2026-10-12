@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"chainproxy/internal/config"
-	"chainproxy/internal/proxy"
+	"github.com/murongruolan/picohop/internal/config"
+	"github.com/murongruolan/picohop/internal/proxy"
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun/netstack"
@@ -21,19 +21,19 @@ import (
 // TestWireGuardThroughFrontOnLAN 是判断"到底是 前置代理的问题，还是那台 WG 服务器的问题"的关键实验。
 //
 // 做法：在本机的**局域网 IP** 上跑一个真正的 WireGuard 服务端，
-// 然后让 ChainProxy 的 WireGuard 客户端**经前置代理（前置代理）**去连它。
+// 然后让 PicoHop 的 WireGuard 客户端**经前置代理（前置代理）**去连它。
 //
 //   - 如果握手成功 → 说明 前置代理能正常转发 WireGuard 的 UDP，
 //     那 对端服务器 连不上就是**那台服务器/它的防火墙**的问题；
 //   - 如果握手失败 → 说明问题在前置这一侧。
 //
-// 启用：CHAINPROXY_WG_LAN_FRONT_TEST=1
+// 启用：PICOHOP_WG_LAN_FRONT_TEST=1
 func TestWireGuardThroughFrontOnLAN(t *testing.T) {
-	if os.Getenv("CHAINPROXY_WG_LAN_FRONT_TEST") == "" {
-		t.Skip("未设置 CHAINPROXY_WG_LAN_FRONT_TEST，跳过")
+	if os.Getenv("PICOHOP_WG_LAN_FRONT_TEST") == "" {
+		t.Skip("未设置 PICOHOP_WG_LAN_FRONT_TEST，跳过")
 	}
 
-	lanIP := os.Getenv("CHAINPROXY_UDP_LAN_IP")
+	lanIP := os.Getenv("PICOHOP_UDP_LAN_IP")
 	if lanIP == "" {
 		lanIP = detectLANIP()
 	}

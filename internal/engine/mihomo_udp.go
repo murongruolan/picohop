@@ -20,7 +20,7 @@ import (
 
 	C "github.com/metacubex/mihomo/constant"
 
-	"chainproxy/internal/proxy"
+	"github.com/murongruolan/picohop/internal/proxy"
 )
 
 type mihomoUDPChannel struct {

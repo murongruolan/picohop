@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"chainproxy/internal/config"
+	"github.com/murongruolan/picohop/internal/config"
 )
 
 // TestActivateRefusesAnonymousLanProxy 从**用户视角**锁死审查 #22：

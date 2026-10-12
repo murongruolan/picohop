@@ -446,7 +446,7 @@ const meta = computed(() => store.meta || {})
 
       <!-- ------------------------------------------------------------ -->
       <el-tab-pane label="关于" name="about">
-        <div class="cp-section">ChainProxy</div>
+        <div class="cp-section">PicoHop</div>
         <el-descriptions :column="1" border size="small">
           <el-descriptions-item label="版本">{{ meta.version || 'dev' }}</el-descriptions-item>
           <el-descriptions-item label="内嵌引擎">

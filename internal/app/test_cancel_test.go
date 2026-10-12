@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"chainproxy/internal/config"
+	"github.com/murongruolan/picohop/internal/config"
 )
 
 // 审查 #14 的回归测试：取消测试后不得再派发剩余节点、也不得再写回结果。

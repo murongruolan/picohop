@@ -1,6 +1,6 @@
 package wgproxy
 
-import "chainproxy/internal/proxy"
+import "github.com/murongruolan/picohop/internal/proxy"
 
 // init 把 WireGuard 上游的构造器注册给 proxy 包。
 //

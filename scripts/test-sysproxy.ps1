@@ -24,10 +24,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
-$exe = Join-Path $root 'dist\ChainProxy.exe'
+$exe = Join-Path $root 'dist\PicoHop.exe'
 $cfgPath = Join-Path $root 'data\config.json'
 $backup = Join-Path $root 'data\sysproxy-backup.json'
-$logPath = Join-Path $root 'data\chainproxy.log'
+$logPath = Join-Path $root 'data\picohop.log'
 $regPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
 
 $script:results = @()
@@ -71,7 +71,7 @@ public class WinINet {
 }
 
 function StopApp {
-  Get-Process ChainProxy -ErrorAction SilentlyContinue | ForEach-Object { $_.Kill() }
+  Get-Process PicoHop -ErrorAction SilentlyContinue | ForEach-Object { $_.Kill() }
   Start-Sleep -Seconds 2
 }
 

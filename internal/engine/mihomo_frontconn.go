@@ -21,7 +21,7 @@ import (
 	"sync"
 	"time"
 
-	"chainproxy/internal/proxy"
+	"github.com/murongruolan/picohop/internal/proxy"
 )
 
 // frontDatagram 是队列里的一颗数据报（从前置收到的）。

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"chainproxy/internal/config"
-	"chainproxy/internal/proxy"
+	"github.com/murongruolan/picohop/internal/config"
+	"github.com/murongruolan/picohop/internal/proxy"
 )
 
 // silentSocks5 起一个"握完手就不说话"的最小 SOCKS5 服务端，代表任何长连接上游。

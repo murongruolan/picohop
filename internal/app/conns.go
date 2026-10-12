@@ -3,7 +3,7 @@ package app
 import (
 	"sort"
 
-	"chainproxy/internal/proxy"
+	"github.com/murongruolan/picohop/internal/proxy"
 )
 
 // ConnRecord 是界面上"连接"视图的一行。

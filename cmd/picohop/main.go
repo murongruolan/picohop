@@ -1,4 +1,4 @@
-// Command chainproxy 是无界面的命令行入口。
+// Command picohop 是无界面的命令行入口。
 //
 // 它存在的意义有两个：
 //  1. 排障：出问题时不用开界面就能看到链路到底通不通、出口 IP 是谁
@@ -8,15 +8,15 @@
 //
 // 用法：
 //
-//	chainproxy ls                      列出节点与运行状态
-//	chainproxy run                     启动节点并前台运行（Ctrl+C 退出）
-//	chainproxy test [-kind real]       跑指定的测试
-//	chainproxy validate                只校验配置
-//	chainproxy fetch                   探测各节点出口 IP
-//	chainproxy import <链接>           从分享链接导入节点
-//	chainproxy express <节点>          导出节点的分享链接
-//	chainproxy wgkey                   生成 WireGuard 密钥对
-//	chainproxy version                 打印版本
+//	picohop ls                      列出节点与运行状态
+//	picohop run                     启动节点并前台运行（Ctrl+C 退出）
+//	picohop test [-kind real]       跑指定的测试
+//	picohop validate                只校验配置
+//	picohop fetch                   探测各节点出口 IP
+//	picohop import <链接>           从分享链接导入节点
+//	picohop express <节点>          导出节点的分享链接
+//	picohop wgkey                   生成 WireGuard 密钥对
+//	picohop version                 打印版本
 package main
 
 import (
@@ -30,16 +30,16 @@ import (
 	"syscall"
 	"time"
 
-	"chainproxy/internal/app"
-	"chainproxy/internal/config"
-	"chainproxy/internal/ports"
-	"chainproxy/internal/proxy"
-	"chainproxy/internal/share"
-	"chainproxy/internal/wgproxy"
+	"github.com/murongruolan/picohop/internal/app"
+	"github.com/murongruolan/picohop/internal/config"
+	"github.com/murongruolan/picohop/internal/ports"
+	"github.com/murongruolan/picohop/internal/proxy"
+	"github.com/murongruolan/picohop/internal/share"
+	"github.com/murongruolan/picohop/internal/wgproxy"
 
 	// 注册 mihomo 出口（proxy 通过注册函数解耦，见 internal/engine/register.go）。
 	// 它是**唯一**的代理内核：sing-box 与它的回退已经删除。
-	_ "chainproxy/internal/engine"
+	_ "github.com/murongruolan/picohop/internal/engine"
 )
 
 // Version 由构建脚本注入。
@@ -73,7 +73,7 @@ func main() {
 	case "engines":
 		runEngines()
 	case "version", "-v", "--version":
-		fmt.Printf("ChainProxy %s (%s/%s, %s)\n", Version, runtime.GOOS, runtime.GOARCH, runtime.Version())
+		fmt.Printf("PicoHop %s (%s/%s, %s)\n", Version, runtime.GOOS, runtime.GOARCH, runtime.Version())
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -84,19 +84,19 @@ func main() {
 }
 
 func usage() {
-	fmt.Print(`ChainProxy 链式代理（命令行）
+	fmt.Print(`PicoHop 链式代理（命令行）
 
 用法:
-  chainproxy ls                列出节点与运行状态
-  chainproxy run               启动节点并前台运行（Ctrl+C 退出）
-  chainproxy test              跑测试（-kind tcp|real|speed|exit，默认 real）
-  chainproxy validate          只校验配置，不启动任何服务
-  chainproxy fetch             探测各节点出口 IP
-  chainproxy import <链接>     从分享链接导入节点
-  chainproxy express <节点>    导出节点的分享链接
-  chainproxy engines           自检内嵌内核（mihomo）是否可用
-  chainproxy wgkey             生成 WireGuard 密钥对
-  chainproxy version           打印版本
+  picohop ls                列出节点与运行状态
+  picohop run               启动节点并前台运行（Ctrl+C 退出）
+  picohop test              跑测试（-kind tcp|real|speed|exit，默认 real）
+  picohop validate          只校验配置，不启动任何服务
+  picohop fetch             探测各节点出口 IP
+  picohop import <链接>     从分享链接导入节点
+  picohop express <节点>    导出节点的分享链接
+  picohop engines           自检内嵌内核（mihomo）是否可用
+  picohop wgkey             生成 WireGuard 密钥对
+  picohop version           打印版本
 
 通用参数:
   -config <路径>   指定配置文件（默认 <数据目录>/config.json）
@@ -109,7 +109,7 @@ func usage() {
 // splitCommand 从命令行里挑出子命令，并返回子命令自己的参数。
 //
 // 之所以不能简单地看 args[0]：通用参数（-config）允许写在子命令前面，
-// 例如 `chainproxy -config x.json fetch`。
+// 例如 `picohop -config x.json fetch`。
 //
 // 同时把 -config 从子命令参数里剔掉 —— newApp() 是直接从 os.Args 读它的，
 // 而各个子命令的 FlagSet 并没有定义这个选项，留在里面会让 flag.Parse 报错。
@@ -166,7 +166,7 @@ func runList(args []string) {
 
 	views := a.Nodes()
 	if len(views) == 0 {
-		fmt.Println("还没有任何节点。用图形界面或 chainproxy import 添加。")
+		fmt.Println("还没有任何节点。用图形界面或 picohop import 添加。")
 		return
 	}
 	fmt.Printf("%-14s %-11s %-9s %-26s %-7s %-12s %-8s %s\n",

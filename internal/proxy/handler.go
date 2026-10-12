@@ -515,7 +515,7 @@ func (h *Handler) httpConnect(client net.Conn, br *bufio.Reader, head *httpHead)
 		h.fail("建立到 %s 的链路失败: %v", target, err)
 		return
 	}
-	if _, err := io.WriteString(client, "HTTP/1.1 200 Connection established\r\nProxy-Agent: ChainProxy\r\n\r\n"); err != nil {
+	if _, err := io.WriteString(client, "HTTP/1.1 200 Connection established\r\nProxy-Agent: PicoHop\r\n\r\n"); err != nil {
 		remote.Close()
 		return
 	}

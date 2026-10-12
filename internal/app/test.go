@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"chainproxy/internal/config"
-	"chainproxy/internal/proxy"
-	"chainproxy/internal/tester"
+	"github.com/murongruolan/picohop/internal/config"
+	"github.com/murongruolan/picohop/internal/proxy"
+	"github.com/murongruolan/picohop/internal/tester"
 )
 
 // 可执行的测试种类（与主流客户端的右键菜单对齐）。

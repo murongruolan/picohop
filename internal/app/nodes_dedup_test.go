@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-	"chainproxy/internal/config"
+	"github.com/murongruolan/picohop/internal/config"
 )
 
 // 本文件是审查 #29 的回归测试：导入查重 + 显式指定的本地端口不许撞车。

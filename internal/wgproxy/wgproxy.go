@@ -35,8 +35,8 @@ import (
 	"golang.zx2c4.com/wireguard/tun"
 	"golang.zx2c4.com/wireguard/tun/netstack"
 
-	"chainproxy/internal/config"
-	"chainproxy/internal/proxy"
+	"github.com/murongruolan/picohop/internal/config"
+	"github.com/murongruolan/picohop/internal/proxy"
 )
 
 // 握手等待的两个常数。
@@ -234,7 +234,7 @@ func (u *Upstream) setupDevice(ctx context.Context, front proxy.Front) (*device.
 	}
 
 	devLevel := device.LogLevelError
-	if os.Getenv("CHAINPROXY_WG_VERBOSE") != "" {
+	if os.Getenv("PICOHOP_WG_VERBOSE") != "" {
 		devLevel = device.LogLevelVerbose
 	}
 	dev := device.NewDevice(tunDev, bind, device.NewLogger(devLevel, "wg: "+u.node.Name+" "))

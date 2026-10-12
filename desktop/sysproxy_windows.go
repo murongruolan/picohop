@@ -11,7 +11,7 @@ import (
 
 	"golang.org/x/sys/windows/registry"
 
-	"chainproxy/internal/config"
+	"github.com/murongruolan/picohop/internal/config"
 )
 
 // Windows 系统代理（WinINET）的设置位置。

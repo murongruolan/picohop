@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"chainproxy/internal/config"
+	"github.com/murongruolan/picohop/internal/config"
 )
 
 // UDPChannel 是一条"已经能收发 UDP 数据报"的逻辑通道。
@@ -295,7 +295,7 @@ func (c *plainUDPChannel) SendToUDP(payload []byte, host string, port int) error
 	}
 	addr := &net.UDPAddr{IP: ip, Port: port}
 	n, werr := pc.WriteToUDP(payload, addr)
-	if os.Getenv("CHAINPROXY_UDP_DEBUG") != "" {
+	if os.Getenv("PICOHOP_UDP_DEBUG") != "" {
 		fmt.Fprintf(os.Stderr, "[udp-send] local=%v -> %v  %d 字节 err=%v\n",
 			pc.LocalAddr(), addr, n, werr)
 	}

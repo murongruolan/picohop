@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"chainproxy/internal/config"
+	"github.com/murongruolan/picohop/internal/config"
 )
 
 // 审查 #19 的回归测试：测试失败不得把上一次测出来的有效值写成 0。

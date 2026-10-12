@@ -1,4 +1,4 @@
-# ChainProxy 架构设计
+# PicoHop 架构设计
 
 本文记录 v2（Wails v3 + Vue 3 + 内嵌 mihomo）的模块划分、数据流与关键取舍。
 v1（纯 Win32 界面）的架构说明已随那次重构一起过时，
@@ -54,14 +54,14 @@ v1（纯 Win32 界面）的架构说明已随那次重构一起过时，
 | `internal/share` | 分享链接编解码 + 二维码生成 | 参考主流客户端的格式细节，和主流客户端互通 |
 | `internal/qrscan` | GDI 截图 + 屏幕圈选 + 二维码识别 | 纯 syscall 的 Win32 代码集中隔离 |
 | `desktop/` | Wails v3 应用（前端 Vue 3 + 绑定层 + 托盘/快捷键/通知） | 界面层不碰 proxy/engine，只通过 API 与 `internal/app` 交互 |
-| `cmd/chainproxy` | 无界面命令行 | 排障与自动化测试；也是"界面出问题时还能用"的兜底 |
+| `cmd/picohop` | 无界面命令行 | 排障与自动化测试；也是"界面出问题时还能用"的兜底 |
 | `cmd/uishot` | 开发期界面截图工具 | 桌面程序的界面排版必须靠截图验证 |
 
 ### 依赖方向
 
 ```
 desktop ──► internal/app ──► internal/proxy ──► internal/config
-cmd/chainproxy ─┘                 ▲
+cmd/picohop ─┘                 ▲
                                   │ 注册（init 时）
                     internal/engine、internal/wgproxy
 ```
@@ -72,7 +72,7 @@ cmd/chainproxy ─┘                 ▲
 proxy.RegisterMihomoFactory(func(config.Node, config.Front, func(string, ...any)) (proxy.Upstream, error))
 ```
 
-主程序 `import _ "chainproxy/internal/engine"` 即可获得那五种协议。
+主程序 `import _ "github.com/murongruolan/picohop/internal/engine"` 即可获得那五种协议。
 这样做的实际收益：`internal/proxy` 的单元测试不需要编译整个 mihomo。
 （这个注册点也是**唯一**的内核入口：没有第二个内核、也没有回退 —— 工厂接不了某个节点时
 直接把错误交出去，绝不退化成直连。）
@@ -240,7 +240,7 @@ PlanActivation(["C"])  ──►  Order = [A, B, C], Auto = [A, B]
 - **"外壳初始化结果"必须落日志**：托盘、快捷键都是在 `app.Run()` 之前建立的，
   那时后端还没加载、界面也没起来，而 GUI 版用 `-H windowsgui` 构建、**没有控制台** ——
   不记下来就等于凭空消失。所以 `api` 里存下托盘/快捷键的建立结果与"后端就绪前的告警"，
-  等 `ServiceStartup` 起来后写进 `data\chainproxy.log` 并把告警补投成界面通知。
+  等 `ServiceStartup` 起来后写进 `data\picohop.log` 并把告警补投成界面通知。
 - **刷新策略**：stats 事件每秒一次，前端做了 700ms 去抖合并，
   不会因为事件风暴把 IPC 打满。
 - **主题**：以配置文件里的 `settings.theme` 为准（localStorage 只是缓存）。
@@ -394,7 +394,7 @@ v3 已经能开多个窗口了，但圈选那一刻需要的是"**全屏置顶�
 
 ## 8. 数据与配置
 
-- 位置：`<有 go.mod 的目录>\data\config.json`（可用 `CHAINPROXY_DATA_DIR` 覆盖）。
+- 位置：`<有 go.mod 的目录>\data\config.json`（可用 `PICOHOP_DATA_DIR` 覆盖）。
   **向上找 go.mod** 这一条很关键：`go run` 的可执行文件在 Go 构建缓存里，
   按"exe 同级目录"算会得到一个缓存目录里的 `data\`，
   于是命令行读到的和界面读到的不是同一份配置（实测踩过）。
