@@ -577,6 +577,26 @@ func hysteria2Option(n config.Node) (outbound.Hysteria2Option, error) {
 		Obfs:         n.Obfs,
 		ObfsPassword: n.ObfsPassword,
 	}
+	// 【证书 pin 到底落在哪个字段】mihomo 的 `Hysteria2Option` 有三个名字都像
+	// "证书"的字段，只有 **`Fingerprint` 是证书 sha256 pin**：
+	// 它经 `ca.GetTLSConfig` -> `NewFingerprintVerifier` 对 `cert.Raw` 做 sha256
+	// 比对（`component/ca/fingerprint.go`，v1.19.32）。另外两个都不是 pin ——
+	// `Certificate`/`PrivateKey` 是**客户端证书**（mTLS），`SkipCertVerify` 是
+	// "干脆不校验"。**别把它和 uTLS 的 client-fingerprint 混起来**：那是 Reality
+	// 用的，hysteria2 的结构体里根本没有 `ClientFingerprint`，而且把 chrome 这类
+	// 浏览器名喂给 `Fingerprint` 会被 verifier 当场拒绝（它专门为此报了
+	// "use `client-fingerprint`"）。
+	//
+	// 【为什么必须传】hysteria2 服务端普遍用自签证书，不传 pin 就只能拿系统根
+	// 证书去验，实测报 `x509: certificate signed by unknown authority` ——
+	// 症状看起来像"节点连不上/网络不通"，其实是我们的映射少传了一个字段。
+	opt.Fingerprint = strings.TrimSpace(n.PinSHA256)
+	// 【跳过校验也要一起传】Hysteria2 在界面上是有 TLS 区的（`ShowTLS`），
+	// 用户能勾"跳过校验"，但这个开关以前**根本没往下传**：勾了等于没勾，
+	// 自签证书照样连不上。两者同时存在时以 pin 为准（更严）——这一条由
+	// mihomo 的 `ca.GetTLSConfig` 保证：`Fingerprint` 非空时它只装 pin 校验器、
+	// 忽略 `SkipCertVerify`（与其它客户端的行为一致）。
+	opt.SkipCertVerify = n.TLS.AllowInsecure
 	if n.UpMbps > 0 {
 		opt.Up = fmt.Sprintf("%d Mbps", n.UpMbps)
 	}

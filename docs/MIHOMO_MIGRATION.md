@@ -303,13 +303,29 @@ type XHTTPOptions struct {
     ✅ 响应首行：HTTP/1.1 204 No Content
 
 **真实链路验证清单（契约第 ④ 步的硬要求，逐条累积）**：
-  | # | 协议 + 传输 | 轮次 |
-  |---|---|---|
-  | 1 | vless + xhttp + REALITY | 第 4 轮 |
-  | 2 | vmess + tcp | 第 7 轮 |
+  | # | 协议 + 传输 | 用到的参数（不含值） | 结果 | 轮次 |
+  |---|---|---|---|---|
+  | 1 | vless + xhttp + REALITY | pbk / sid / fp | 204 + 出口 IP 变了 | 第 4 轮 |
+  | 2 | vmess + tcp | 无 | 204 | 第 7 轮 |
+  | 3 | vmess + UDP（QUIC/原生 UDP 通道） | 无 | DNS 往返（ID 匹配） | 第 ⑪ 轮 |
+  | 4 | **hysteria2 + TLS 证书 pin** | sni / pinSHA256 / mport(未支持) | 真连接秒级（899 / 1928 ms）、出口 IP 与服务器同 /24、204 | 第 ⑲ 轮 |
 
-**仍未验证**：trojan / shadowsocks / hysteria2（只有单测）；
-ws / grpc / http / h2 / httpupgrade 五种传输（无真实节点）；UDP（未接入）。
+  第 4 条的完整配方（**临时数据目录 + 走真实导入路径**，见第 13 节）：
+  ```
+  $env:CHAINPROXY_DATA_DIR = <仓库内 .cache 下的临时目录>     # 绝不碰 data/config.json
+  chainproxy-cli.exe import -port 18099 "<hysteria2 分享链接>"   # 导入即顺带验证导入器
+  chainproxy-cli.exe test -kind real -timeout 60                # 经我们自己的 mihomo 适配层
+  chainproxy-cli.exe run -node <节点> -seconds 40               # 激活本地端口
+  curl.exe -x socks5h://127.0.0.1:18099 -o NUL -w "%{http_code}" \
+        http://www.gstatic.com/generate_204                     # 期望 204
+  curl.exe -x socks5h://127.0.0.1:18099 https://api.ipify.org    # 期望出口 IP ≠ 本机 IP
+  ```
+  服务器：`103.62.49.131:50000`（hysteria2，QUIC/UDP）。只记主机端口与参数名，
+  **凭据（密码 / UUID / pin 值 / SNI 值）一律不入库**。
+
+**仍未验证**：trojan / shadowsocks（只有单测）；
+ws / grpc / http / h2 / httpupgrade 五种传输（无真实节点）；
+hysteria2 的 **mport 端口跳跃**（我们的 config 没有对应字段，见第 13 节）。
 
 ### 第 8 轮：UDP 的两个接口已读实（**未实现**，见下）
 
@@ -842,8 +858,131 @@ mihomo 成为唯一内核，开关与 `Settings.EngineMode` 一起删除。
 
 ### 本轮未做 / 仍需注意
 
-  - **逐传输真实验证**仍只有三条（vless+xhttp、vmess+tcp、vmess+UDP(DNS)）：
+  - **逐传输真实验证**当时仍只有三条（vless+xhttp、vmess+tcp、vmess+UDP(DNS)）：
     ws/grpc/http/h2/httpupgrade 与 trojan/ss/hysteria2 只有映射单测；这是换装期就记下的遗留；
+    → **hysteria2 已在第 ⑲ 轮补上真实链路（清单第 4 条），并且顺带修掉了一个证书 pin 映射缺口**，
+    见第 13 节；
   - **UDP 经前置**只到拨号器层证据（UDP ASSOCIATE + 数据报 + 回包），没有真的 QUIC 服务端；
   - **真实节点上"出口 IP 变成前置身后的出口"**没实测（需要一条真节点 + 真前置）；
   - UDP 的 `ReceiveFromUDP` 仍是轮询版（见上一条遗留清单）。
+
+---
+
+## 13. 第 ⑲ 轮：hysteria2 真实链路打通（并修掉一个证书 pin 映射缺口）
+
+用户给了一条真实的 **hysteria2** 节点（`103.62.49.131:50000`，QUIC/UDP），要求经**我们现在的
+引擎**（内嵌 mihomo、sing-box 已摘除）真的拨通。结论：**能拨通，而且第一次拨不通的原因是我们
+自己的映射缺口，不是节点/网络问题**。本轮清单从 3 条扩到 4 条（见第 7 节的清单表）。
+
+### 13.1 复现（先不改代码）：走真实导入路径 + 临时数据目录
+
+`CHAINPROXY_DATA_DIR` 指向仓库内 `.cache` 下的临时目录（**没碰 `data/config.json`**，
+其 mtime 实测未变），用 CLI 的导入路径造配置：
+
+    chainproxy-cli.exe import -port 18099 "<hysteria2 分享链接>"
+      ✅ 已导入「…」（Hysteria2，本地端口 18099）
+
+**导入器（`internal/share`）的解析结果是完整的**（逐字段核对落盘配置）：
+
+| 链接里的参数 | 落到的字段 | 结果 |
+|---|---|---|
+| `sni=` | `tls.serverName` | ✅ 保留 |
+| `insecure=0` / `allowInsecure=0` | `tls.allowInsecure` | ✅ 正确地判成 **false**（两种写法都识别） |
+| `pinSHA256=` | `pinSHA256` | ✅ 保留（64 位 hex，一字不差） |
+| `mport=50000-53000` | —— | ⚠️ **丢弃**（未知参数按设计忽略，见 13.6） |
+
+也就是说，**导入侧没问题**；问题出在"配置 → mihomo 选项"那一跳。
+
+### 13.2 原始现象与报错（复现一次，0.46 s 就失败）
+
+    chainproxy-cli.exe test -kind real -timeout 60
+      「…」mihomo 出站已就绪：103.62.49.131:50000（type=Hysteria2）
+      「…」真连接延迟测试失败：Get "http://cp.cloudflare.com/generate_204":
+        mihomo 建立链路失败: CRYPTO_ERROR 0x12a (local):
+        tls: failed to verify certificate: x509: certificate signed by unknown authority
+
+值得注意的**排除项**：出站构造成功、QUIC 能握手到"要验证书"这一步（0.46 s 内就回来了）
+→ 节点可达、端口有响应、SNI 也发出去了；失败点**只在证书校验**。所以这不是"节点连不上"。
+
+### 13.3 读源码核到的字段事实（这是本轮的关键，别再猜）
+
+`adapter/outbound/hysteria2.go`（v1.19.32）的 `Hysteria2Option` 里有**三个名字都像"证书"**的
+字段，只有一个是我们说的 sha256 pin：
+
+| mihomo 字段 | 真实含义 | 出处 |
+|---|---|---|
+| **`Fingerprint`**（`proxy:"fingerprint"`） | **证书 sha256 pin**：`ca.GetTLSConfig` 用它建 `NewFingerprintVerifier`，对 `cert.Raw` 做 sha256 比对（命中非叶子证书时还要求整条链能验到它） | `component/ca/config.go:101`、`component/ca/fingerprint.go:14` |
+| `Certificate` / `PrivateKey` | **客户端证书**（mTLS），不是 pin | `component/ca/config.go:125` |
+| `SkipCertVerify` | "干脆不校验" | `hysteria2.go:55` |
+
+两条容易翻车的推论，也一并钉住：
+
+  1. **`Fingerprint` 不是 uTLS 的 client-fingerprint。** hysteria2 的结构体里**根本没有**
+     `ClientFingerprint`；而且把 `chrome` 这类浏览器名喂给 `Fingerprint` 会被 verifier 当场
+     拒绝，报错专门提示 "use `client-fingerprint`"（`fingerprint.go:15-18`）。
+  2. 我们的 `internal/config/model.go` 有 `PinSHA256`，但 `internal/engine/mihomo.go` 的
+     `hysteria2Option()` **从来没把它映射出去** —— 这就是缺口本身（**不是** pin 与服务端不符：
+     我们压根没把 pin 交出去）。
+
+### 13.4 修了什么（最小改动，两个字段）
+
+`internal/engine/mihomo.go::hysteria2Option()` 补上两行映射：
+
+    opt.Fingerprint    = strings.TrimSpace(n.PinSHA256)   // 证书 sha256 pin
+    opt.SkipCertVerify = n.TLS.AllowInsecure              // 界面上那个「跳过校验」
+
+  - 第一条是本节点的真凶；
+  - 第二条是**同一个函数里的同类缺口**：Hysteria2 在界面上是有 TLS 区的（`ProtocolInfo.ShowTLS`），
+    用户能勾「跳过校验」，但这个开关以前也没往下传 —— 勾了等于没勾。两者同时存在时以 pin 为准
+    （更严），这一条由 mihomo 的 `ca.GetTLSConfig` 保证（`Fingerprint` 非空时只装 pin 校验器）。
+  - 界面上 `PinSHA256` 本来就有输入框（`NodeDialog.vue` 的 Hysteria2 区），**不需要**新增界面；
+    导入侧也已保留该字段，所以本轮没有前端改动。
+
+单测（`internal/engine/mihomo_test.go`，三条）：`PinSHA256` 必须落到 `Fingerprint` 且
+**不许**被 uTLS 指纹顶掉；`allowInsecure` 必须落到 `SkipCertVerify`；以及一条护栏 ——
+只有 uTLS 指纹、没有 pin 时，构造必须成功（有人把映射误改成 `Fingerprint = n.TLS.Fingerprint`
+的话，这条会因为 mihomo 拒绝 `chrome` 而变红）。
+
+### 13.5 修完之后的真实结果（同一份临时配置，同一条命令）
+
+    「…」mihomo 出站已就绪：103.62.49.131:50000（type=Hysteria2）
+    「…」真连接延迟 899 ms            （隔一会儿复跑是 1928 ms —— 秒级波动，属正常网络差异）
+    「…」出口 IP = 103.62.49.130（2298 ms）   （复跑仍是同一个 IP）
+
+再走**完整产品路径**（激活本地端口后用 curl）：
+
+    chainproxy-cli.exe run -node <节点> -seconds 40
+      已启动，监听 127.0.0.1:18099（前置：直连；出口：Hysteria2 103.62.49.131:50000）
+      SOCKS5 隧道建立 → www.gstatic.com:80 / api.ipify.org:443 …
+    curl.exe -x socks5h://127.0.0.1:18099 -o NUL -w "%{http_code}" http://www.gstatic.com/generate_204
+      → 204
+    curl.exe -x socks5h://127.0.0.1:18099 https://api.ipify.org
+      → 103.62.49.130        （与本机出口不同；与服务器 .131 同 /24，即真的落在该节点出口）
+
+**结论**：hysteria2 + TLS 证书 pin 这条链路，经我们自己的适配层**真的通了**；
+先前的失败是**我们的映射缺口**，不是节点/网络问题。
+
+### 13.6 功能缺口：`mport`（端口跳跃）我们的 config 表达不了
+
+`mport=50000-53000` 是 hysteria2 的**端口跳跃范围**，mihomo 侧有对应能力：
+`Hysteria2Option.Ports`（`proxy:"ports"`，逗号分隔的端口/范围）+ `HopInterval`，
+在 `NewHysteria2` 里被展开成 `clientOptions.ServerPorts` + `HopInterval`
+（`hysteria2.go:44/45/237-265`）。
+
+但**我们的 `config.Node` 没有对应字段**，导入器把它当未知参数丢掉了（见 13.1）。
+按"不自己发明配置字段"的要求，本轮**不加字段**，只把缺口记在这里：
+
+  - 现状：该节点退化成**固定端口 50000**。实测这个服务端在 50000 上接受连接且能跑流量，
+    所以**本节点可用**；但"是否可用取决于服务端"—— 只在整个区间端口都监听的服务端上才碰得巧，
+    只监听区间里其它端口、或要靠跳跃规避 QoS/封锁的服务端就会连不上；
+  - 补齐要动的地方（供决定后一次做完）：`config.Node` 加字段 + 分享链接读写
+    (`internal/share/link.go` 的 `mport` 编解码) + 界面输入框 + `hysteria2Option()` 映射到
+    `Ports`/`HopInterval` + 单测。**这是一条独立的实现回合，不要在验证回合末尾顺手开。**
+
+### 13.7 复现与卫生
+
+  - 全程只用一个 `.cache` 下的临时数据目录；`data/config.json` **没碰**（mtime 未变）、
+    `git status` 里也不会出现它（`/data/` 已在 `.gitignore`）；
+  - 凭据（密码 / UUID / pin 值 / SNI 值 / 分享链接原文）**没有**进入任何代码、测试、文档、
+    日志或提交信息；本文档只写"主机:端口 + 协议 + 参数名 + 结果"；
+  - 临时目录与其中的 `config.json`（含凭据）在验证结束后**删除**。

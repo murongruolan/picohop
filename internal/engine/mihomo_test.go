@@ -410,6 +410,73 @@ func TestOtherProtocolOptions(t *testing.T) {
 		}
 	})
 
+	t.Run("hysteria2：PinSHA256 → 证书 pin（Fingerprint），不是 uTLS 指纹", func(t *testing.T) {
+		// 【测试夹具一律用假值】真实节点的 pin 与凭据绝不进仓库（那是"哪个节点"的指纹）。
+		// 这里只要是 32 字节 hex 就够 —— mihomo 的 pin 校验器只认这个形状。
+		const pin = "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
+		n := config.Node{
+			ID: "h", Name: "h", Protocol: config.ProtocolHysteria2,
+			Server: "h.example.com", Port: 443, Password: "pw",
+			PinSHA256: pin,
+		}
+		n.TLS.Enabled = true
+		n.TLS.ServerName = "sni.example.com"
+		// 同时给一个 uTLS 浏览器指纹：它**绝不能**落到证书 pin 那个字段上 ——
+		// 这正是"证书 pin / client-fingerprint"最容易搞混的地方（hysteria2 的
+		// 结构体里根本没有 ClientFingerprint，浏览器名喂给 Fingerprint 会被拒）。
+		n.TLS.Fingerprint = "chrome"
+
+		o, err := hysteria2Option(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if o.Fingerprint != pin {
+			t.Fatalf("证书 pin 没落到 Hysteria2Option.Fingerprint（实际 %q）；"+
+				"少了它自签证书的 hysteria2 节点会报 x509 signed by unknown authority", o.Fingerprint)
+		}
+		if o.SkipCertVerify {
+			t.Fatal("没开 allowInsecure 时不该跳过证书校验")
+		}
+		// 顺带把"这个字段真的是 sha256 pin"钉死：mihomo 会拿它去建 pin 校验器，
+		// 形状不对（不是 32 字节 hex）当场构造失败。这一句同时防住"映射到
+		// Certificate/PrivateKey（客户端证书）"这类改错字段的改法。
+		if _, err := buildMihomoOutbound(n, nil); err != nil {
+			t.Fatalf("带 pin 的 hysteria2 出站应当能构造出来，实际 %v", err)
+		}
+	})
+
+	t.Run("hysteria2：allowInsecure → SkipCertVerify", func(t *testing.T) {
+		n := config.Node{
+			ID: "h2", Name: "h2", Protocol: config.ProtocolHysteria2,
+			Server: "h.example.com", Port: 443, Password: "pw",
+		}
+		n.TLS.Enabled = true
+		n.TLS.AllowInsecure = true
+
+		o, err := hysteria2Option(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !o.SkipCertVerify {
+			t.Fatal("「跳过校验」没往下传：用户勾了等于没勾，自签证书照样连不上")
+		}
+	})
+
+	t.Run("没有 pin 时不许把 uTLS 指纹当成证书 pin", func(t *testing.T) {
+		// 护栏：有人把映射改成 opt.Fingerprint = n.TLS.Fingerprint 的话，
+		// mihomo 的 verifier 会因为 "chrome" 不是 32 字节 hex 而拒绝构造
+		// （它专门为此提示改用 client-fingerprint）——这条测试就会红。
+		n := config.Node{
+			ID: "h3", Name: "h3", Protocol: config.ProtocolHysteria2,
+			Server: "h.example.com", Port: 443, Password: "pw",
+		}
+		n.TLS.Enabled = true
+		n.TLS.Fingerprint = "chrome"
+		if _, err := buildMihomoOutbound(n, nil); err != nil {
+			t.Fatalf("uTLS 指纹不该进证书 pin 字段，实际报错 %v", err)
+		}
+	})
+
 	t.Run("五种协议都要被 mihomoSupports 放行", func(t *testing.T) {
 		for _, p := range []string{
 			config.ProtocolVLESS, config.ProtocolVMess, config.ProtocolTrojan,
