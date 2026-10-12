@@ -237,11 +237,18 @@ func (a *App) ConfigPath() string { return a.cfgPath }
 
 // Save 把当前配置落盘。
 func (a *App) Save() error {
+	// 【锁内序列化，锁外落盘】
+	// 原先这里是 `cfg := a.cfg`（只是复制指针）然后就放锁、跑到锁外 json.Marshal ——
+	// 而每秒的统计协程持写锁改 UpBytes/DownBytes，两者并发读写同一份数据。
+	// 现在：持 RLock 只做便宜的 cpu 序列化，磁盘 I/O 放到锁外做（不长时间占锁）。
 	a.mu.RLock()
-	cfg := a.cfg
+	data, err := a.cfg.Encode()
 	path := a.cfgPath
 	a.mu.RUnlock()
-	return cfg.Save(path)
+	if err != nil {
+		return err
+	}
+	return config.WriteAtomic(path, data)
 }
 
 // Validate 返回当前配置的全部问题。

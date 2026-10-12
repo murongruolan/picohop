@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 )
 
 // CurrentVersion 是当前配置结构的版本号。
@@ -474,22 +475,56 @@ func Load(path string) (*Config, error) {
 
 // Save 把配置原子写入 path（先写临时文件再改名，避免半截文件）。
 func (c *Config) Save(path string) error {
+	data, err := c.Encode()
+	if err != nil {
+		return err
+	}
+	if err := WriteAtomic(path, data); err != nil {
+		return err
+	}
+	c.Path = path
+	return nil
+}
+
+// Encode 只做序列化，不碰磁盘。
+//
+// 【为什么要把它单独拆出来】调用方（App.Save）必须在**持锁**的情况下序列化：
+// 配置对象会被每秒的统计协程持续改写（UpBytes/DownBytes 等），
+// 只复制一个 *Config 指针、然后跑到锁外去 json.Marshal，等于没保护 ——
+// 会与统计协程并发读写同一份数据（data race，甚至序列化出撕裂的内容）。
+// 拆开之后：**锁内只做 cpu 序列化**（便宜），**锁外做磁盘 I/O**（慢，不该持锁）。
+func (c *Config) Encode() ([]byte, error) {
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("序列化配置失败: %w", err)
+	}
+	return append(data, '\n'), nil
+}
+
+// atomicSeq 给临时文件名提供**进程内唯一**的序号。
+// 【为什么不用时间戳】Windows 的墙钟精度很粗，同一瞬间多个 goroutine 会拿到相同的
+// UnixNano，临时名照样撞车（实测：并发保存仍会把文件写坏）。
+var atomicSeq atomic.Uint64
+
+// WriteAtomic 把 data 原子地写到 path：先写**唯一名字**的临时文件，再 rename。
+//
+// 【为什么临时名必须唯一】原先固定用 path+".tmp"：两个并发保存
+// （例如 GUI 与 CLI 同时跑、或两个 goroutine）会写同一个临时文件、
+// 互相截断，随后 rename 把**损坏的 JSON** 发布成正式配置 —— 最坏情况是节点全丢。
+// rename 在同一卷上是原子的，所以只要各自写自己的临时文件，最终文件就一定是
+// "某一次完整写入"的内容。
+func WriteAtomic(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("创建数据目录失败: %w", err)
 	}
-	data, err := json.MarshalIndent(c, "", "  ")
-	if err != nil {
-		return fmt.Errorf("序列化配置失败: %w", err)
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(data, '\n'), 0o644); err != nil {
+	tmp := fmt.Sprintf("%s.tmp.%d.%d", path, os.Getpid(), atomicSeq.Add(1))
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return fmt.Errorf("写入配置失败: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("保存配置失败: %w", err)
 	}
-	c.Path = path
 	return nil
 }
 
