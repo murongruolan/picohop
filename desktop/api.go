@@ -16,7 +16,6 @@ import (
 
 	"chainproxy/internal/app"
 	"chainproxy/internal/config"
-	"chainproxy/internal/engine"
 	"chainproxy/internal/ports"
 	"chainproxy/internal/wgproxy"
 )
@@ -109,11 +108,6 @@ func (a *API) ServiceStartup(ctx context.Context, options application.ServiceOpt
 	a.unsub = inst.Subscribe(func(e app.Event) {
 		a.Emit("cp:"+e.Kind, e.Text)
 	})
-
-	if err := engine.BuildCheck(); err != nil {
-		inst.Logf("⚠️ %v", err)
-		inst.Notify("warning", "内嵌引擎能力不完整", err.Error())
-	}
 
 	inst.Logf("ChainProxy %s 已启动，配置文件：%s", Version, config.ConfigPath())
 
@@ -228,9 +222,11 @@ type MetaView struct {
 	VMessSecurities    []string              `json:"vmessSecurities"`
 	TransportNetworks  []string              `json:"transportNetworks"`
 	UTLSFingerprints   []string              `json:"utlsFingerprints"`
-	EngineOK           bool                  `json:"engineOk"`
-	EngineError        string                `json:"engineError"`
-	GoVersion          string                `json:"goVersion"`
+	// 内核自检字段（engineOk / engineError）已删除：它们原本反映 sing-box 的
+	// 构建标签是否齐全，而 sing-box 已摘除、mihomo 不需要构建标签 ——
+	// "唯一的内核有没有编译进来"是**编译期**的事（缺了根本编不过），
+	// 没有必要再由运行时字段表达。见 docs/MIHOMO_MIGRATION.md 的结项报告。
+	GoVersion string `json:"goVersion"`
 	// AuthNone 用来告诉界面：本地端口默认不需要鉴权（只监听回环）
 	DefaultPortStart int `json:"defaultPortStart"`
 	RandomPortMin    int `json:"randomPortMin"`
@@ -255,12 +251,6 @@ func (a *API) GetMeta() MetaView {
 		RandomPortMin:      ports.RandomMin,
 		RandomPortMax:      ports.RandomMax,
 		DevOpen:            a.devOpen,
-	}
-	if err := engine.BuildCheck(); err != nil {
-		m.EngineOK = false
-		m.EngineError = err.Error()
-	} else {
-		m.EngineOK = true
 	}
 	return m
 }

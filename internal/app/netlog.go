@@ -4,10 +4,13 @@ import (
 	"time"
 )
 
-// NetLogEntry 是一条"网络日志"（来自内嵌 sing-box 的日志流水）。
+// NetLogEntry 是一条"网络日志"（我们自己的 handler 上报的连接流水）。
 //
 // 与"用户日志"分开是刻意的：用户日志是**操作与错误**（启动/停止/导入/失败），
 // 网络日志是**连接流水**（谁连了谁、走的哪个出口）。混在一起两边都不好用。
+//
+// 它曾经还有一个来源（内嵌 sing-box 的日志回调），随 sing-box 一起删除了；
+// 那条路子本来就拿不到数据，原因见 docs/BOTTOM_PANEL.md。
 type NetLogEntry struct {
 	// Seq 是自增序号，界面靠它做增量拉取（只取"我还没见过的"），
 	// 避免每秒把整段日志重新搬一遍。
@@ -22,7 +25,7 @@ type NetLogEntry struct {
 // 2000 条足够回溯一次排查；再多的价值不如省下的内存。
 const netLogCap = 2000
 
-// appendNetworkLog 追加一条网络日志。由 sing-box 的日志回调（内核 goroutine）调用，
+// appendNetworkLog 追加一条网络日志。由 handler 的上报路径（转发 goroutine）调用，
 // 所以它用**自己那把锁**，不和主锁抢。
 func (a *App) appendNetworkLog(node, level, text string) {
 	a.netLogMu.Lock()

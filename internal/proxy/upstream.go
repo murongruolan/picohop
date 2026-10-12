@@ -16,10 +16,10 @@ import (
 //
 //	socks5 / http     经典"套娃"：先在前置隧道里连上出口服务器，再做第二次握手
 //	wireguard         隧道在 Start() 时就已建立，Dial() 直接从用户态网络栈出栈
-//	vmess/vless/...   由内嵌的 sing-box 引擎负责（internal/engine）
+//	vmess/vless/...   由内嵌的 mihomo 引擎负责（internal/engine）
 type Upstream interface {
 	// Start 建立底层通道。socks5/http 出口这里是空操作；
-	// wireguard 在这里完成握手；sing-box 出口在这里拉起实例。
+	// wireguard 在这里完成握手；mihomo 出口在这里把构造好的出站置为激活态。
 	Start(ctx context.Context, front Front) error
 	// Stop 释放资源。
 	Stop() error
@@ -38,18 +38,13 @@ type Upstream interface {
 // 两个工厂函数由外部包在 init 时注入，避免 proxy 包反向依赖它们
 // （也方便在不需要某个出口类型的构建里完全不引入相关依赖）。
 //
-//   - wgFactory   由 internal/wgproxy 注册
-//   - singFactory 由 internal/engine 注册
+//   - wgFactory     由 internal/wgproxy 注册
+//   - mihomoFactory 由 internal/engine 注册（vmess/vless/ss/trojan/hysteria2）
 var (
-	wgFactory   func(config.Node, Front) (Upstream, error)
-	singFactory func(config.Node, config.Front, func(string, ...any)) (Upstream, error)
-	// mihomoFactory 由 internal/engine 在 init 时注册（换装期与 sing-box 并存）。
+	wgFactory func(config.Node, Front) (Upstream, error)
+	// mihomoFactory 是**唯一**的"重协议"内核工厂。这里没有第二个内核了：
+	// 回退（mihomo 接不了就换 sing-box）已经随 sing-box 一起删掉 —— 见 NewUpstream。
 	mihomoFactory func(config.Node, config.Front, func(string, ...any)) (Upstream, error)
-
-	// engineMode 决定优先用哪个内核：空串 / "singbox" = sing-box；"mihomo" = 优先 mihomo。
-	// 【为什么默认 sing-box】换装分步走：mihomo 只在明确打开时启用，而且接不了的节点
-	// 会自动回退 —— 任何时刻都不会因为换装而少一个可用节点。
-	engineMode string
 )
 
 // RegisterWireGuardFactory 让 internal/wgproxy 在 init 时注册构造器。
@@ -57,27 +52,20 @@ func RegisterWireGuardFactory(f func(config.Node, Front) (Upstream, error)) {
 	wgFactory = f
 }
 
-// RegisterMihomoFactory 让 internal/engine 在 init 时注册 mihomo 构造器（与 sing-box 并存）。
+// RegisterMihomoFactory 让 internal/engine 在 init 时注册 mihomo 构造器。
+//
+// 【为什么用注册而不是直接 import】保持依赖单向：proxy 不依赖 engine，
+// 于是 proxy 自己的单测不必编译整个 mihomo。
 func RegisterMihomoFactory(f func(config.Node, config.Front, func(string, ...any)) (Upstream, error)) {
 	mihomoFactory = f
-}
-
-// SetEngineMode 选择优先使用的内核（空串 / "singbox" / "mihomo"）。
-func SetEngineMode(mode string) { engineMode = mode }
-
-// EngineMode 返回当前引擎模式（测试与日志用）。
-func EngineMode() string { return engineMode }
-
-// RegisterSingBoxFactory 让 internal/engine 在 init 时注册构造器。
-func RegisterSingBoxFactory(f func(config.Node, config.Front, func(string, ...any)) (Upstream, error)) {
-	singFactory = f
 }
 
 // NewUpstream 按节点配置创建出口实现。
 //
 // frontCfg 是已经解析好的前置（直连 / 全局代理 / 另一个节点的本地端口）。
 // 原生实现（socks5/http/wireguard）在 Dial 时使用运行期的 Front 实例；
-// sing-box 实现则需要在构造时就知道前置是什么，因为前置是写进它的配置里的。
+// mihomo 实现则需要在**构造时**就拿到前置：它会把前置装进出站自己的拨号器里
+// （见 internal/engine/mihomo_dialer.go），这也是"配了前置的节点真的经前置出去"的机制。
 func NewUpstream(n config.Node, frontCfg config.Front, logf func(string, ...any)) (Upstream, error) {
 	switch n.Protocol {
 	case config.ProtocolHTTP:
@@ -96,19 +84,14 @@ func NewUpstream(n config.Node, frontCfg config.Front, logf func(string, ...any)
 
 	case config.ProtocolVMess, config.ProtocolVLESS,
 		config.ProtocolShadowsocks, config.ProtocolTrojan, config.ProtocolHysteria2:
-		// 【换装开关】mode=mihomo 时优先用它；它接不了这个节点就回退 sing-box，
-		// 并写一行日志说明原因 —— 宁可少一次用上新内核，也不能让节点不可用。
-		if engineMode == "mihomo" && mihomoFactory != nil {
-			if up, err := mihomoFactory(n, frontCfg, logf); err == nil {
-				return up, nil
-			} else if logf != nil {
-				logf("mihomo 接不了「%s」，回退 sing-box：%v", n.Name, err)
-			}
-		}
-		if singFactory == nil {
+		// 【没有回退，也不许"假装能跑"】mihomo 是唯一的内核（sing-box 已摘除）。
+		// 它接不了这个节点就直接把错误交出去，让上层把这个节点标成失败 ——
+		// 绝不允许退化成"直连"：那会绕开前置把本机 IP 暴露出去，
+		// 而"配了前置却从本机 IP 出去"正是本项目最不能接受的失败方式。
+		if mihomoFactory == nil {
 			return nil, fmt.Errorf("当前构建未包含 %s 支持", config.ProtocolLabel(n.Protocol))
 		}
-		return singFactory(n, frontCfg, logf)
+		return mihomoFactory(n, frontCfg, logf)
 
 	default:
 		return nil, fmt.Errorf("不支持的协议 %q", n.Protocol)

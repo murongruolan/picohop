@@ -108,11 +108,10 @@ func TestNewMihomoFrontPlan(t *testing.T) {
 // TestFrontedNodeStaysOnMihomo 走真注册链，锁死"配了前置的节点由 mihomo 自己经前置拨号"。
 //
 // A′ 之前这里断言的是"回退 sing-box"；前置在适配层里接通之后，正确行为变成
-// **继续用 mihomo**（回退反而说明前置没接上）。只做构造不启动，所以不需要网络。
+// **继续用 mihomo**（回退反而说明前置没接上）。而且 sing-box 已经摘除，
+// 现在**没有任何回退可走** —— 这条测试同时守住"前置节点仍然被正常接住"。
+// 只做构造不启动，所以不需要网络。
 func TestFrontedNodeStaysOnMihomo(t *testing.T) {
-	proxy.SetEngineMode("mihomo")
-	t.Cleanup(func() { proxy.SetEngineMode("") })
-
 	n := config.Node{
 		ID: "n1", Name: "配了前置的节点", Protocol: config.ProtocolVLESS,
 		Server: "1.2.3.4", Port: 443, UUID: "11111111-2222-3333-4444-555555555555",
@@ -126,7 +125,7 @@ func TestFrontedNodeStaysOnMihomo(t *testing.T) {
 	}
 	mu, ok := up.(*MihomoUpstream)
 	if !ok {
-		t.Fatalf("配了前置的节点应当继续走 mihomo（回退说明前置根本没接上），实际 %T", up)
+		t.Fatalf("配了前置的节点必须走 mihomo（没有别的内核了），实际 %T", up)
 	}
 	if mu.dialer == nil {
 		t.Fatal("必须装上经前置的拨号器，否则会从本机 IP 静默直连")

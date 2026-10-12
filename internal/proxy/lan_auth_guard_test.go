@@ -22,7 +22,7 @@ import (
 // 【半套凭据为什么也要拒】密码留空时 SOCKS5（RFC 1929）与 HTTP Basic 都允许
 // 零长度密码：局域网里任何人猜到用户名就能用。所以"配齐"才算数。
 func TestNewServerRefusesAnonymousLanListen(t *testing.T) {
-	stubSingFactory(t)
+	stubMihomoFactory(t)
 
 	cases := []struct {
 		name       string

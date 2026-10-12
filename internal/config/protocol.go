@@ -130,18 +130,7 @@ func IsSupportedProtocol(p string) bool {
 	return false
 }
 
-// UsesSingBox 说明该协议的出口由内嵌 sing-box 引擎实现，
-// 而不是本项目自研的 socks5/http/WireGuard 实现。
-func UsesSingBox(p string) bool {
-	switch p {
-	case ProtocolVMess, ProtocolVLESS, ProtocolShadowsocks, ProtocolTrojan, ProtocolHysteria2:
-		return true
-	default:
-		return false
-	}
-}
-
-// ShadowsocksMethods 是主流且被 sing-box 支持的加密方法，供界面下拉框使用。
+// ShadowsocksMethods 是主流且被 mihomo 支持的加密方法，供界面下拉框使用。
 func ShadowsocksMethods() []string {
 	return []string{
 		"aes-128-gcm", "aes-192-gcm", "aes-256-gcm",

@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"chainproxy/internal/config"
-	"chainproxy/internal/engine"
 	"chainproxy/internal/proxy"
 )
 
@@ -77,7 +76,7 @@ type App struct {
 	conns       map[uint64]ConnRecord
 	closedConns []ConnRecord
 
-	// 网络日志（内嵌 sing-box 的连接流水）。
+	// 网络日志（我们自己的 handler 上报的连接流水）。
 	// 单独一把锁：它由内核的日志回调高频写入，不该和主锁互相等。
 	netLogMu  sync.Mutex
 	netLog    []NetLogEntry
@@ -115,9 +114,9 @@ func New(cfgPath string) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	// 【引擎选择】必须在任何节点被创建之前生效（New 之后马上会有人调 AutoActivate）。
-	// 配置里没写就是空串 -> sing-box（与换装前行为一致）。
-	proxy.SetEngineMode(cfg.Settings.EngineMode)
+	// 代理内核（mihomo）由 internal/engine 在 init 里注册给 proxy，
+	// 所以这里不再需要"选内核"这一步：New 之后马上会有人调 AutoActivate，
+	// 那时节点会直接走唯一的那个内核。
 	a := &App{
 		cfg:      cfg,
 		cfgPath:  cfgPath,
@@ -163,13 +162,12 @@ func New(cfgPath string) (*App, error) {
 	go a.statsLoop()
 	// 把"连接流水"接进网络日志缓冲。
 	//
-	// 两个来源：
-	//   1. 我们自己的代理 handler —— **主要来源**，它才知道"谁连了哪儿"；
-	//   2. 内嵌 sing-box 的日志 —— 补充（例如握手失败、配置告警）。
+	// 数据源只有**我们自己的代理 handler**（proxy.ConnEvent）—— 它才知道"谁连了哪儿"。
+	// 曾经还挂了内嵌 sing-box 的日志回调作为补充；sing-box 摘除后那条来源没有了，
+	// 而它本来也只是补充（实测拿不到数据，原因见 docs/BOTTOM_PANEL.md）。
 	//
-	// 都放在 app 这边注册，因为缓冲归 app 所有；引擎与 handler 只提供进程级接收器。
+	// 放在 app 这边注册，因为缓冲归 app 所有；handler 只提供进程级接收器。
 	proxy.SetConnSink(a.trackConnEvent)
-	engine.SetNetworkLogSink(a.appendNetworkLog)
 
 	return a, nil
 }

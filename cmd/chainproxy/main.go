@@ -32,12 +32,13 @@ import (
 
 	"chainproxy/internal/app"
 	"chainproxy/internal/config"
-	"chainproxy/internal/engine"
 	"chainproxy/internal/ports"
+	"chainproxy/internal/proxy"
 	"chainproxy/internal/share"
 	"chainproxy/internal/wgproxy"
 
-	// 注册 sing-box 出口（proxy 通过注册函数解耦，见 internal/engine/register.go）。
+	// 注册 mihomo 出口（proxy 通过注册函数解耦，见 internal/engine/register.go）。
+	// 它是**唯一**的代理内核：sing-box 与它的回退已经删除。
 	_ "chainproxy/internal/engine"
 )
 
@@ -93,7 +94,7 @@ func usage() {
   chainproxy fetch             探测各节点出口 IP
   chainproxy import <链接>     从分享链接导入节点
   chainproxy express <节点>    导出节点的分享链接
-  chainproxy engines           检查内嵌引擎的构建标签
+  chainproxy engines           自检内嵌内核（mihomo）是否可用
   chainproxy wgkey             生成 WireGuard 密钥对
   chainproxy version           打印版本
 
@@ -556,12 +557,21 @@ func runExpress(args []string) {
 
 func runEngines() {
 	fmt.Printf("Go 版本：%s\n", runtime.Version())
-	if err := engine.BuildCheck(); err != nil {
-		fmt.Printf("❌ %v\n", err)
+	// 【这个自检现在检查什么】以前它检查的是 sing-box 的构建标签（with_utls /
+	// with_quic）—— 那两个标签随 sing-box 一起删掉了，mihomo 不需要它们。
+	// 现在要确认的是"唯一的内核真的被编译进来且被注册了"：拿一个最小节点去
+	// 问一次工厂，注册缺失会当场返回"当前构建未包含 …"。
+	node := config.Node{
+		ID: "selfcheck", Name: "自检", Protocol: config.ProtocolVLESS,
+		Server: "127.0.0.1", Port: 443, UUID: "00000000-0000-0000-0000-000000000000",
+	}
+	if _, err := proxy.NewUpstream(node, config.Front{Type: config.FrontTypeDirect}, nil); err != nil {
+		fmt.Printf("❌ 内核不可用：%v\n", err)
 		os.Exit(1)
 	}
-	fmt.Println("✅ 内嵌 sing-box 引擎构建标签完整（with_utls / with_quic）")
+	fmt.Println("✅ 内嵌 mihomo 已注册（唯一的代理内核，无需构建标签）")
 	fmt.Println("   可用协议：VMess、VLESS（含 Reality）、Shadowsocks、Trojan、Hysteria2")
+	fmt.Println("   支持传输：tcp、ws、grpc、http(h2)、httpupgrade、xhttp（vless）")
 }
 
 // runWGKey 生成 WireGuard 密钥对，或由给定私钥推导公钥。

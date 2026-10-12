@@ -71,13 +71,13 @@ func TestStartNodeStopsOldServerOutsideLock(t *testing.T) {
 	var releaseOnce sync.Once
 	releaseNow := func() { releaseOnce.Do(func() { close(release) }) }
 
-	// 只替换默认内核（sing-box）的出口工厂：Shadowsocks 节点走这条路。
-	// 跑完立刻还原成真工厂（engine.init 里注册的就是 engine.New），
+	// 只替换内核（mihomo）的出口工厂：Shadowsocks 节点走这条路。
+	// 跑完立刻还原成真工厂（engine.init 里注册的就是 engine.NewMihomo），
 	// 免得影响同包其它测试。
-	proxy.RegisterSingBoxFactory(func(config.Node, config.Front, func(string, ...any)) (proxy.Upstream, error) {
+	proxy.RegisterMihomoFactory(func(config.Node, config.Front, func(string, ...any)) (proxy.Upstream, error) {
 		return &blockingStopUpstream{entered: entered, release: release}, nil
 	})
-	defer proxy.RegisterSingBoxFactory(engine.New)
+	defer proxy.RegisterMihomoFactory(engine.NewMihomo)
 	defer releaseNow()
 
 	base := freeBase(t, 15000, 2)

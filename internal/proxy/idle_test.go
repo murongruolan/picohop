@@ -7,18 +7,17 @@ import (
 	"chainproxy/internal/config"
 )
 
-// stubSingFactory 把内核工厂换成一个不联网的假出口，用完恢复。
+// stubMihomoFactory 把内核工厂换成一个不联网的假出口，用完恢复。
 //
 // 【为什么要 stub】NewServer 会先构造出口；VLESS 这类协议在只跑 proxy 包的
 // 测试里没有注册内核工厂，会直接构造失败 —— 那测的就不是空闲超时了。
-func stubSingFactory(t *testing.T) {
+func stubMihomoFactory(t *testing.T) {
 	t.Helper()
-	origSing, origMode := singFactory, engineMode
-	singFactory = func(config.Node, config.Front, func(string, ...any)) (Upstream, error) {
+	orig := mihomoFactory
+	mihomoFactory = func(config.Node, config.Front, func(string, ...any)) (Upstream, error) {
 		return fakeUpstream{tag: "fake"}, nil
 	}
-	engineMode = ""
-	t.Cleanup(func() { singFactory, engineMode = origSing, origMode })
+	t.Cleanup(func() { mihomoFactory = orig })
 }
 
 // TestServerIdleTimeoutComesFromSettings 锁死审查 #2：
@@ -28,7 +27,7 @@ func stubSingFactory(t *testing.T) {
 // 【以前为什么是错的】node.Timeout() 是**拨号**超时（固定 15s）。拿它当空闲超时，
 // 用户把「空闲自动断开」从 300 改成任何值都不生效，而链路只要静默 15 秒就被掐断。
 func TestServerIdleTimeoutComesFromSettings(t *testing.T) {
-	stubSingFactory(t)
+	stubMihomoFactory(t)
 	node := config.Node{ID: "n1", Name: "n1", Protocol: config.ProtocolVLESS}
 
 	s, err := NewServer(node, config.Front{Type: config.FrontTypeDirect}, 240*time.Second, nil)
@@ -51,7 +50,7 @@ func TestServerIdleTimeoutFailsClosed(t *testing.T) {
 	def := time.Duration(config.DefaultIdleTimeoutSec) * time.Second
 
 	for _, idle := range []time.Duration{0, -time.Second} {
-		stubSingFactory(t)
+		stubMihomoFactory(t)
 		node := config.Node{ID: "n1", Name: "n1", Protocol: config.ProtocolVLESS}
 		s, err := NewServer(node, config.Front{Type: config.FrontTypeDirect}, idle, nil)
 		if err != nil {

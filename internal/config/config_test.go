@@ -337,9 +337,6 @@ func TestProtocolMetadata(t *testing.T) {
 	if IsSupportedProtocol("nope") {
 		t.Error("未知协议不应被认作受支持")
 	}
-	if !UsesSingBox(ProtocolHysteria2) || UsesSingBox(ProtocolSOCKS5) {
-		t.Error("UsesSingBox 判断错误")
-	}
 }
 
 // TestTransportLabel 确认列表「传输协议」列的取值。
