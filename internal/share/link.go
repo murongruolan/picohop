@@ -99,7 +99,12 @@ func Decode(link string) (config.Node, error) {
 
 	scheme, rest, ok := splitScheme(raw)
 	if !ok {
-		return config.Node{}, fmt.Errorf("share: 不是分享链接（缺少 scheme://）: %q", truncate(raw, 60))
+		// 【审查 #23】不要在这里回显 raw。本包的错误会被
+		// desktop/api_import.go 原样塞进 ImportResult.Message 并显示在通知弹窗里，
+		// 而进到这里的典型输入正是"复制时被截断的链接"（少了 ://）——
+		// 前 60 字节里往往就是密码 / UUID。只报原因和文本长度：
+		// 用户仍能判断"是不是没复制全"，凭据却不会出现在屏幕（截图、录屏同样泄露）。
+		return config.Node{}, fmt.Errorf("share: 不是分享链接（缺少 scheme://，读到 %d 字节）", len(raw))
 	}
 	if _, ok := schemeToProtocol[scheme]; !ok {
 		return config.Node{}, fmt.Errorf("share: 不支持的分享链接类型 %s://", scheme)
@@ -357,7 +362,12 @@ func splitALPN(s string) []string {
 	return out
 }
 
-// truncate 截断错误信息里的链接，避免把整条（可能上千字节的）链接塞进弹窗。
+// truncate 截断字符串，供测试失败信息等**诊断输出**使用。
+//
+// 【审查 #23】不要再把它用于 error 里回显链接 / userinfo：截断不是脱敏，
+// 前 40～60 字节通常正好是 "scheme://密码" 或 base64 之后的凭据，
+// 而本包的 error 会一路走到界面通知弹窗（见 desktop/api_import.go）。
+// 错误信息只写原因和位置（字节数），不写内容。
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
@@ -1045,7 +1055,10 @@ func decodeShadowsocks(p uriParts) (config.Node, error) {
 		inner := strings.TrimSpace(string(data))
 		at := strings.LastIndex(inner, "@")
 		if at < 0 {
-			return config.Node{}, fmt.Errorf("share: ss 旧格式缺少 '@' 分隔: %q", truncate(inner, 40))
+			// 【审查 #23】inner 是解码后的 "method:password"（旧格式本来就该是
+			// "method:password@host:port"），回显它等于把密码原文写进弹窗。
+			// 只给原因和长度，足以让用户知道"链接被截断了/不是旧格式"。
+			return config.Node{}, fmt.Errorf("share: ss 旧格式缺少 '@' 分隔（解出 %d 字节，无法分辨凭据与服务器地址）", len(inner))
 		}
 		n.Server, n.Port = splitHostPort(inner[at+1:])
 		userinfo = unescapePath(inner[:at])
@@ -1062,7 +1075,9 @@ func decodeShadowsocks(p uriParts) (config.Node, error) {
 	}
 	method, password, ok := strings.Cut(userinfo, ":")
 	if !ok {
-		return config.Node{}, fmt.Errorf("share: ss 凭据缺少 'method:password' 形式: %q", truncate(userinfo, 40))
+		// 【审查 #23】userinfo 到这里已是解开后的凭据原文（明文，或"原本是
+		// base64、刚被解出来"——base64 一样能还原密码），不能进错误信息。
+		return config.Node{}, errors.New("share: ss 凭据缺少 'method:password' 形式（没有 ':' 分隔）")
 	}
 	n.Method = strings.TrimSpace(method)
 	n.Password = password

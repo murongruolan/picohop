@@ -59,7 +59,13 @@ func (a *API) ImportFromClipboard() ImportResult {
 	}
 	res := a.parseNodes(text, "clipboard")
 	if !res.OK {
-		a.app.Notify("warning", "剪贴板里没有可识别的节点", strings.TrimSpace(text[:min(len(text), 80)]))
+		// 【审查 #23】原来这里把剪贴板原文的前 80 个字节当作通知正文显示，而
+		// 剪贴板里通常正是一条带密码 / UUID 的分享链接 —— 导入失败（复制被
+		// 截断、前后混了别的话）时，凭据就跟着弹窗出现在屏幕上（截图、录屏
+		// 一并泄露）。只报"读到多少字符"，用户仍能判断是不是没复制全。
+		// 注意 res.Message 走的是 share 包的错误，那里也已经不回显原文。
+		a.app.Notify("warning", "剪贴板里没有可识别的节点",
+			fmt.Sprintf("已读取 %d 个字符，没有解析出分享链接", len([]rune(text))))
 	}
 	return res
 }

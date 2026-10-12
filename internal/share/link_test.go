@@ -899,6 +899,76 @@ func TestDecodeErrors(t *testing.T) {
 	}
 }
 
+// TestDecodeErrorsDoNotLeakCredentials 是【审查 #23】的回归测试。
+//
+// 为什么值得单测：这些 error 会经 desktop/api_import.go 的 ImportResult.Message
+// 原样显示在界面通知弹窗里，所以错误信息里绝不能出现用户粘贴的原文、userinfo
+// 或"刚被解开"的凭据。base64 形态同样算泄露——它是可逆的，等于明文。
+// 断言方式：错误里既不出现金丝雀明文，也不出现它在链接里的各种编码形态；
+// 同时要求错误仍说清原因（否则"把信息全删掉"也能让测试变绿）。
+func TestDecodeErrorsDoNotLeakCredentials(t *testing.T) {
+	const canary = "canary-password-DO-NOT-LEAK"
+
+	// ss 旧格式缺 '@'：base64("aes-256-gcm:<canary>")，解出来只剩凭据。
+	ssLegacyNoAt := "ss://" + base64.RawURLEncoding.EncodeToString([]byte("aes-256-gcm:"+canary))
+	// ss 凭据没有 ':'：userinfo 是 base64("<canary>")，解开后仍然没有冒号。
+	ssNoColon := "ss://" + base64.RawURLEncoding.EncodeToString([]byte(canary)) + "@1.2.3.4:8388"
+	// 缺少 scheme:// 的截断链接（复制到一半）：原文本身就是凭据。
+	noScheme := canary + "@trojan.example.com:443"
+
+	cases := []struct {
+		name   string
+		link   string
+		reason string // 错误里必须保留的原因关键词
+	}{
+		{"缺少 scheme 分隔符", noScheme, "缺少 scheme://"},
+		{"ss 旧格式缺 '@'", ssLegacyNoAt, "缺少 '@'"},
+		{"ss 凭据缺 ':'", ssNoColon, "method:password"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if n, err := Decode(c.link); err == nil {
+				t.Fatalf("Decode 应返回 error，实际解析出 %+v", n)
+			} else {
+				assertNoCredential(t, err, c.link, canary)
+				if !strings.Contains(err.Error(), c.reason) {
+					t.Errorf("错误应保留原因 %q（不能靠清空信息来避嫌），实际 %q",
+						c.reason, err.Error())
+				}
+			}
+		})
+	}
+
+	// DecodeAny 会把首条错误包进 ErrNoLink 的文案里，包装后同样不能带凭据。
+	t.Run("DecodeAny 包装后的首条错误", func(t *testing.T) {
+		_, err := DecodeAny("订阅说明文字 " + ssLegacyNoAt)
+		if err == nil {
+			t.Fatal("DecodeAny 应返回 error")
+		}
+		if !errors.Is(err, ErrNoLink) {
+			t.Fatalf("应包装成 ErrNoLink，实际 %v", err)
+		}
+		assertNoCredential(t, err, ssLegacyNoAt, canary)
+	})
+}
+
+// assertNoCredential 断言 error 文案里既不出现金丝雀明文，也不出现它在链接里
+// 的编码形态，也不出现整条原文。
+func assertNoCredential(t *testing.T, err error, link, canary string) {
+	t.Helper()
+	msg := err.Error()
+	for _, bad := range []string{
+		canary,
+		base64.RawURLEncoding.EncodeToString([]byte(canary)),
+		base64.RawURLEncoding.EncodeToString([]byte("aes-256-gcm:" + canary)),
+		link,
+	} {
+		if strings.Contains(msg, bad) {
+			t.Errorf("错误信息里出现了凭据/原文 %.32q：%q", bad, msg)
+		}
+	}
+}
+
 // TestDecodeDoesNotSetLocalFields 单独再锁一次"不碰本机状态"：
 // 导入后本地监听端口必须由用户单独设置，链接里带进来的任何东西都不能生效。
 func TestDecodeDoesNotSetLocalFields(t *testing.T) {
