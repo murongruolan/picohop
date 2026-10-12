@@ -12,11 +12,20 @@
 *.exe~
 *.test
 *.out
+*.zip
+*.rar
 
 # 运行时数据（配置、日志、pid）
+# /data/ 里是 data\config.json（明文节点凭据）、chainproxy.log、webview\ 浏览器数据，
+# 一个都不能进仓库，所以整目录排除。
 /data/
 *.log
 *.pid
+
+# mihomo 自带的缓存文件叫 cache.db（constant/path.go 的 Path.Cache()），
+# 它落在 mihomo 的 homeDir 里。我们用自定义配置路径跑时见过它掉在包目录里，
+# 所以这里按"任何一层"排除。
+cache.db
 
 # 参考项目本体（体积大，仅在 refs/README.md 中登记来源与 commit）
 /refs/local-refs/
@@ -37,5 +46,3 @@
 Thumbs.db
 desktop.ini
 .DS_Store
-# 应用以自定义配置路径运行时会落在当前目录的运行时产物
-cache.db
