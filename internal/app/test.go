@@ -86,9 +86,13 @@ func (a *App) TestNodes(ids []string, kind string) error {
 			go func(n config.Node) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				if r := recover(); r != nil {
-					a.Logf("测试「%s」时发生异常：%v", n.Name, r)
-				}
+				// 【必须写在 defer 里】recover() 只有被 defer 的函数**直接**调用才有效；
+				// 写在 goroutine 体里恒返回 nil —— 那样单个节点 panic 会带走整个进程（GUI 直接消失）。
+				defer func() {
+					if r := recover(); r != nil {
+						a.Logf("测试「%s」时发生异常：%v", n.Name, r)
+					}
+				}()
 				a.runOneTest(ctx, n, kind)
 			}(j.node)
 		}

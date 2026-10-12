@@ -29,6 +29,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -123,7 +124,10 @@ func (u *Upstream) Start(ctx context.Context, _ proxy.Front) error {
 	if err != nil {
 		return err
 	}
-	u.logf("[engine] 「%s」sing-box 配置: %s", u.node.Name, string(raw))
+	// 【凭据不入日志】配置里有 uuid/密码/reality 公钥等，直接打印等于把凭据抄到日志里
+	// （任何本机进程都能读；用户贴日志求助就是二次泄露）。
+	// 但整份配置对排查很有用（例如那次 xhttp 报错就是靠它定位的），所以**脱敏后照打**。
+	u.logf("[engine] 「%s」sing-box 配置（已脱敏）: %s", u.node.Name, redactConfigJSON(string(raw)))
 
 	// include.Context 把 sing-box 全部协议的注册表挂进 ctx；
 	// 缺了它，option 反序列化会报 "missing outbound options registry in context"。
@@ -749,4 +753,14 @@ func splitAddr(addr net.Addr) (string, int) {
 		port, _ := strconv.Atoi(portStr)
 		return host, port
 	}
+}
+
+// redactConfigJSON 把配置 JSON 里敏感字段的**值**替换成 ***，键与结构保留。
+//
+// 为什么要脱敏而不是干脆不打印：整份配置是排查内核问题最有力的证据
+// （第 1 轮那次 "unknown transport type: xhttp" 就是靠它一眼定位的）。
+// 敏感值一旦进了日志，就等于凭据长期驻留在纯文本文件里。
+func redactConfigJSON(raw string) string {
+	re := regexp.MustCompile(`(?i)"(uuid|password|public_key|short_id|private_key|obfs-password|psk|preshared_key|token|secret)"\s*:\s*"[^"]*"`)
+	return re.ReplaceAllString(raw, `"$1":"***"`)
 }

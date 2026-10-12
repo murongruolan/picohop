@@ -236,7 +236,9 @@ func (a *API) BeginScreenScan() ImportResult {
 		return ImportResult{Source: "screen", Message: "没有识别到二维码：" + err.Error()}
 	}
 
-	a.app.Logf("屏幕圈选识别到二维码内容：%s", truncateForLog(text, 120))
+	// 【凭据不入日志】识别结果就是分享链接（含 uuid/密码），打印它等于把凭据抄进日志。
+	// 只记长度用于排查"识别到没识别到/内容多长"，内容一律不落盘。
+	a.app.Logf("屏幕圈选识别到二维码内容：%d 字符（内容不入日志）", len(text))
 	res := a.parseNodes(text, "screen")
 	if !res.OK {
 		a.app.Notify("warning", "二维码内容不是可用的节点链接", res.Message)
