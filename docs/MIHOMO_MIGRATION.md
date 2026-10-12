@@ -34,8 +34,8 @@
 | 协议/传输 | 5 种 + ws/grpc/h2/httpupgrade | 更宽（**xhttp**、tuic、anytls、mieru…） | mihomo 更全 |
 | 成功率 | 23/23 | 24/24 | 均 100% |
 
-**可比性已证**：两条路径的出口 IP 均为 `39.109.57.15`（香港 AS42960），与直连基线
-`27.186.193.217`（河北 AS4134）不同 → 确实都走了该节点。
+**可比性已证**：两条路径的出口 IP 均为 `203.0.113.13`（香港 AS42960），与直连基线
+`203.0.113.1`（河北 AS4134）不同 → 确实都走了该节点。
 
 **CPU 那条要说清**：mihomo 用默认 `find-process-mode: strict`（逐连接匹配进程名），
 sing-box 不做 → **B 被多扣分**，所以"我们更省 CPU"站不住。
@@ -155,7 +155,7 @@ type XHTTPOptions struct {
 5. **许可证**：mihomo 是 **GPL-3.0**（已核）。我们现在内嵌的 sing-box 也是 GPL-3.0
    （本轮未重新核对，换装前补齐证据）。对外分发时 copyleft 义务不变。
 6. **xhttp 的可用性只证明到"能构建 + 有实现"**，还没拿真实 xhttp 节点跑通
-   （用户那条 `①US1直连出口` 正好可以当第一个验证对象）。
+   （用户那条 `node-xhttp` 正好可以当第一个验证对象）。
 
 ---
 
@@ -167,7 +167,7 @@ type XHTTPOptions struct {
 
 **探针已实测通过**（`.cache/mihomo-meta/cmd/xprobe`，放在 mihomo 克隆内、不碰我们的仓库）：
 ```
-✅ 隧道建立（382 ms）-> 204.197.163.238:30022
+✅ 隧道建立（382 ms）-> 203.0.113.10:30022
 ✅ 响应首行：HTTP/1.1 204 No Content
 ```
 即 **mihomo 出站层能在"不经 hub.Parse、不建 inbound"下独立拨通 xhttp + REALITY 节点并过真实流量**
@@ -215,10 +215,10 @@ type XHTTPOptions struct {
 
 **真实节点连通验证（第 4 轮，用我们自己的适配层，不是独立探针）**：
 ```
-节点=①US1直连出口  传输=xhttp  TLS=true  指纹="chrome"  REALITY=true
-  [engine] 「①US1直连出口」mihomo 出站已就绪：204.197.163.238:30022（type=Vless）
+节点=node-xhttp  传输=xhttp  TLS=true  指纹="chrome"  REALITY=true
+  [engine] 「node-xhttp」mihomo 出站已就绪：203.0.113.10:30022（type=Vless）
 ✅ Start 完成（0 ms）
-✅ Dial 建立链路（1422 ms）-> 204.197.163.238:30022
+✅ Dial 建立链路（1422 ms）-> 203.0.113.10:30022
 ✅ 响应首行：HTTP/1.1 204 No Content
 ```
 即：**`internal/engine.MihomoUpstream` 能起、能拨通 xhttp + REALITY 节点、能过真实流量。**
@@ -249,7 +249,7 @@ type XHTTPOptions struct {
 2. **UDP**：`ListenPacketContext` → 包成 `proxy.UDPChannel`（`SendToUDP`/`ReceiveFromUDP` + quit 语义）。
 3. **逐传输真实验证**：目前只验了 `xhttp`（用户手上唯一可用的 vless 节点）。
    ws/grpc/http/h2/httpupgrade 与其它协议**都还没有真实节点验证** —— 不许当已完成。
-   用户可以给一条 vmess（已有：香港-39.109-CN2-VMess）来验 vmess+tcp 那条。
+   用户可以给一条 vmess（已有：node-vmess-hk）来验 vmess+tcp 那条。
 
 
 
@@ -294,12 +294,12 @@ type XHTTPOptions struct {
 
 ### 第 7 轮：vmess 真实链路验证 ✅（契约第 ④ 步的第 2 条证据）
 
-用**我们自己的** `internal/engine.MihomoUpstream` 拨 `香港-39.109-CN2-VMess`
-（`39.109.57.15:11720`，tcp、无 TLS）：
+用**我们自己的** `internal/engine.MihomoUpstream` 拨 `node-vmess-hk`
+（`203.0.113.13:11720`，tcp、无 TLS）：
 
     ✅ Start 完成（0 ms）
     ✅ DialUDP 如实报错：mihomo 适配层：UDP 通道尚未接入（…）
-    ✅ Dial 建立链路（54 ms）-> 39.109.57.15:11720
+    ✅ Dial 建立链路（54 ms）-> 203.0.113.13:11720
     ✅ 响应首行：HTTP/1.1 204 No Content
 
 **真实链路验证清单（契约第 ④ 步的硬要求，逐条累积）**：
@@ -326,7 +326,7 @@ type XHTTPOptions struct {
         http://www.gstatic.com/generate_204                     # 期望 204
   curl.exe -x socks5h://127.0.0.1:18099 https://api.ipify.org    # 期望出口 IP ≠ 本机 IP
   ```
-  服务器：`103.62.49.131:50000`（hysteria2，QUIC/UDP）。只记主机端口与参数名，
+  服务器：`203.0.113.14:50000`（hysteria2，QUIC/UDP）。只记主机端口与参数名，
   **凭据（密码 / UUID / pin 值 / SNI 值）一律不入库**。
 
 **仍未验证**：trojan / shadowsocks（只有单测）；
@@ -444,7 +444,7 @@ NewUpstream 在五个 sing-box 协议分支之前插入：mode == "mihomo" 且 m
 用配置副本（不动用户配置）跑单节点激活：
 
   A) engineMode=mihomo + 正常 vmess 节点 -> **日志出现**
-     「香港-39.109-CN2-VMess」mihomo 出站已就绪：39.109.57.15:11720（type=Vmess）
+     「node-vmess-hk」mihomo 出站已就绪：203.0.113.13:11720（type=Vmess）
      → 开关端到端生效（走的是我们的 mihomo 适配层，不是 sing-box）。
 
   B) engineMode=mihomo + vmess 缺 uuid -> **激活直接失败**，没有回退。
@@ -575,7 +575,7 @@ chainproxy-cli.exe test --kind real --node probe-node
 |---|---|---|
 | 注册 mihomo 工厂 + 模式选择 + **失败回退** | 完成 | `internal/proxy`：`RegisterMihomoFactory` / `SetEngineMode` / `EngineMode`；单测 `TestEngineSelectionAndFallback` |
 | 应用侧接线 | 完成 | `Settings.EngineMode`（json `engineMode`，默认空串）+ `app.New()` 里 `proxy.SetEngineMode(...)`；单测 `TestEngineModeJSON`（老配置读出必须是空串） |
-| **端到端验证** | 通过 | 配置副本 + `engineMode=mihomo` + vmess 节点 → 日志出现「mihomo 出站已就绪：39.109.57.15:11720（type=Vmess）」 |
+| **端到端验证** | 通过 | 配置副本 + `engineMode=mihomo` + vmess 节点 → 日志出现「mihomo 出站已就绪：203.0.113.13:11720（type=Vmess）」 |
 | **回退路径验证** | 通过 | mihomo 映射拒绝的节点 → 日志「mihomo 接不了…，回退 sing-box：…」，节点最终 running（由 sing-box 接管） |
 | 界面开关 | 完成 | 设置 → 运行与界面 → `代理内核 [sing-box（默认） \| mihomo] (?)`；已截图确认 |
 
@@ -876,7 +876,7 @@ mihomo 成为唯一内核，开关与 `Settings.EngineMode` 一起删除。
 
 ## 13. 第 ⑲ 轮：hysteria2 真实链路打通（并修掉一个证书 pin 映射缺口）
 
-用户给了一条真实的 **hysteria2** 节点（`103.62.49.131:50000`，QUIC/UDP），要求经**我们现在的
+用户给了一条真实的 **hysteria2** 节点（`203.0.113.14:50000`，QUIC/UDP），要求经**我们现在的
 引擎**（内嵌 mihomo、sing-box 已摘除）真的拨通。结论：**能拨通，而且第一次拨不通的原因是我们
 自己的映射缺口，不是节点/网络问题**。本轮清单从 3 条扩到 4 条（见第 7 节的清单表）。
 
@@ -902,7 +902,7 @@ mihomo 成为唯一内核，开关与 `Settings.EngineMode` 一起删除。
 ### 13.2 原始现象与报错（复现一次，0.46 s 就失败）
 
     chainproxy-cli.exe test -kind real -timeout 60
-      「…」mihomo 出站已就绪：103.62.49.131:50000（type=Hysteria2）
+      「…」mihomo 出站已就绪：203.0.113.14:50000（type=Hysteria2）
       「…」真连接延迟测试失败：Get "http://cp.cloudflare.com/generate_204":
         mihomo 建立链路失败: CRYPTO_ERROR 0x12a (local):
         tls: failed to verify certificate: x509: certificate signed by unknown authority
@@ -951,19 +951,19 @@ mihomo 成为唯一内核，开关与 `Settings.EngineMode` 一起删除。
 
 ### 13.5 修完之后的真实结果（同一份临时配置，同一条命令）
 
-    「…」mihomo 出站已就绪：103.62.49.131:50000（type=Hysteria2）
+    「…」mihomo 出站已就绪：203.0.113.14:50000（type=Hysteria2）
     「…」真连接延迟 899 ms            （隔一会儿复跑是 1928 ms —— 秒级波动，属正常网络差异）
-    「…」出口 IP = 103.62.49.130（2298 ms）   （复跑仍是同一个 IP）
+    「…」出口 IP = 203.0.113.15（2298 ms）   （复跑仍是同一个 IP）
 
 再走**完整产品路径**（激活本地端口后用 curl）：
 
     chainproxy-cli.exe run -node <节点> -seconds 40
-      已启动，监听 127.0.0.1:18099（前置：直连；出口：Hysteria2 103.62.49.131:50000）
+      已启动，监听 127.0.0.1:18099（前置：直连；出口：Hysteria2 203.0.113.14:50000）
       SOCKS5 隧道建立 → www.gstatic.com:80 / api.ipify.org:443 …
     curl.exe -x socks5h://127.0.0.1:18099 -o NUL -w "%{http_code}" http://www.gstatic.com/generate_204
       → 204
     curl.exe -x socks5h://127.0.0.1:18099 https://api.ipify.org
-      → 103.62.49.130        （与本机出口不同；与服务器 .131 同 /24，即真的落在该节点出口）
+      → 203.0.113.15        （与本机出口不同；与服务器 .131 同 /24，即真的落在该节点出口）
 
 **结论**：hysteria2 + TLS 证书 pin 这条链路，经我们自己的适配层**真的通了**；
 先前的失败是**我们的映射缺口**，不是节点/网络问题。
@@ -1030,9 +1030,9 @@ mihomo 成为唯一内核，开关与 `Settings.EngineMode` 一起删除。
 
 ### 14.3 原始报错（修复前，走我们自己的 mihomo 适配层）
 
-    「…」mihomo 出站已就绪：23.246.164.156:44761（type=Trojan）
+    「…」mihomo 出站已就绪：203.0.113.16:44761（type=Trojan）
     「…」真连接延迟测试失败：Get "http://cp.cloudflare.com/generate_204":
-      mihomo 建立链路失败: 23.246.164.156:44761 connect error:
+      mihomo 建立链路失败: 203.0.113.16:44761 connect error:
       tls: failed to verify certificate: x509: certificate signed by unknown authority
 
 值得注意的**排除项**：出站构造成功、TCP 端口可达（实测通）、TLS 握手走到"要验证书"这一步
@@ -1179,38 +1179,38 @@ curl.exe -s -x socks5h://127.0.0.1:<端口> https://api.ipify.org # 期望出口
 
 ### 15.3 真拨证据（**原始输出，只脱敏主机/端口以外的凭据**）
 
-trojan（`23.246.164.156:44761`，tcp + TLS，自签证书 + 跳过校验）：
+trojan（`203.0.113.16:44761`，tcp + TLS，自签证书 + 跳过校验）：
 
 ```
-  [US-Trojan-44761] 「US-Trojan-44761」mihomo 出站已就绪：23.246.164.156:44761（type=Trojan）
-  「US-Trojan-44761」真连接延迟 588 ms          ← 第一次构建
-  「US-Trojan-44761」真连接延迟 851 ms          ← 用当前源码重新 build 后复核
-  「US-Trojan-44761」出口 IP = 23.246.164.156（893 / 915 ms）
+  [node-trojan] 「node-trojan」mihomo 出站已就绪：203.0.113.16:44761（type=Trojan）
+  「node-trojan」真连接延迟 588 ms          ← 第一次构建
+  「node-trojan」真连接延迟 851 ms          ← 用当前源码重新 build 后复核
+  「node-trojan」出口 IP = 203.0.113.16（893 / 915 ms）
 ```
 
 完整产品路径（`run` + curl 走本地 SOCKS5）：
 
 ```
-  「US-Trojan-44761」已启动，监听 127.0.0.1:18099（前置：直连；出口：Trojan 23.246.164.156:44761）
-  [US-Trojan-44761] SOCKS5 隧道建立 → www.gstatic.com:80
-  [US-Trojan-44761] SOCKS5 隧道建立 → api.ipify.org:443
-  generate_204 -> 204 ; ipify -> 23.246.164.156
+  「node-trojan」已启动，监听 127.0.0.1:18099（前置：直连；出口：Trojan 203.0.113.16:44761）
+  [node-trojan] SOCKS5 隧道建立 → www.gstatic.com:80
+  [node-trojan] SOCKS5 隧道建立 → api.ipify.org:443
+  generate_204 -> 204 ; ipify -> 203.0.113.16
 ```
 
-shadowsocks（`23.246.164.156:26275`，`aes-256-gcm`，无 TLS）：
+shadowsocks（`203.0.113.16:26275`，`aes-256-gcm`，无 TLS）：
 
 ```
-  [US-SS-26275] 「US-SS-26275」mihomo 出站已就绪：23.246.164.156:26275（type=Shadowsocks）
-  「US-SS-26275」真连接延迟 659 ms              ← 第一次构建
-  「US-SS-26275」真连接延迟 474 ms              ← 重新 build 后复核
-  「US-SS-26275」出口 IP = 23.246.164.156（746 / 683 ms）
+  [node-ss] 「node-ss」mihomo 出站已就绪：203.0.113.16:26275（type=Shadowsocks）
+  「node-ss」真连接延迟 659 ms              ← 第一次构建
+  「node-ss」真连接延迟 474 ms              ← 重新 build 后复核
+  「node-ss」出口 IP = 203.0.113.16（746 / 683 ms）
 ```
 
 ```
-  「US-SS-26275」已启动，监听 127.0.0.1:18100（前置：直连；出口：Shadowsocks 23.246.164.156:26275）
-  [US-SS-26275] SOCKS5 隧道建立 → www.gstatic.com:80
-  [US-SS-26275] SOCKS5 隧道建立 → api.ipify.org:443
-  generate_204 -> 204 ; ipify -> 23.246.164.156
+  「node-ss」已启动，监听 127.0.0.1:18100（前置：直连；出口：Shadowsocks 203.0.113.16:26275）
+  [node-ss] SOCKS5 隧道建立 → www.gstatic.com:80
+  [node-ss] SOCKS5 隧道建立 → api.ipify.org:443
+  generate_204 -> 204 ; ipify -> 203.0.113.16
 ```
 
 **出口 IP 与节点地址完全相同**（不是"≠ 本机"这种弱判据）：说明流量确实从该节点出去，
@@ -1238,7 +1238,7 @@ trojan 节点用的是自签证书、`sni` 也是自造域名，而 `real`/`exit
 **后果（如实记录，不淡化）**：
 
 - `data/config.json` 被写脏：`res-socks-1` 的 `realMs` 3508 / `latencyAt`、`res-socks-2` 的
-  `testedAt`、`①US1直连出口` 的 `realMs` 1512 / `latencyAt` 变成 **2026/10/13 01:31** 的值；
+  `testedAt`、`node-xhttp` 的 `realMs` 1512 / `latencyAt` 变成 **2026/10/13 01:31** 的值；
   文件 mtime 从 `2026/10/12 19:31:23` 变成 `2026/10/13 01:31:16`。
 - **内容无法精确还原**（`data/` 在 `.gitignore` 第 17 行，没有版本可回退；被覆盖的正是
   `realMs`/`latencyAt`/`testedAt` 这类**测试结果**字段，重测一次即可恢复）。

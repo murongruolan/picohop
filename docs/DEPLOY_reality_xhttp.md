@@ -1,4 +1,4 @@
-# 部署记录：VLESS + Reality + xHTTP（204.197.163.238）
+# 部署记录：VLESS + Reality + xHTTP（203.0.113.10）
 
 > 部署时间：2026-10-11
 > 目标机器：NAT 服务器容器 `US-ACO1`（Debian 13，内网 `172.16.233.90`）
@@ -114,7 +114,7 @@ ss -ltnp | grep xray
 
 | 出口 | 内部端口 | 公网端口 | 出站 | 出口 IP |
 |---|---|---|---|---|
-| **direct**（NAT 自身网络） | `51821` | `30022` | `freedom` | `204.197.163.238` |
+| **direct**（NAT 自身网络） | `51821` | `30022` | `freedom` | `203.0.113.10` |
 | **WARP**（Cloudflare） | `51822` | `30023` | `socks → 127.0.0.1:40000` | `104.28.x.x`（Cloudflare） |
 
 > 早期曾把 WARP 入站放在内部 `51820`(TCP)（与 WireGuard 的 UDP 51820 只是数字撞号、
@@ -161,16 +161,16 @@ spiderX  : /
 
 主流客户端导入用（复制整行 → 「从剪贴板导入批量 URL」）：
 
-**① 直连出口 `204.197.163.238:30022`**
+**① 直连出口 `203.0.113.10:30022`**
 
 ```
-vless://ed401d40-9c96-4217-8e6b-ab6ac21169c1@204.197.163.238:30022?encryption=none&security=reality&sni=www.amazon.com&fp=chrome&pbk=j9hlAZUR9UIfQJdv8Ti6lW07zonxbYOjJufVxILOTTw&sid=d423dbf66168796e&spx=%2F&type=xhttp&path=%2F63ffaa1022cf&host=www.amazon.com&mode=auto#NAT-direct
+vless://ed401d40-9c96-4217-8e6b-ab6ac21169c1@203.0.113.10:30022?encryption=none&security=reality&sni=www.amazon.com&fp=chrome&pbk=j9hlAZUR9UIfQJdv8Ti6lW07zonxbYOjJufVxILOTTw&sid=d423dbf66168796e&spx=%2F&type=xhttp&path=%2F63ffaa1022cf&host=www.amazon.com&mode=auto#NAT-direct
 ```
 
-**② WARP 出口 `204.197.163.238:30023`**
+**② WARP 出口 `203.0.113.10:30023`**
 
 ```
-vless://ed401d40-9c96-4217-8e6b-ab6ac21169c1@204.197.163.238:30023?encryption=none&security=reality&sni=www.amazon.com&fp=chrome&pbk=j9hlAZUR9UIfQJdv8Ti6lW07zonxbYOjJufVxILOTTw&sid=d423dbf66168796e&spx=%2F&type=xhttp&path=%2F63ffaa1022cf&host=www.amazon.com&mode=auto#NAT-WARP
+vless://ed401d40-9c96-4217-8e6b-ab6ac21169c1@203.0.113.10:30023?encryption=none&security=reality&sni=www.amazon.com&fp=chrome&pbk=j9hlAZUR9UIfQJdv8Ti6lW07zonxbYOjJufVxILOTTw&sid=d423dbf66168796e&spx=%2F&type=xhttp&path=%2F63ffaa1022cf&host=www.amazon.com&mode=auto#NAT-WARP
 ```
 
 （两条链接另存于 `.cache/xray-test/share-link-direct.txt` / `share-link-warp.txt`，该目录被 gitignore。）
@@ -185,7 +185,7 @@ vless://ed401d40-9c96-4217-8e6b-ab6ac21169c1@204.197.163.238:30023?encryption=no
 
 ```
 容器本机: curl -k https://127.0.0.1:51821/ -H "Host: www.amazon.com"  -> HTTP 200
-从家宽  : curl -k https://204.197.163.238:30022/ -H "Host: www.amazon.com" -> HTTP 200
+从家宽  : curl -k https://203.0.113.10:30022/ -H "Host: www.amazon.com" -> HTTP 200
 不带 Host 头（Amazon 会拒）                                          -> HTTP 403
 ```
 
@@ -197,8 +197,8 @@ vless://ed401d40-9c96-4217-8e6b-ab6ac21169c1@204.197.163.238:30023?encryption=no
 
 | 链路 | 出口 IPv4 | 地区 / ISP | 真实网站 |
 |---|---|---|---|
-| direct（30022） | `204.197.163.238` | United States / System In Place | example.com HTTP 200 ✅ |
-| WARP（30023） | `104.28.201.80` | United States / **Cloudflare, Inc.** | example.com HTTP 200 ✅ |
+| direct（30022） | `203.0.113.10` | United States / System In Place | example.com HTTP 200 ✅ |
+| WARP（30023） | `203.0.113.28` | United States / **Cloudflare, Inc.** | example.com HTTP 200 ✅ |
 
 服务端访问日志佐证分流正确：
 
@@ -211,8 +211,8 @@ accepted tcp:api.ipify.org:443  [VLESS-REALITY-XHTTP-WARP-51822 -> warp]
 
 ```
 出口 IP:
-  api.ipify.org  -> 204.197.163.238
-  ip-api.com     -> United States | System In Place | 204.197.163.238
+  api.ipify.org  -> 203.0.113.10
+  ip-api.com     -> United States | System In Place | 203.0.113.10
   ifconfig.me    -> 2001:470:1f05:45e:...    ← 走了节点的 IPv6 出口
 真实网站:
   example.com    -> "Example Domain"
@@ -234,7 +234,7 @@ xHTTP + Reality 自身的开销几乎可以忽略。
 
 ### 5.1 公网 443 被 CDN 占用
 
-`204.197.163.238:443` 返回：
+`203.0.113.10:443` 返回：
 
 ```
 HTTP/1.1 418 I'm a Teapot
@@ -250,7 +250,7 @@ Server: TencentEdgeOne
 
 ### 5.2 出口 IP 不是住宅 IP
 
-`204.197.163.238` 归属美国机房（`System In Place`）。**WARP 出口是 `104.28.x.x`（Cloudflare）**，
+`203.0.113.10` 归属美国机房（`System In Place`）。**WARP 出口是 `104.28.x.x`（Cloudflare）**，
 两条链路都**不是住宅 IP**。若需要特定地区/住宅出口，需要换出口节点或另接上游。
 
 ### 5.2.1 WARP 出口的 UDP 可能不可用
@@ -263,7 +263,7 @@ WARP 入站的出站是 `socks → warp-svc:40000`，**取决于 WARP 的 SOCKS5
 ### 5.3 IPv6 出口会导致出口 IP 不一致
 
 节点有 HE IPv6，`freedom` 出站会优先走 IPv6，于是同一客户端不同目标可能看到
-IPv4/IPv6 两个不同出口。若希望出口 IP 始终是 `204.197.163.238`，
+IPv4/IPv6 两个不同出口。若希望出口 IP 始终是 `203.0.113.10`，
 给出站加 `"domainStrategy": "UseIPv4"`，或直接加一条阻断 IPv6 的路由规则。
 
 ### 5.4 233boy 脚本自带的路由规则
@@ -296,6 +296,6 @@ tail -f /var/log/xray/error.log
 cat /root/.xhttp_shortid /root/.xhttp_path      # 本次生成的 shortId / path
 
 # 从家宽验证（无需客户端，验证 Reality 是否在正常工作）
-curl -k -o /dev/null -w "%{http_code}\n" https://204.197.163.238:30022/ -H "Host: www.amazon.com"
+curl -k -o /dev/null -w "%{http_code}\n" https://203.0.113.10:30022/ -H "Host: www.amazon.com"
 # 期望 200
 ```

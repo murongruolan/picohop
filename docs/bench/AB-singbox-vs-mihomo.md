@@ -1,6 +1,6 @@
 # sing-box（现状） vs mihomo A/B 性能对比
 
-节点：`香港-39.109-CN2-VMess`（VMess / tcp / 无 TLS）｜本机：Windows 11 25H2，Ryzen 5 9600X（6C/12T），31.8 GB RAM，Wi-Fi AX210
+节点：`node-vmess-hk`（VMess / tcp / 无 TLS）｜本机：Windows 11 25H2，Ryzen 5 9600X（6C/12T），31.8 GB RAM，Wi-Fi AX210
 A = `dist\chainproxy-cli.exe`（内嵌 sing-box v1.14.3，1 个进程 = 1 个内核实例 + 1 个本地 mixed 口 127.0.0.1:10813）
 B = `.cache\mihomo.exe`（Mihomo Meta，1 个进程 = 1 个引擎，mixed-port 127.0.0.1:10888）
 
@@ -8,9 +8,9 @@ B = `.cache\mihomo.exe`（Mihomo Meta，1 个进程 = 1 个引擎，mixed-port 1
 
 | 路径 | 出口 IP | 地区 | ASN |
 |---|---|---|---|
-| 直连（无代理，基线） | 27.186.193.217 | Hebei / CN | AS4134 CHINANET |
-| A 经 socks5h://127.0.0.1:10813 | **39.109.57.15** | Tung Chung, Islands / **HK** | AS42960 VH Global |
-| B 经 socks5h://127.0.0.1:10888 | **39.109.57.15** | Tung Chung, Islands / **HK** | AS42960 VH Global |
+| 直连（无代理，基线） | 203.0.113.1 | Hebei / CN | AS4134 CHINANET |
+| A 经 socks5h://127.0.0.1:10813 | **203.0.113.13** | Tung Chung, Islands / **HK** | AS42960 VH Global |
+| B 经 socks5h://127.0.0.1:10888 | **203.0.113.13** | Tung Chung, Islands / **HK** | AS42960 VH Global |
 
 两边出口 IP 相同、且都是香港 → 两边都确实走了该节点，且可比。
 
