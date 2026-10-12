@@ -50,6 +50,10 @@ func (a *App) PortStatus(port int, excludeID string) ports.Status {
 //
 // 规则：从 settings.portStart(默认 10810) 起排，
 // 取本项目内所有 >= 10800 的端口最大值 + 1，再顺延到真正空闲的那个。
+//
+// 【审查 #21】顺延不到空闲端口时返回 ports.NoPort(0)，**不返回没验证过的候选**。
+// 界面拿到 0 会走"请填写本地代理端口"的提示分支（见 NodeDialog.checkPort），
+// 属于 fail-closed：宁可让用户手填，也不给他一个必然起不来的端口。
 func (a *App) SuggestPort(excludeID string) int {
 	return a.Allocator(excludeID).Next()
 }

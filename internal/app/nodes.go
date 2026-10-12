@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"chainproxy/internal/config"
+	"chainproxy/internal/ports"
 	"chainproxy/internal/proxy"
 )
 
@@ -24,7 +25,17 @@ func (a *App) AddNode(n config.Node) (config.Node, error) {
 	// 端口分配器的 key 就是节点 ID。
 	a.cfg.NormalizeNode(&n)
 	if n.ListenPort == 0 {
-		n.ListenPort = a.allocatorLocked(n.ID).Next()
+		// 【审查 #21】分配不到端口时必须在这里停住：allocator.Next() 耗尽时
+		// 返回 ports.NoPort(0)，而 0 在**这个函数里**正好是"待自动分配"的语义，
+		// 放过去就会新增一个监听端口 0 的节点（net.Listen 遇到 0 会随便挑一个
+		// 临时端口，等于配置和实际监听完全对不上），或者写进一个 65536 之类的
+		// 非法端口，让配置校验一直报错。
+		port := a.allocatorLocked(n.ID).Next()
+		if port == ports.NoPort {
+			a.mu.Unlock()
+			return config.Node{}, fmt.Errorf("本机没有可用的本地端口（已扫到 65535），请先释放一个端口再新增")
+		}
+		n.ListenPort = port
 	}
 	if n.CreatedAt.IsZero() {
 		n.CreatedAt = time.Now()
@@ -95,7 +106,15 @@ func (a *App) CloneNode(id string) (config.Node, error) {
 	dup := src
 	dup.ID = config.NewID()
 	dup.Name = a.uniqueNameLocked(src.Name + "-副本")
-	dup.ListenPort = a.allocatorLocked("").Next()
+	// 【审查 #21】克隆也必须先确认真的分到了端口，否则会把 0（=待分配）
+	// 或 65536 这类坏端口写进配置里。dup 还没 append 进 a.cfg.Nodes，
+	// 直接解锁返回即可，配置保持原样。
+	dupPort := a.allocatorLocked("").Next()
+	if dupPort == ports.NoPort {
+		a.mu.Unlock()
+		return config.Node{}, fmt.Errorf("本机没有可用的本地端口（已扫到 65535），请先释放一个端口再克隆")
+	}
+	dup.ListenPort = dupPort
 	dup.Active = false
 	dup.CreatedAt = time.Now()
 	dup.LastUsed = time.Time{}

@@ -731,6 +731,9 @@ func (a *API) PlanActivation(ids []string) map[string]any {
 // ------------------------------------------------------------------
 
 // SuggestPort 返回"下一个默认端口"。
+//
+// 【审查 #21】没有可用端口时返回 ports.NoPort(0)，不返回没验证过的候选：
+// 界面拿到 0 会显示"请填写本地代理端口"，属于 fail-closed。
 func (a *API) SuggestPort(excludeID string) int {
 	if a.app == nil {
 		return ports.DefaultStart

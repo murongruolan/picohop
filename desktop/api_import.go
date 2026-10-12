@@ -9,6 +9,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"chainproxy/internal/config"
+	"chainproxy/internal/ports"
 	"chainproxy/internal/qrscan"
 	"chainproxy/internal/share"
 )
@@ -88,13 +89,23 @@ func (a *API) parseNodes(text, source string) ImportResult {
 	port := a.app.SuggestPort(exclude)
 	for _, n := range nodes {
 		// 每个候选都给一个默认端口；多个节点时依次顺延
+		//
+		// 【审查 #21】SuggestPort 在耗尽时返回 ports.NoPort(0)（它不再返回
+		// 没验证过的候选）。这里必须显式判 0：否则下面这个循环会从端口 0
+		// 开始一个个往后试 —— 0 永远不 Free，于是白白空扫 6 万多次 bind，
+		// 最后还把 65535 当成"建议端口"塞进导入结果。
+		// 判 0 之后 SuggestedPort 留 0、ListenPortFree=false，
+		// 由 PortOnlyDialog 退回默认起始值让用户自己确认端口。
 		p := port
-		st := a.app.PortStatus(p, exclude)
-		for !st.Free && p < 65535 {
-			p++
+		st := ports.Status{Port: p}
+		if p != ports.NoPort {
 			st = a.app.PortStatus(p, exclude)
+			for !st.Free && p < 65535 {
+				p++
+				st = a.app.PortStatus(p, exclude)
+			}
+			port = p + 1
 		}
-		port = p + 1
 
 		res.Nodes = append(res.Nodes, PendingNode{
 			Node:           n,

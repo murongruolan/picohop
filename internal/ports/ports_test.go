@@ -88,6 +88,116 @@ func TestNextSkipsBusyPort(t *testing.T) {
 	}
 }
 
+// TestNextNeverReturnsUnverifiedPort 锁死"扫不到空闲端口就返回 NoPort"。
+//
+// 【审查 #21 的回归锁】老实现有两条错误出口，都会把一个**没有验证过**的端口
+// 交给调用方，最终被原样写进节点配置，用户看到的是"节点启动失败：端口绑定失败"：
+//   - 候选顺延越过 65535（占用表里已经有 65535 时，cand = max+1 = 65536）：
+//     循环条件 `cand <= 65535` 一次都不成立，函数把 65536 原样返回；
+//   - 连扫 MaxScanAhead 次都还占着：循环结束时返回的是最后一个候选，
+//     而它的 Check 结果恰恰是"不空闲"。
+//
+// 【为什么允许返回 0】Next() 只返回 int，没有 error 出口；0 不是合法端口
+// （Check 直接判非法），任何写入路径都能一眼判出来并明确报错。
+// 返回"猜一个"的端口比返回 0 更危险：它会让一个必然起不来的端口静默进配置。
+func TestNextNeverReturnsUnverifiedPort(t *testing.T) {
+	t.Run("候选越过 65535 时返回 NoPort", func(t *testing.T) {
+		a := New()
+		a.Host = "127.0.0.1"
+		a.Start = 65535
+		// 占用表里已经有 65535 → cand = 65536，一个必然 bind 失败的端口
+		a.MarkProject(65535, "占满")
+
+		if got := a.Next(); got != NoPort {
+			t.Fatalf("候选 %d 已越过 65535，应当返回 NoPort(%d)，实际 %d",
+				65536, NoPort, got)
+		}
+	})
+
+	t.Run("扫到端口区间末尾仍占着时返回 NoPort", func(t *testing.T) {
+		// 在区间末尾拿 6 个真实监听，逼近 65535 这条硬边界
+		const n = 6
+		base := 65536 - n
+		lns := make([]net.Listener, 0, n)
+		for p := base; p <= 65535; p++ {
+			ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(p)))
+			if err != nil {
+				for _, l := range lns {
+					_ = l.Close()
+				}
+				t.Skipf("本机 %d 已被占用，跳过：%v", p, err)
+			}
+			lns = append(lns, ln)
+		}
+		defer func() {
+			for _, l := range lns {
+				_ = l.Close()
+			}
+		}()
+
+		a := New()
+		a.Host = "127.0.0.1"
+		a.Start = base
+
+		if got := a.Next(); got != NoPort {
+			t.Fatalf("%d-%d 全部被占用，应当返回 NoPort(%d)，实际 %d",
+				base, 65535, NoPort, got)
+		}
+	})
+
+	t.Run("扫描预算用尽时返回 NoPort", func(t *testing.T) {
+		// 真实占住连续的 MaxScanAhead 个端口：占用表标记做不到这件事 ——
+		// 候选起点就是"占用表里最大端口 + 1"，标记出来的端口永远落在候选之前。
+		base := freeBase(t, BaselineFloor+100, MaxScanAhead+1)
+		lns := make([]net.Listener, 0, MaxScanAhead)
+		for i := 0; i < MaxScanAhead; i++ {
+			ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(base+i)))
+			if err != nil {
+				for _, l := range lns {
+					_ = l.Close()
+				}
+				t.Fatalf("占住 %d 失败：%v", base+i, err)
+			}
+			lns = append(lns, ln)
+		}
+		defer func() {
+			for _, l := range lns {
+				_ = l.Close()
+			}
+		}()
+
+		a := New()
+		a.Host = "127.0.0.1"
+		a.Start = base
+
+		// base+MaxScanAhead 其实空闲，但它已经超出扫描预算、从未被验证 ——
+		// 老实现就是把这个"没验证过"的端口当结果返回的。
+		if got := a.Next(); got != NoPort {
+			t.Fatalf("连续 %d 个端口都占着，应当返回 NoPort(%d)，实际 %d（%d 从未被验证）",
+				MaxScanAhead, NoPort, got, base+MaxScanAhead)
+		}
+	})
+}
+
+// TestAllocateForDoesNotRegisterNoPort 锁死"没分到端口就不许登记"。
+//
+// 登记 0 会让 ProjectPorts/UsedPorts 里多出一个"0 号端口"的幽灵节点，
+// 界面上显示成本项目占用了端口 0。
+func TestAllocateForDoesNotRegisterNoPort(t *testing.T) {
+	a := New()
+	a.Host = "127.0.0.1"
+	a.Start = 65535
+	a.MarkProject(65535, "占满")
+
+	if got := a.AllocateFor("新节点"); got != NoPort {
+		t.Fatalf("没有可用端口时应当返回 NoPort(%d)，实际 %d", NoPort, got)
+	}
+	got := a.ProjectPorts()
+	if len(got) != 1 || got[0] != 65535 {
+		t.Fatalf("失败时不应登记任何端口，实际登记了 %v", got)
+	}
+}
+
 // TestCheckDetectsProjectAndSystem 覆盖占用检测的三条路径。
 func TestCheckDetectsProjectAndSystem(t *testing.T) {
 	a := New()

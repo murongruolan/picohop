@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"chainproxy/internal/config"
+	"chainproxy/internal/ports"
 )
 
 // newTestApp 造一个干净的 App 实例。
@@ -246,6 +247,42 @@ func TestPortAllocationFollowsRules(t *testing.T) {
 	// 检测：非法端口
 	if st := a.PortStatus(80, ""); st.Free {
 		t.Errorf("80 端口不应当被认作可用：%+v", st)
+	}
+}
+
+// TestAddNodeFailsWhenPortsExhausted 锁死"分配不到端口就明确报错，绝不写坏配置"。
+//
+// 【审查 #21 的回归锁】候选端口顺延越过 65535 之后，Next() 老实现会把 65536
+// 原样返回。AddNode 拿到它就当成"分配成功"，把 65536 写进节点：界面上多出一个
+// 本地端口 65536 的节点，点启动才报"绑定失败"；而配置校验（validPort）又认为
+// 65536 非法 —— 于是一个启动不了、还顶着校验错误的坏节点留在配置里。
+// 现在的约定：SuggestPort 给出 NoPort(0)，AddNode 直接报错且**一个字段都不写**。
+func TestAddNodeFailsWhenPortsExhausted(t *testing.T) {
+	a := newTestApp(t, []config.Node{
+		{ID: "a", Name: "占满", Protocol: config.ProtocolSOCKS5, ListenPort: 65535, Server: "h", Port: 1},
+	}, config.Front{})
+
+	// 读路径（界面新增对话框取默认端口）先给一个可判定的答案
+	if got := a.SuggestPort(""); got != ports.NoPort {
+		t.Fatalf("候选已越过 65535，SuggestPort 应返回 NoPort(%d)，实际 %d", ports.NoPort, got)
+	}
+
+	// 写路径必须 fail-closed：报错，且不留下任何节点
+	if _, err := a.AddNode(config.Node{
+		Name: "新节点", Protocol: config.ProtocolSOCKS5, Server: "h", Port: 1,
+	}); err == nil {
+		t.Fatal("没有可用端口时 AddNode 应当明确报错，而不是写一个必然起不来的端口")
+	}
+	if got := a.Nodes(); len(got) != 1 {
+		t.Fatalf("分配失败时不应写入节点，实际 %d 个", len(got))
+	}
+
+	// 克隆走的是同一条分配路径，同样不许写出坏端口
+	if _, err := a.CloneNode("a"); err == nil {
+		t.Fatal("没有可用端口时 CloneNode 应当明确报错")
+	}
+	if got := a.Nodes(); len(got) != 1 {
+		t.Fatalf("克隆失败时不应写入节点，实际 %d 个", len(got))
 	}
 }
 

@@ -41,6 +41,15 @@ const (
 
 	// MaxScanAhead 是"顺延找空闲端口"时的最大探测次数，避免极端情况下死循环。
 	MaxScanAhead = 512
+
+	// NoPort 是"没找到空闲端口"的返回值（审查 #21）。
+	//
+	// Next() / AllocateFor 只返回 int，没有 error 出口；用 0 当哨兵是因为
+	// 0 本来就不是合法端口（Check 直接判非法），调用方一眼就能判出来。
+	// 【别改成"返回最后一个候选"】那个候选的 Check 结果恰恰是"不空闲"，
+	// 或者已经越过 65535 —— 调用方会把它当成功结果写进节点配置，
+	// 用户看到的是"节点启动失败：端口绑定失败"，且坏端口已经落盘。
+	NoPort = 0
 )
 
 // Status 是一次端口检测的完整结果。
@@ -102,6 +111,17 @@ func (a *Allocator) MarkProject(port int, name string) {
 // Next 返回下一个建议使用的端口。
 //
 // 规则：max(所有 >= 10800 的端口, Start-1) + 1，然后顺延到第一个真正空闲的端口。
+//
+// 顺延不到就返回 NoPort(0) —— **只有确认空闲的端口才会被返回**。
+// 【审查 #21】老实现在循环结束后 `return cand`，有两个坏出口：
+//   - 占用表里已经有 65535（或 Start 就是 65535）时 cand = 65536，
+//     循环条件一次都不成立，直接把 65536 返回出去；
+//   - 连扫 MaxScanAhead 次都还占着时，返回的是最后一个**没验证过**的候选，
+//     它可能正被本机别的程序占着。
+//
+// 这两种返回值都会被调用方当成"分配成功"写进节点配置，最终表现为
+// "节点启动失败：端口绑定失败"，而且坏端口已经落盘。
+// 宁可返回 0 让界面明确提示"没有可用端口"，也不要猜一个端口。
 func (a *Allocator) Next() int {
 	start := a.Start
 	if start < 1024 {
@@ -125,7 +145,8 @@ func (a *Allocator) Next() int {
 		}
 		cand++
 	}
-	return cand
+	// 扫到区间尽头（cand > 65535）或扫描预算用尽：没有可用端口
+	return NoPort
 }
 
 // Check 检测端口是否可用。
@@ -225,8 +246,14 @@ func (a *Allocator) RandomFree() (int, error) {
 var ErrNoFreePort = fmt.Errorf("多次随机仍未随机到空闲端口")
 
 // AllocateFor 为"新增一个节点"分配默认端口，并把它登记进占用表。
+//
+// 没有可用端口时返回 NoPort(0)，并且**不登记任何东西**：
+// 登记 0 会让 ProjectPorts/UsedPorts 里多出一个"0 号端口"的幽灵占用项。
 func (a *Allocator) AllocateFor(name string) int {
 	p := a.Next()
+	if p == NoPort {
+		return NoPort
+	}
 	a.MarkProject(p, name)
 	return p
 }
