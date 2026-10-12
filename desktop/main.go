@@ -56,6 +56,17 @@ func main() {
 	//
 	// 取值：addnode / edit / settings / import / logs / share / portonly /
 	//       contextmenu / notify / columns / enterkey / resize / dialogdrag
+	//
+	// 【安全】收紧数据目录的权限，必须在 application.New 之前：
+	// WebView2 的用户数据目录（data\webview）是在那一步里创建/打开的，
+	// 先把 data\ 收紧，它才会继承到"当前用户 + Administrators + SYSTEM"，
+	// 而不是继承盘符根目录那条 Authenticated Users（同机任何本地用户可读写）。
+	// 失败不阻断启动（数据目录可能落在没有 NTFS ACL 的分区上），但要说清楚。
+	// 详见 internal/config/datadir.go 的 EnsureDataDir。
+	if err := config.EnsureDataDir(); err != nil {
+		fmt.Fprintf(os.Stderr, "警告：数据目录权限没能收紧（%v），其他本地用户可能读到里面的凭据\n", err)
+	}
+
 	api := NewAPI(parseBootFlag("open"))
 	notif := notifications.New()
 

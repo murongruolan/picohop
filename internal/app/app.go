@@ -135,11 +135,28 @@ func New(cfgPath string) (*App, error) {
 		lastDay:       config.Today(),
 	}
 
+	// 【安全】先把数据目录收紧到"当前用户 + Administrators + SYSTEM"再往里写东西。
+	//
+	// 为什么卡在这个位置：data\ 里是**全套凭据**（config.json），而它默认建在仓库
+	// 目录下、继承盘符根目录那条 `Authenticated Users:(M)` —— 同机任何一个本地用户
+	// 都能读改。这里必须早于日志文件被创建：晚一步，chainproxy.log（里面有本机出口
+	// IP 与节点别名）就会带着宽松的继承权限落盘。详见 config.EnsureDataDir。
+	//
+	// 失败不阻断启动（数据目录可能被指到 FAT/网络盘上，那里没有 NTFS ACL），
+	// 但**绝不能静默**：stderr 与日志各留一条警告。
+	hardenErr := config.EnsureDataDir()
+	if hardenErr != nil {
+		fmt.Fprintf(os.Stderr, "警告：数据目录权限没能收紧（%v），其他本地用户可能读到里面的凭据\n", hardenErr)
+	}
+
 	if f, err := os.OpenFile(config.LogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
 		a.logFile = f
 		a.logger = log.New(f, "", log.LstdFlags)
 	} else {
 		a.logger = log.New(os.Stderr, "", log.LstdFlags)
+	}
+	if hardenErr != nil {
+		a.logger.Printf("警告：数据目录权限没能收紧（%v）：其他本地用户可能读到 config.json 里的凭据", hardenErr)
 	}
 
 	a.rollDayLocked()

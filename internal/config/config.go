@@ -807,6 +807,10 @@ func (c *Config) normalize() {
 // `go run ./cmd/chainproxy validate` 生成的可执行文件位于 Go 构建缓存里，
 // 按 exe 同级目录算会得到一个**缓存目录里的 data\**，于是命令行读到的
 // 和界面读到的根本不是同一份配置 —— 这个坑实测踩过一次。
+//
+// 【安全】这个目录里放着全套凭据，权限由 EnsureDataDir 收紧到
+// "当前用户 + Administrators + SYSTEM"（见 datadir.go / datadir_windows.go），
+// 不要绕过它自己去创建目录。
 func DataDir() string {
 	if v := strings.TrimSpace(os.Getenv("CHAINPROXY_DATA_DIR")); v != "" {
 		return v
