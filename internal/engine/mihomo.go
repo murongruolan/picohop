@@ -9,7 +9,7 @@ package engine
 // 所以这里只把它当**拨号器库**用：每个节点建一个**独立出站实例**，
 // 直接调 DialContext / ListenPacketContext，**不经 hub.Parse、不建 inbound**。
 // 这一点在迁移第 1 轮已用探针实测过（独立拨通 xhttp + REALITY 节点并拿到 204）：
-//   ✅ 隧道建立（382 ms）-> 204.197.163.238:30022
+//   ✅ 隧道建立（382 ms）-> 203.0.113.10:30022
 //   ✅ 响应首行：HTTP/1.1 204 No Content
 //
 // 【前置（链式代理）怎么表达】mihomo 的常规做法是 dialer-proxy，那要一个全局 hub；

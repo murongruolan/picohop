@@ -19,7 +19,7 @@ func TestAppendReadSocks5AddrRoundTrip(t *testing.T) {
 		{"1.2.3.4", 8080},
 		{"2001:db8::1", 443},
 		{"api.ipify.org", 443},
-		{"hk.rrp.bestgo.work", 10000},
+		{"node-a.example.com", 10000},
 	}
 	for _, c := range cases {
 		buf, err := appendSocks5Addr([]byte{0x05, 0x01, 0x00}, c.host, c.port)
@@ -130,8 +130,8 @@ func TestParseUDPHeader(t *testing.T) {
 
 // TestParseProxySpec 在 config 包之外做一次冒烟检查，防止格式解析回归。
 func TestSplitHostPort(t *testing.T) {
-	h, p, err := SplitHostPort("hk.rrp.bestgo.work:10000", 1080)
-	if err != nil || h != "hk.rrp.bestgo.work" || p != 10000 {
+	h, p, err := SplitHostPort("node-a.example.com:10000", 1080)
+	if err != nil || h != "node-a.example.com" || p != 10000 {
 		t.Fatalf("got %s:%d err=%v", h, p, err)
 	}
 	h, p, err = SplitHostPort("example.com", 1080)

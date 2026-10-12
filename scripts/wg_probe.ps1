@@ -1,4 +1,4 @@
-﻿# WireGuard 通道探测：定时向目标 UDP 端口发送带标记的包，便于在服务端抓包定位。
+# WireGuard 通道探测：定时向目标 UDP 端口发送带标记的包，便于在服务端抓包定位。
 #
 # 用途：当"握手超时"时，用它区分两类完全不同的故障：
 #   · 服务端 tcpdump 能看到这些包  -> 网络与端口映射都正常，问题在 WireGuard 层
@@ -6,7 +6,7 @@
 #   · 服务端 tcpdump 什么都看不到  -> NAT 映射或防火墙把入站 UDP 丢了
 #
 # 用法：
-#   .\scripts\wg_probe.ps1                          # 默认打 204.197.163.238:31496，每秒一个，共 30 个
+#   .\scripts\wg_probe.ps1                          # 默认打 203.0.113.10:31496，每秒一个，共 30 个
 #   .\scripts\wg_probe.ps1 -Host 1.2.3.4 -Port 51820 -Count 20
 #
 # 服务端同时执行（容器内注意端口是 51820，宿主机看映射后的端口）：
@@ -15,7 +15,7 @@
 #   sudo tcpdump -ni any udp port 31496 -X
 
 param(
-    [string]$TargetHost = '204.197.163.238',
+    [string]$TargetHost = '203.0.113.10',
     [int]$TargetPort = 31496,
     [int]$Count = 30,
     [int]$IntervalMs = 1000
