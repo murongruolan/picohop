@@ -564,13 +564,33 @@ func (a *App) startNode(id string) error {
 		return err
 	}
 
+	// 【为什么必须先把旧服务摘出来、放锁之后才 Stop】
+	// Stop() 会关监听、断开全部活动连接，并等内核把实例排空
+	// （WireGuard 还要等收包协程退出、sing-box/mihomo 要等实例关闭），
+	// 是一个**阻塞**调用。a.mu 是全局写锁，界面上的每一次读取
+	// （节点列表、统计、端口自检）都得先拿它 —— 持着锁去 Stop，
+	// 整个窗口就会跟着卡住，看起来就是"点了启动之后界面冻死"。
+	//
+	// 旧服务确实可能还在运行：从 startNode 读配置到抢锁发布之间没有锁保护，
+	// 期间设置/节点可能已被改动或被另一次激活抢先发布，于是这里的
+	// a.servers[id] 会是一个**监听地址与当前配置已经不同**、但仍在跑的实例。
+	//
+	// 【顺序】先在锁内发布新服务（任何时刻 map 里都是最新的那个），
+	// 放锁后再停旧服务：
+	//   - 反过来先停旧再发布，会给并发的 stopNode 留一个"map 里没有服务"
+	//     的窗口，它停不掉任何东西，随后我们发布出去的新服务就没人管了
+	//     （一直在监听、界面也停不掉）；
+	//   - 先发布则不会漏掉新服务，而多停一次旧服务是无害的 ——
+	//     Server.Stop 内部有 started 守卫，重复调用直接返回。
 	a.mu.Lock()
-	if old := a.servers[id]; old != nil {
-		_ = old.Stop()
-	}
+	old := a.servers[id]
 	a.servers[id] = srv
 	delete(a.errs, id)
 	a.mu.Unlock()
+
+	if old != nil {
+		_ = old.Stop()
+	}
 
 	a.Logf("「%s」已启动，监听 %s（前置：%s；出口：%s）",
 		n.Name, srv.Addr(), a.DescribeFront(n), n.Describe())
