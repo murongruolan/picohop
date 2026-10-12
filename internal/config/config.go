@@ -81,6 +81,12 @@ type Settings struct {
 	// 启动时先还原系统代理、把这个开关置回 false，由用户点一下再开（见 docs）。
 	GlobalNodeID string `json:"globalNodeId"`
 	SystemProxy  bool   `json:"systemProxy"`
+	// EngineMode 选择代理内核：空串 / "singbox"（默认）= 内嵌 sing-box；
+	// "mihomo" = 优先用 mihomo，**接不了的节点自动回退 sing-box**。
+	//
+	// 【为什么默认 sing-box】换装分步走：新内核先只在明确打开时启用，
+	// 任何时刻都不会因为换装而少一个可用节点（见 docs/MIHOMO_MIGRATION.md）。
+	EngineMode string `json:"engineMode"`
 
 	// ---- 底部栏目 ----
 	//

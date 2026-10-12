@@ -391,6 +391,19 @@ NewUpstream 在五个 sing-box 协议分支之前插入：mode == "mihomo" 且 m
 **还没做**：应用侧读 Settings.EngineMode 调 SetEngineMode；第 ⑤ 步后半（把默认翻成 mihomo）；
 第 ⑥ 步（清依赖/构建标记 + 重测实际打包体积）。
 
+### 第 ⑭ 轮：应用侧接线（第 ⑤ 步后半的一半）
+
+`Settings.EngineMode`（json: `engineMode`，默认空串）落地；`app.New()` 在读配置之后、
+**任何节点被创建之前**调用 `proxy.SetEngineMode(cfg.Settings.EngineMode)`。
+
+读法：在 `data/config.json` 里把 `settings.engineMode` 写成 `"mihomo"` 即启用新内核，
+留空或写 `"singbox"` 就是原来的行为。**接不了的节点会自动回退并写日志**。
+
+单测 `TestEngineModeJSON` 锁死：老配置缺这个字段时读出来必须是空串（=sing-box），
+序列化名字必须是 `engineMode` —— 默认值一旦"自动打开新内核"，那是灾难性的默认。
+
+**还没做**：界面上的开关（现在要改配置文件）；把默认翻成 mihomo；第 ⑥ 步。
+
 ### 第 ⑩ 轮：UDP 试做后被实测否掉 —— 设计要件是"按目标建通道"
 
 按第 ⑨ 轮的思路写了 `mihomo_udp.go`（`C.PacketConn` → `proxy.UDPChannel`）并接上 `DialUDP`，

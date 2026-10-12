@@ -115,6 +115,9 @@ func New(cfgPath string) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	// 【引擎选择】必须在任何节点被创建之前生效（New 之后马上会有人调 AutoActivate）。
+	// 配置里没写就是空串 -> sing-box（与换装前行为一致）。
+	proxy.SetEngineMode(cfg.Settings.EngineMode)
 	a := &App{
 		cfg:      cfg,
 		cfgPath:  cfgPath,
