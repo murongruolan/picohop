@@ -527,6 +527,16 @@ func (a *API) ResetSettings() (config.Settings, error) {
 		a.app.Logf("恢复默认设置：先把系统代理还原成原来的设置")
 	}
 	d := config.Default().Settings
+	// 【底部栏的布局偏好不参与"恢复默认"】
+	//
+	// 这三项不是"设置项"，而是"上次看到哪儿"：展开/收起、停在哪个页签、拖了多高。
+	// 用 Default().Settings 整个盖上就等于让用户点一次按钮就永久丢掉它，
+	// 现象与"偏好根本没落盘"一模一样（用户实报过：重启后不是展开的、也不是上次那个页签）。
+	// 所以只重置真正的行为设置，布局偏好原样带过去。
+	cur := a.app.Settings()
+	d.BottomPanelOpen = cur.BottomPanelOpen
+	d.BottomPanelView = cur.BottomPanelView
+	d.BottomPanelHeight = cur.BottomPanelHeight
 	if err := a.app.SetSettings(d); err != nil {
 		return d, err
 	}

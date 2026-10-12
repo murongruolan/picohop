@@ -20,6 +20,22 @@ export const useUi = defineStore('cp-ui', {
   // 由外部（自测入口）指定底部栏要展开到哪个视图 / 日志页签；
   // 组件内部状态没法从外面驱动，所以走"意向"再让组件消费一次。
   bottomLogTab: '',
+    /**
+     * 底部栏要展开到哪个视图（外部意向，幂等：见 BottomPanel 的 show()）。
+     *
+     * 必须在这里声明成初始 state：以前它是"用到时才被赋上"的，
+     * 靠 Proxy 也能触发 watcher，但没人看得出一共有哪些界面意向。
+     */
+    bottomPanelView: '',
+    /**
+     * devDriven 表示"当前这一轮是自测入口在驱动界面"（启动参数 -open <面板名>）。
+     *
+     * 【为什么要有这个标记】自测为了截图会去点/切各种界面元素，其中底部栏的
+     * 展开与页签是**用户的持久偏好** —— 让脚手架把它写进配置，等于验证行为本身
+     * 擦掉了用户状态（实测：-open globaltag 会把 bottomPanelOpen 写成 false）。
+     * 所以带这个标记时，界面照常变，但不落盘。
+     */
+    devDriven: false,
     /** 添加/编辑节点对话框 */
     nodeDialog: { open: false, mode: 'add', node: null, fromImport: false },
     /**

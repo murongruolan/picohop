@@ -174,6 +174,18 @@ onMounted(async () => {
  */
 async function handleDevOpen(name) {
   if (!name) return
+  // 【自测入口不许改用户状态】
+  //
+  // 这一整段是**验证脚手架**：为了截图/断言，它会去切底部栏的视图、点按钮、
+  // 改表单里的值。其中底部栏的展开 / 页签 / 高度是用户的持久偏好（写在配置里），
+  // 被脚手架改了就是"验证擦掉了用户状态"——实测两例（都发生在真实的 data\config.json 上）：
+  //   · -open globaltag：面板本来就停在日志视图时，切过去被当成"点当前页签"→ 写成 bottomPanelOpen=false，
+  //     用户下次启动看到的是收起的；
+  //   · -open bottompanel：把 bottomPanelView 从 sites 改成 logs。
+  // 所以进入自测就打个标记，界面照常驱动，但 BottomPanel 不再把偏好写回配置。
+  // 需要**验证**偏好持久化时请用 scripts\test_panel_prefs.ps1（它在临时数据目录上跑）。
+  ui.devDriven = true
+
   const first = store.nodes[0]
   switch (name) {
     case 'addnode':
@@ -565,6 +577,8 @@ async function handleDevOpen(name) {
     case 'bottompanel': {
       // 先切到别的视图再切日志：直接设 "logs" 时若本来就停在日志视图，
       // 面板会按"点当前视图 = 收起"的逻辑收起来（我第一次自测就栽在这里）。
+      // 现在外部意向走的是幂等的 show()（不再会收起），这里保留两次切换只是为了
+      // 让页面先重绘一次，截图更稳定。
       ui.bottomPanelView = 'traffic'
       await new Promise((r) => setTimeout(r, 500))
       ui.bottomPanelView = 'logs'

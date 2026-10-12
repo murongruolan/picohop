@@ -52,6 +52,15 @@ function loadColumnWidths() {
 export const useStore = defineStore('cp', {
   state: () => ({
     ready: false,
+    /**
+     * settingsLoaded 表示 store.settings 里装的是**从后端读回来的真实配置**，
+     * 而不是"还没加载完时的空对象"。
+     *
+     * 【为什么需要这个标记】设置是异步加载的（App.vue 的 onMounted 里 await init()），
+     * 而界面在加载完之前就能点。凡是"改设置并写回"的地方都必须以它为门闩，
+     * 否则会把一份残缺的（其余字段全是零值）设置对象写回配置 —— 那就是"自我擦除"。
+     */
+    settingsLoaded: false,
     nodes: [],
     summary: {},
     meta: {},
@@ -117,7 +126,10 @@ export const useStore = defineStore('cp', {
     async init() {
       try {
         this.meta = await api.getMeta()
-        this.settings = await api.getSettings()
+        this.settings = (await api.getSettings()) || {}
+        // 【置位必须紧跟赋值】置位之后"写设置"这条路才算打开；
+        // 之前写入的都会被认为"这不是完整配置"而拒绝（见 BottomPanel.persist）。
+        this.settingsLoaded = true
         this.front = await api.getFront()
         // 主题以**配置文件**为准（localStorage 只是缓存）：
         // 这样直接改 config.json 换主题也能生效，清了浏览器数据也不会丢。

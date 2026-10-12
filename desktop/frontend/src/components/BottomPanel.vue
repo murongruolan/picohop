@@ -43,11 +43,16 @@ const height = ref(260)
 // 渲染阶段就 setup 了 —— 那时读到的是空对象，于是"上次展开的状态"永远恢复不了。
 // 实测踩过：data/config.json 里明明是 bottomPanelOpen=true，重启后却是收起的。
 // 这里改成"等设置真的到了再初始化一次"。
+//
+// 判据必须是 store.settingsLoaded（由 store.init 在 getSettings 成功后置位），
+// **不能**是"store.settings 非空"：面板自己的 persist() 也会往 store.settings 里写，
+// 于是设置还没加载完时的一次点击就能塞进一个残缺对象，把初始化"骗"过去
+// （之后真实配置到了也不会再应用一次，那一整轮面板都停在默认值上）。
 let prefReady = false
 watch(
-  () => store.settings,
+  () => (store.settingsLoaded ? store.settings : null),
   (s) => {
-    if (prefReady || !s || !Object.keys(s).length) return
+    if (prefReady || !s) return
     prefReady = true
     view.value = s.bottomPanelView || 'logs'
     open.value = !!s.bottomPanelOpen
@@ -66,11 +71,47 @@ function persist() {
     bottomPanelOpen: open.value,
   }
   store.settings = s
+
+  // 【门闩 1：设置没加载完，不许写回】
+  //
+  // 这一条防的是"自我擦除"：设置是异步加载的，加载完之前 store.settings 是空对象，
+  // 这时 persist() 拼出来的"设置"只有面板三项、其余全是零值。
+  // 后端 SaveSettings 会因 portStart=0 拒绝它（错误被下面的 catch 吞掉，磁盘侥幸没被改），
+  // 但那次 store.settings 的赋值已经让面板再也读不到真实配置了 ——
+  // 表现就是"这一轮开机后，上次的展开状态与页签莫名其妙丢了"。
+  // 与其依赖后端的校验兜底，不如在源头就不写。
+  if (!store.settingsLoaded) return
+
+  // 【门闩 2：自测入口驱动时不写】
+  //
+  // `-open <面板名>`（见 App.vue 的 handleDevOpen）为了截图会把面板切到某个视图，
+  // 而它走的就是 persist() 这条路 —— 也就是说**验证脚手架会改写用户的偏好**，
+  // 实测：`-open globaltag` 在"面板本来就停在日志"时会把 bottomPanelOpen 写成 false，
+  // 用户下次启动就是收起的；`-open bottompanel` 会把视图改成日志。
+  // 这类自测不是用户意图，只改界面、不落盘。
+  if (ui.devDriven) return
+
   api.saveSettings(s).catch(() => {})
 }
 
 function toggle(next) {
   open.value = next === undefined ? !open.value : next
+  persist()
+}
+
+/**
+ * 展开到指定视图（**幂等**）。
+ *
+ * 【为什么必须有它，而不是复用 pick()】pick() 的语义是"点了一下这个页签"：
+ * 点在当前视图上 = 收起（用户手点的约定，见 BOTTOM_PANEL.md）。
+ * 而"从别处要求切到底部栏的某个页"（自测入口、设置里的「底部栏 → 网络设置」跳转）
+ * 是**外部意图**，必须幂等：否则面板已经停在那一页时，切过去反而把它收起来了。
+ * 实测踩过两次（App.vue 里为此写过"先切到别的视图再切回来"的绕法），
+ * 绕法每多一个入口就要重写一遍，所以这里从根上分开两种语义。
+ */
+function show(key) {
+  view.value = key
+  open.value = true
   persist()
 }
 
@@ -341,7 +382,8 @@ watch(
 watch(
   () => ui.bottomPanelView,
   (v) => {
-    if (v) pick(v)
+    // 外部意图 → 幂等的 show()，不是手点语义的 pick()（理由见 show() 的注释）
+    if (v) show(v)
     ui.bottomPanelView = ''
   },
 )
