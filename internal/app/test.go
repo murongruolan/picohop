@@ -257,8 +257,10 @@ func (a *App) updateTest(id, kind string, latencyMs int64, speed float64, exitIP
 		switch kind {
 		case TestTCP:
 			a.cfg.Nodes[idx].LatencyMs = latencyMs
+			a.cfg.Nodes[idx].LatencyKind = "tcp"
 		case TestReal:
 			a.cfg.Nodes[idx].RealMs = latencyMs
+			a.cfg.Nodes[idx].LatencyKind = "real"
 		case TestSpeed:
 			a.cfg.Nodes[idx].SpeedMBps = speed
 		case TestExit:

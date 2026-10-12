@@ -42,6 +42,13 @@ const stateLabel = computed(() => {
 })
 
 /** 延迟分档着色：<300 绿 / <800 橙 / 其余红，一眼看出快慢。 */
+// 「延迟」列显示最后一次测试的结果：测真连接就显示真连接、测 TCP 就显示 TCP。
+// 用后端给的 latencyKind 判断哪次在后（每次测试都会更新它）。
+function latestLatency(r) {
+  if (!r) return 0
+  return r.latencyKind === 'real' ? r.realMs || 0 : r.latencyMs || 0
+}
+
 function latencyClass(v) {
   if (!v || v <= 0) return 'cp-dim'
   if (v < 300) return 'cp-lat-good'
@@ -107,9 +114,9 @@ async function copyPort() {
 
   <!-- 延迟 -->
   <template v-else-if="col === 'latency'">
-    <el-icon v-if="testingFor('tcp')" class="cp-spin"><Loading /></el-icon>
-    <span v-else-if="row.latencyMs" class="cp-num" :class="latencyClass(row.latencyMs)">
-      {{ formatMs(row.latencyMs) }}
+    <el-icon v-if="testingFor('tcp') || testingFor('real')" class="cp-spin"><Loading /></el-icon>
+    <span v-else-if="latestLatency(row)" class="cp-num" :class="latencyClass(latestLatency(row))">
+      {{ formatMs(latestLatency(row)) }}
     </span>
     <span v-else class="cp-dim">—</span>
   </template>

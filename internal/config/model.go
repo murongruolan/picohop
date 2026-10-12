@@ -204,9 +204,13 @@ type Node struct {
 	LastUsed time.Time `json:"lastUsed,omitempty"`
 
 	// 最近一次测试结果缓存
-	LatencyMs int64   `json:"latencyMs,omitempty"` // TCP 延迟
-	RealMs    int64   `json:"realMs,omitempty"`    // 真连接延迟
-	SpeedMBps float64 `json:"speedMBps,omitempty"`
+	// LatencyKind 记住最后一次测试的种类（tcp / real）。
+	// 界面上的「延迟」列只显示一个值，靠它决定显示 LatencyMs 还是 RealMs：
+	// 用户要的是「测真连接就显示真连接、测 TCP 就显示 TCP」，谁最后测谁覆盖。
+	LatencyKind string  `json:"latencyKind,omitempty"`
+	LatencyMs   int64   `json:"latencyMs,omitempty"` // TCP 延迟
+	RealMs      int64   `json:"realMs,omitempty"`    // 真连接延迟
+	SpeedMBps   float64 `json:"speedMBps,omitempty"`
 
 	// ---- 今日统计（双向） ----
 	// StatsDay 是统计归属的日期（本地时区 "2006-01-02"）；

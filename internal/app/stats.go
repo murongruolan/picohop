@@ -37,9 +37,11 @@ type NodeView struct {
 	StateLabel string `json:"stateLabel"`
 	Detail     string `json:"detail"`
 
-	LatencyMs int64   `json:"latencyMs"`
-	RealMs    int64   `json:"realMs"`
-	SpeedMBps float64 `json:"speedMbps"`
+	LatencyMs int64 `json:"latencyMs"`
+	// LatencyKind 见 config.Node，界面靠它决定「延迟」列显示哪个值
+	LatencyKind string  `json:"latencyKind"`
+	RealMs      int64   `json:"realMs"`
+	SpeedMBps   float64 `json:"speedMbps"`
 	// ExitIP 是最近一次"出口 IP"测试的结果（不落盘）。
 	ExitIP string `json:"exitIp"`
 
@@ -164,6 +166,7 @@ func (a *App) buildView(n config.Node, st *proxyStats, errMsg string) NodeView {
 		State:         StateStopped,
 		StateLabel:    "未激活",
 		LatencyMs:     n.LatencyMs,
+		LatencyKind:   n.LatencyKind,
 		RealMs:        n.RealMs,
 		SpeedMBps:     n.SpeedMBps,
 		TodayUp:       n.UpBytes,

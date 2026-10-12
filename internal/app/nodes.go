@@ -97,7 +97,7 @@ func (a *App) CloneNode(id string) (config.Node, error) {
 	dup.Active = false
 	dup.CreatedAt = time.Now()
 	dup.LastUsed = time.Time{}
-	dup.LatencyMs, dup.RealMs, dup.SpeedMBps = 0, 0, 0
+	dup.LatencyMs, dup.RealMs, dup.SpeedMBps, dup.LatencyKind = 0, 0, 0, ""
 	dup.UpBytes, dup.DownBytes, dup.StatsDay = 0, 0, config.Today()
 	a.cfg.Nodes = append(a.cfg.Nodes, dup)
 	a.mu.Unlock()
