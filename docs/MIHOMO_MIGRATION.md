@@ -213,6 +213,27 @@ type XHTTPOptions struct {
 ```
 即：**`internal/engine.MihomoUpstream` 能起、能拨通 xhttp + REALITY 节点、能过真实流量。**
 
+### 第 ⑤ 轮：其余四协议的选项字段（已读实，供实现直接照抄）
+
+> 本轮**补丁未落盘**：写好的补丁脚本随 `.cache` 被清空而丢失（见文末"意外"）。
+> 下面这些字段是从 mihomo 源码逐个读出来的事实，**下次实现直接用，不必重读**。
+
+| 协议 | mihomo 选项结构 | 关键字段（我们配置 → 它） |
+|---|---|---|
+| VMess | `outbound.VmessOption` | `Name/Server/Port/UUID/AlterID`；**加密方式：我们叫 `Security` → 它叫 `Cipher`**；`TLS/ServerName/UDP/Network`；传输：`WSOpts/GrpcOpts/HTTPOpts/HTTP2Opts/XHTTPOpts` |
+| Trojan | `outbound.TrojanOption` | `Name/Server/Port/Password`；**SNI 字段名是 `SNI`**（不是 ServerName）；`ALPN/UDP/Network`；`ClientFingerprint` ✓；传输：仅 `GrpcOpts/WSOpts` |
+| Shadowsocks | `outbound.ShadowSocksOption`（注意大小写：**ShadowSocks**） | `Name/Server/Port/Password/Cipher/UDP`；无传输层 |
+| Hysteria2 | `outbound.Hysteria2Option` | `Name/Server/Port/Password/SNI/Obfs/ObfsPassword`；**`Up`/`Down` 是带单位的字符串**（如 "100 Mbps"），我们配置里是整数 Mbps → 要格式化；为 0 时不写 |
+
+**构造函数名**（已确认）：`NewVless` / `NewVmess` / `NewTrojan` / **`NewShadowSocks`**（不是 `NewShadowsocks` ——
+第 1 轮的探针编译错误 `undefined: outbound.NewShadowsocks` 正好反证了正确拼写）/ `NewHysteria2`。
+
+**实现要点（本轮已想清，直接照做）**：
+1. 四个映射函数与 `vlessOption` 同一套路：**纯函数**（可表驱动单测）；
+2. 传输支持按各结构体**实际有**的选项字段放行（vmess 全六种；trojan 只 ws/grpc；ss/hysteria2 无传输层），
+   其余组合返回明确错误，不要静默忽略；
+3. `mihomoSupports` 同步放行这四种协议（当前只放行 vless）。
+
 ### 第 ④ 步剩余项（下一轮）
 1. 其余协议：`vmess` / `trojan` / `shadowsocks` / `hysteria2` 的映射与构造（形状照 vless）。
 2. **UDP**：`ListenPacketContext` → 包成 `proxy.UDPChannel`（`SendToUDP`/`ReceiveFromUDP` + quit 语义）。
@@ -227,3 +248,21 @@ type XHTTPOptions struct {
 
 - `chainproxy-cli.exe run --help` 会把 `--help` 当普通参数**真的执行 `run`**（会激活节点并保存配置）。
   用户："cli 也就是你自己能用…除非还要提供 linux 版本" → **暂不修**，等确定要不要出 Linux 版再说。
+---
+
+## 6. 意外记录：`.cache` 被清空（第 5 轮）
+
+第 5 轮准备落地"其余四协议映射"时发现：**`.cache` 下我这一会话建的东西全没了** ——
+补丁脚本、`.cache/mihomo-meta`（mihomo 源码克隆）、`.cache/shots`（验证截图）、
+以及 `gomod/gobuild` 的部分内容。表现：`go build` 重新下载了一批模块（随后成功）。
+
+**影响与处置**：
+  - 工作区**干净**、`go build ./...` 与全部测试**仍绿**（`git status` 为空）→ 没有半成品状态；
+  - mihomo 依赖仍在 `go.mod`（v1.19.32），模块缓存会自动重下 → **不影响后续构建**；
+  - A/B 实测数据的**归档在 `docs/bench/`（已提交）**，不受影响；
+  - 源码级事实（选项字段、构造函数名、传输映射）已全部写入本文档 → **不依赖那个克隆存在**；
+  - 需要重读 mihomo 源码时（例如接 UDP 要看 `PacketConn` 接口），按第 1 轮的做法重新
+    `git clone --branch Meta` 即可（`main` 分支是另一个 Python 项目，别克隆错）。
+  - **原因未查明**（可能是外部清理/磁盘空间策略）。不猜测；但它提醒一件事：
+    **凡是不想丢的结论，必须落到仓库里（docs/），而不是留在 `.cache`。**
+
