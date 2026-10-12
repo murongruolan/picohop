@@ -17,4 +17,8 @@ func disableSystemProxy() error      { return nil }
 func restoreSystemProxyIfNeeded() bool {
 	return false
 }
+
+// systemProxyBackupExists 在非 Windows 上一律为假：这边根本没有"改过系统代理"
+// 这回事，也就不会有备份文件（判据含义见 sysproxy_windows.go）。
+func systemProxyBackupExists() bool { return false }
 func systemProxyIsOurs(string) bool { return false }

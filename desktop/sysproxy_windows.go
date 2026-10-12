@@ -163,6 +163,17 @@ func loadSysProxySnapshot() (*sysProxySnapshot, error) {
 	return &s, nil
 }
 
+// systemProxyBackupExists 返回"改注册表之前留下的那份备份还在不在"。
+//
+// 它存在的意义是当判据用：这份文件由 enableSystemProxy 在**动注册表之前**落盘、
+// 由 disableSystemProxy 在还原**成功后**删除，所以"文件还在"就是"注册表确实被
+// 我们改过、而且还没还原"唯一的物证 —— 比配置里那个开关可靠（开关会被整体覆盖
+// Settings 的操作清成 false，见 api.go 里 systemProxyNeedsRestore 的注释）。
+func systemProxyBackupExists() bool {
+	_, err := os.Stat(sysProxySnapshotPath())
+	return err == nil
+}
+
 // restoreSystemProxyIfNeeded 在启动时调用：如果上次没还原干净（崩溃/被强杀），自愈。
 //
 // 返回 true 表示确实做了一次还原（调用方应当写进日志/通知用户）。

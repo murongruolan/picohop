@@ -132,8 +132,14 @@ func (a *API) ServiceStartup(ctx context.Context, options application.ServiceOpt
 // ServiceShutdown 是 Wails v3 的服务关闭钩子（v2 里是 OnShutdown）。
 func (a *API) ServiceShutdown() error {
 	// 退出前一定要把系统代理还回去：这是**进程外**的状态，漏了就是用户整机断网。
+	//
+	// 【判据不是设置里的开关】SystemProxy 只是"用户想开全局代理"的意图，它会被
+	// 别的操作整体覆盖掉 —— 「恢复默认设置」就是用 Default().Settings 整个盖上
+	// （里面 SystemProxy 是 false），而注册表没人动。这时若只看开关就会跳过还原：
+	// 程序一关、注册表还指着 127.0.0.1:<节点端口>，用户整机断网（审查 #5）。
+	// 所以判据交给 systemProxyNeedsRestore（备份文件还在 = 注册表确实被改过）。
 	if a.app != nil {
-		if a.app.Settings().SystemProxy {
+		if systemProxyNeedsRestore(a.app.Settings().SystemProxy) {
 			if err := disableSystemProxy(); err != nil {
 				log.Printf("退出时还原系统代理失败：%v", err)
 			}
@@ -146,6 +152,19 @@ func (a *API) ServiceShutdown() error {
 		a.app.Close()
 	}
 	return nil
+}
+
+// systemProxyNeedsRestore 判断"要不要把系统代理还回去"。
+//
+// 【为什么不能只看开关】开关会被「恢复默认设置」这类整体覆盖 Settings 的操作
+// 清成 false，而注册表还被我们改着（见 ServiceShutdown 的注释）。
+// 第二项判据——备份文件还在——才是"我们确实改过注册表且没还原"的物证：
+// enableSystemProxy 是先落盘备份再改注册表，disableSystemProxy 是还原成功才删备份。
+//
+// 【为什么不能干脆无条件还原】没开过全局代理、也没备份时，我们从没碰过注册表；
+// 这时还原会把**用户自己**（或别的软件）配的系统代理清掉，等于换一种方式断网。
+func systemProxyNeedsRestore(flagOn bool) bool {
+	return flagOn || systemProxyBackupExists()
 }
 
 // reportShellStatus 把托盘/快捷键的初始化结果写进日志，并补投攒下的告警。
@@ -490,6 +509,18 @@ func (a *API) ShortcutStatuses() []ShortcutStatus {
 func (a *API) ResetSettings() (config.Settings, error) {
 	if a.app == nil {
 		return config.Settings{}, fmt.Errorf("应用尚未就绪")
+	}
+	// 【为什么恢复默认前要先还系统代理】Default().Settings 里 SystemProxy=false，
+	// 直接覆盖就成了"设置说没开、注册表和备份文件还在"两份说法；更要命的是
+	// 退出时的还原会因此被跳过，用户一关程序就整机断网（审查 #5）。
+	// 所以先还注册表，成功了再写设置；还不了就整体失败（fail-closed），
+	// 绝不留下"界面显示关了、实际还开着"的状态。判据同退出还原，
+	// 见 systemProxyNeedsRestore（没开过、也没备份时不去碰注册表）。
+	if systemProxyNeedsRestore(a.app.Settings().SystemProxy) {
+		if err := disableSystemProxy(); err != nil {
+			return config.Settings{}, fmt.Errorf("恢复默认设置前还原系统代理失败：%w", err)
+		}
+		a.app.Logf("恢复默认设置：先把系统代理还原成原来的设置")
 	}
 	d := config.Default().Settings
 	if err := a.app.SetSettings(d); err != nil {
