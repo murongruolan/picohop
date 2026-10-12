@@ -423,6 +423,50 @@ NewUpstream 在五个 sing-box 协议分支之前插入：mode == "mihomo" 且 m
 
 **注**：`NewVless/NewVmess/...` 只是构造对象、不建连接，所以构造期建实例的代价可以忽略。
 
+## 8. 第 ⑤ 步完成情况（截至第 18 轮）：开关可用、默认未翻
+
+### 已完成
+
+| 项 | 状态 | 证据 |
+|---|---|---|
+| 注册 mihomo 工厂 + 模式选择 + **失败回退** | 完成 | `internal/proxy`：`RegisterMihomoFactory` / `SetEngineMode` / `EngineMode`；单测 `TestEngineSelectionAndFallback` |
+| 应用侧接线 | 完成 | `Settings.EngineMode`（json `engineMode`，默认空串）+ `app.New()` 里 `proxy.SetEngineMode(...)`；单测 `TestEngineModeJSON`（老配置读出必须是空串） |
+| **端到端验证** | 通过 | 配置副本 + `engineMode=mihomo` + vmess 节点 → 日志出现「mihomo 出站已就绪：39.109.57.15:11720（type=Vmess）」 |
+| **回退路径验证** | 通过 | mihomo 映射拒绝的节点 → 日志「mihomo 接不了…，回退 sing-box：…」，节点最终 running（由 sing-box 接管） |
+| 界面开关 | 完成 | 设置 → 运行与界面 → `代理内核 [sing-box（默认） \| mihomo] (?)`；已截图确认 |
+
+**实现期间修掉的一个真风险**：`mihomoFactory` 原本只在构造时检查协议，而**映射错误发生在 `Start`**，
+上层回退覆盖不到 → "sing-box 能跑、mihomo 映射拒绝"的节点会从可用变不可用。
+现在 `NewMihomo` **构造时就把出站建出来**，映射错误提前到构造期，回退因此覆盖整类情况。
+
+### 默认仍是 sing-box（**没有翻**）
+
+翻默认的前置条件（第 18 轮判定）：
+  1. **更多传输的真实验证**。目前 ④′ 只验了 3 条：vless+xhttp、vmess+tcp、vmess+UDP(DNS)。
+     ws / grpc / http / h2 / httpupgrade 与 trojan / shadowsocks / hysteria2 **都没有真实链路验证**；
+  2. 用户的决定（下面第 9 节）。
+
+### 第 ⑥ 步：一个必须纠正的认知
+
+我早先给过"换装后 GUI 约 21~24 MB"的**估计**，前提是**彻底摘掉 sing-box**。
+但第 ⑤ 步要求**保留 sing-box 作回退**，二者不能同时成立：
+
+  > 只要回退还在，sing-box 就在二进制里，`with_utls,with_quic` 这两个构建标记也必须留着
+  > （它们是 sing-box 的），体积就仍是**过渡期的 58.46 MB（实测）**。
+
+所以：
+  - 当前设计下的"最终体积" = **58.46 MB**（实测，不是 21~24 MB）；
+  - 要 21~24 MB，只有在"**所有传输都验证过 + 明确同意放弃回退**"之后摘掉 sing-box；
+  - **"清构建标记"在保留回退时不该做**（标记是 sing-box 需要的）。
+
+## 9. 需要用户决定的事（第 ⑥ 步的真正前提）
+
+  1. 是否**放弃 sing-box 回退**（决定体积 58.46 MB vs 约 21~24 MB）；
+  2. 是否**翻默认引擎**为 mihomo（我建议先补更多传输验证）；
+  3. 若要补验证：需要对应传输的节点（例如一条 ws 或 trojan 节点）。
+     —— 另一条不依赖外部节点的路子是"用 mihomo 自己起一个本地 ws/gRPC inbound 当被测服务"，
+     契约记在这里，下一轮可以试。
+
 ### 第 ⑩ 轮：UDP 试做后被实测否掉 —— 设计要件是"按目标建通道"
 
 按第 ⑨ 轮的思路写了 `mihomo_udp.go`（`C.PacketConn` → `proxy.UDPChannel`）并接上 `DialUDP`，
