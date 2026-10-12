@@ -281,11 +281,31 @@ func TestListenHostEffective(t *testing.T) {
 	if got := cfg.ListenHostEffective(n); got != "0.0.0.0" {
 		t.Errorf("打开 AllowLan 后应当监听 0.0.0.0，实际 %q", got)
 	}
-	// 关掉 AllowLan 时，即使配置里写了 0.0.0.0 也要拉回回环
+	// 关掉 AllowLan 时，"非回环"一律拉回回环，只有回环地址允许留下。
+	//
+	// 这组用例是回归护栏：曾经这里只拦 ""/0.0.0.0/::，**具体地址原样返回**，
+	// 于是 AllowLan 明明是关的，配置里写个 192.168.1.10 就能把代理绑到
+	// 局域网网卡上，等于开了一个不要认证的开放代理。
 	cfg.Settings.AllowLan = false
-	n.ListenHost = "0.0.0.0"
-	if got := cfg.ListenHostEffective(n); got != "127.0.0.1" {
-		t.Errorf("AllowLan 关闭时应当把 0.0.0.0 拉回 127.0.0.1，实际 %q", got)
+	cases := []struct{ in, want string }{
+		{"", "127.0.0.1"},               // 空值 = 未指定 = 所有网卡
+		{"0.0.0.0", "127.0.0.1"},        // IPv4 通配
+		{"::", "127.0.0.1"},             // IPv6 通配
+		{"[::]", "127.0.0.1"},           // 通配 + 方括号写法
+		{"192.168.1.10", "127.0.0.1"},   // 具体网卡地址
+		{"10.0.0.5", "127.0.0.1"},       // 具体网卡地址
+		{" 192.168.1.10 ", "127.0.0.1"}, // 前后空格也不能漏
+		{"myhost.local", "127.0.0.1"},   // 主机名无法证明只绑回环
+		{"127.0.0.1", "127.0.0.1"},      // 显式回环保留
+		{"127.0.0.2", "127.0.0.2"},      // 127.0.0.0/8 都是回环
+		{"::1", "::1"},                  // IPv6 回环
+		{"localhost", "localhost"},      // 回环名字
+	}
+	for _, tc := range cases {
+		n.ListenHost = tc.in
+		if got := cfg.ListenHostEffective(n); got != tc.want {
+			t.Errorf("AllowLan 关闭时 listenHost=%q 应当得到 %q，实际 %q", tc.in, tc.want, got)
+		}
 	}
 }
 

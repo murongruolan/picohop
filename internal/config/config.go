@@ -451,10 +451,45 @@ func (c *Config) ListenHostEffective(n Node) string {
 		}
 		return host
 	}
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		return "127.0.0.1"
+	// 【为什么这里必须"只认回环"，而不是"只拦通配地址"】
+	// 这段判断曾经是白名单式的：只把 ""/0.0.0.0/:: 拉回回环，任何
+	// 具体地址都原样返回。于是配置里写着 192.168.1.10、10.0.0.5、
+	// 或某个解析到局域网 IP 的主机名时，即使 AllowLan 是关的，
+	// 监听套接字也会**真的 bind 到那块网卡上** —— 用户以为"只允许本机"
+	// （界面上的默认值、以及本函数的注释都是这么写的），实际却给整条
+	// 局域网开了一个不需要认证的开放代理。而 listenHost 是能被
+	// data/config.json 手工编辑 / 被旧配置残留带进来的，不能假定它干净。
+	//
+	// 所以判定反过来：只有确认是回环地址才放行，其余（空值、通配地址、
+	// 具体 IP、无法解析的主机名）一律拉回 127.0.0.1 —— 即 fail-closed。
+	// 别再改回"白名单拉回"的写法。
+	if isLoopbackListenHost(host) {
+		return host
 	}
-	return host
+	return "127.0.0.1"
+}
+
+// isLoopbackListenHost 判断监听地址是否只对本机可见。
+//
+// "只对本机可见"的合法形式：127.0.0.0/8 里的任意地址、IPv6 的 ::1，
+// 以及名字 localhost。用 net.ParseIP 判定而不是字符串比较，是为了让
+// 127.0.0.2 这类同样纯回环的地址不被误伤；空串、0.0.0.0、::、具体
+// 网卡地址、普通主机名（无法证明是回环）都返回 false，交由调用方
+// 按"非回环"处理。
+func isLoopbackListenHost(host string) bool {
+	h := strings.TrimSpace(host)
+	if h == "" {
+		return false
+	}
+	if strings.EqualFold(h, "localhost") {
+		return true
+	}
+	// net.JoinHostPort 会给 IPv6 字面量加方括号，这里容忍手工写成的 [::1]。
+	if len(h) > 1 && strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") {
+		h = h[1 : len(h)-1]
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
 }
 
 // ------------------------------------------------------------------
