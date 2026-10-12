@@ -248,7 +248,13 @@ func BuildConfigJSON(n config.Node, front config.Front) ([]byte, error) {
 	}
 
 	outbounds := make([]any, 0, 2)
-	if fo := buildFrontOutbound(front); fo != nil {
+	fo, err := buildFrontOutbound(front)
+	if err != nil {
+		// 前置不可用就直接失败（见 buildFrontOutbound 的说明）：
+		// 配置生成不出来 → Start 失败 → 这个节点不会被启动，也就不会偷偷直连。
+		return nil, err
+	}
+	if fo != nil {
 		outbounds = append(outbounds, fo)
 		// 只有存在前置出口时才挂 detour。
 		nodeOut["detour"] = tagFront
@@ -262,12 +268,41 @@ func BuildConfigJSON(n config.Node, front config.Front) ([]byte, error) {
 
 // buildFrontOutbound 把前置代理翻译成 sing-box 出口。
 //
-// 返回 nil 表示"直连"，也就是不需要前置出口、也不需要 detour。
-func buildFrontOutbound(front config.Front) map[string]any {
-	host := strings.TrimSpace(front.Host)
-	if front.Type == config.FrontTypeDirect || host == "" || front.Port <= 0 {
-		return nil
+// 返回 (nil, nil) 表示"直连"：不需要前置出口、也不需要 detour。
+// 但**只有显式选了直连才算**；前置写了却没写全（地址空、端口非法）时返回错误。
+//
+// 【为什么非法前置必须报错，而不是当成直连（审查 #10）】
+// 这里原本是 `host == "" || front.Port <= 0 → return nil`，也就是"前置写坏了就静默直连"。
+// 后果很严重：这个节点会**用本机 IP 直接去连节点服务器**。而前置存在的意义恰恰是
+// 不让本机 IP 露面（住宅代理、主流客户端、公司出口……），用户以为流量已经过前置，
+// 实际上出口 IP 已经暴露出去了 —— 这类"链路能通、但身份暴露"的故障用户根本看不出来。
+// 更糟的是它**完全静默**：日志里只有一行"已就绪"，没有任何异常可循。
+// 而且它是可达的：startNode/Activate 一路都不跑 config.Validate（只有命令行 run 跑），
+// 界面侧的端口/地址校验只挡自己那条输入路径，手工编辑（或被别的工具改写）的
+// data/config.json —— 例如 host 是空白字符、port 为负数、作为前置的那个节点
+// listenPort 非法 —— 都能一路走到这里。
+//
+// 所以按项目"宁可节点不启动，也不能静默从本机 IP 出去"的诉求改成 fail-closed：
+// 明确报错、把"为什么"和"怎么办"写清楚，由上层把这行错误挂到该节点上。
+// 别再改回"返回 nil 当直连"。
+func buildFrontOutbound(front config.Front) (map[string]any, error) {
+	// 只有显式的 direct 才是直连。空 type 在别处一律按 socks5 处理
+	// （见 proxy.NewFront 的 default 分支与 config.Front.Describe），
+	// 所以它同样需要合法地址，不能当成"没配前置"。
+	if front.Type == config.FrontTypeDirect {
+		return nil, nil
 	}
+
+	host := strings.TrimSpace(front.Host)
+	if host == "" {
+		return nil, fmt.Errorf("前置代理没有填写地址，拒绝退化成「直连」——" +
+			"那会让本机 IP 直接暴露给节点服务器。请在设置里填好前置地址，或把该节点的前置显式改成「直连」")
+	}
+	if front.Port < 1 || front.Port > 65535 {
+		return nil, fmt.Errorf("前置代理端口 %d 非法（应在 1-65535 之间），拒绝退化成「直连」——"+
+			"那会让本机 IP 直接暴露给节点服务器。请填好前置端口，或把该节点的前置显式改成「直连」", front.Port)
+	}
+
 	base := map[string]any{
 		"tag":         tagFront,
 		"server":      host,
@@ -286,7 +321,7 @@ func buildFrontOutbound(front config.Front) map[string]any {
 	if front.Password != "" {
 		base["password"] = front.Password
 	}
-	return base
+	return base, nil
 }
 
 // buildNodeOutbound 生成节点自身的出口配置（不含 tag / detour）。

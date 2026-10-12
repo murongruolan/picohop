@@ -361,6 +361,113 @@ func TestHTTPFrontUsesHTTPOutbound(t *testing.T) {
 	parseIntoOptions(t, raw)
 }
 
+// TestBuildConfigRejectsUnusableFront 锁死"前置写坏了不许静默直连"（审查 #10）。
+//
+// 旧实现是 `host == "" || front.Port <= 0 → return nil`，nil 又表示"直连"，
+// 于是这些配置会生成一份**没有前置出口、也没有 detour** 的配置：节点照常启动，
+// 却用本机 IP 直接去连服务器 —— 前置（住宅代理 /主流客户端/ 公司出口）白挂了，
+// 而且日志里一行异常都没有，用户看不出来。
+//
+// 现在必须返回错误（fail-closed）：宁可不启动这个节点，也不能从本机 IP 出去。
+func TestBuildConfigRejectsUnusableFront(t *testing.T) {
+	n := config.Node{
+		Name: "n", Protocol: config.ProtocolShadowsocks,
+		Server: "sg.example.com", Port: 8388, Method: "aes-128-gcm", Password: "pw",
+	}
+	cases := []struct {
+		name  string
+		front config.Front
+	}{
+		{"socks5 地址为空", config.Front{Type: config.FrontTypeSocks5, Port: 10808}},
+		{"socks5 地址是空白字符", config.Front{Type: config.FrontTypeSocks5, Host: "   ", Port: 10808}},
+		{"socks5 端口为 0", config.Front{Type: config.FrontTypeSocks5, Host: "127.0.0.1"}},
+		{"socks5 端口为负数", config.Front{Type: config.FrontTypeSocks5, Host: "127.0.0.1", Port: -1}},
+		{"socks5 端口超出范围", config.Front{Type: config.FrontTypeSocks5, Host: "127.0.0.1", Port: 70000}},
+		{"http 地址为空", config.Front{Type: config.FrontTypeHTTP, Port: 3128}},
+		{"http 端口为 0", config.Front{Type: config.FrontTypeHTTP, Host: "10.0.0.1"}},
+		// 空 type 在别处一律按 socks5 处理（proxy.NewFront / Front.Describe），
+		// 所以它也不能被当成"没配前置"。
+		{"type 为空且地址为空", config.Front{}},
+		{"type 为空但地址写坏了", config.Front{Host: "10.0.0.1", Port: -1}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			raw, err := BuildConfigJSON(n, c.front)
+			if err == nil {
+				t.Fatalf("非法前置（%+v）必须报错，却生成了一份配置：\n%s", c.front, raw)
+			}
+			// 错误必须说清"发生了什么"与"为什么不能将就"：
+			// 只说"配置非法"的话，后人很容易又顺手改回"那就算了，直连吧"。
+			for _, want := range []string{"前置", "直连"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("错误信息应当包含 %q，实际：%s", want, err)
+				}
+			}
+			t.Logf("实际错误信息：%s", err)
+		})
+	}
+}
+
+// TestExplicitDirectFrontIsStillDirect 确认收紧之后没有误伤"显式直连"。
+//
+// direct 是**用户明确选的**，不需要地址与端口；此时既不能生成前置出口，
+// 也不能因为地址空而报错。
+func TestExplicitDirectFrontIsStillDirect(t *testing.T) {
+	n := config.Node{
+		Name: "n", Protocol: config.ProtocolShadowsocks,
+		Server: "sg.example.com", Port: 8388, Method: "aes-128-gcm", Password: "pw",
+	}
+	for _, c := range []config.Front{
+		{Type: config.FrontTypeDirect},
+		{Type: config.FrontTypeDirect, Host: "", Port: 0},
+		// 历史遗留形态：类型是 direct、还留着上次填的地址端口，一样按直连处理
+		{Type: config.FrontTypeDirect, Host: "127.0.0.1", Port: 10808},
+	} {
+		raw, err := BuildConfigJSON(n, c)
+		if err != nil {
+			t.Fatalf("显式直连不该报错（%+v）：%v", c, err)
+		}
+		obs := outbounds(t, decodeMap(t, raw))
+		if len(obs) != 1 {
+			t.Fatalf("显式直连只应有 1 个出口（%+v），实际 %d", c, len(obs))
+		}
+		if _, has := obs[0]["detour"]; has {
+			t.Errorf("显式直连不允许出现 detour（%+v）", c)
+		}
+		parseIntoOptions(t, raw)
+	}
+}
+
+// TestStartFailsInsteadOfFallingBackToDirect 是本缺陷的端到端锁：
+// 前置非法时出口**必须启动失败**，而不是"起来了、然后直连"。
+//
+// 为什么不只测 BuildConfigJSON：上层（proxy.Server.Start → Upstream.Start）
+// 把"出口启动失败"如实报给用户、并把节点标成错误；只要 Start 返回 nil，
+// 界面就会显示"已启动"，而流量其实从本机 IP 出去了。
+// 所以这里断言两件事：Start 返回错误，且失败后 Dial 也不会可用
+// （也就是没用"空出口 = 直连"糊过去）。
+func TestStartFailsInsteadOfFallingBackToDirect(t *testing.T) {
+	n := config.Node{
+		Name: "n", Protocol: config.ProtocolVLESS,
+		Server: "a.example.com", Port: 443, UUID: "u",
+	}
+	front := config.Front{Type: config.FrontTypeSocks5, Host: "127.0.0.1", Port: 0}
+
+	up, err := New(n, front, func(string, ...any) {})
+	if err != nil {
+		t.Fatalf("构造不该失败（构造时还不生成配置）：%v", err)
+	}
+	if err := up.Start(context.Background(), nil); err == nil {
+		_ = up.Stop()
+		t.Fatal("前置端口非法时 Start 必须失败，否则节点会静默从本机 IP 直连出去")
+	} else if !strings.Contains(err.Error(), "前置") {
+		t.Errorf("Start 的错误应当点明是前置的问题，实际：%v", err)
+	}
+	if _, err := up.Dial(context.Background(), nil, "example.com:443"); err == nil {
+		t.Error("Start 失败后不应该还能拨号")
+	}
+}
+
 // TestNewRejectsUnsupportedProtocol 确认 engine 只管它该管的那五个协议。
 func TestNewRejectsUnsupportedProtocol(t *testing.T) {
 	for _, p := range []string{config.ProtocolSOCKS5, config.ProtocolHTTP, config.ProtocolWireGuard} {
