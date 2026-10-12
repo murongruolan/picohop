@@ -606,6 +606,10 @@ body.cp-float-window .el-overlay-dialog {
 }
 
 .cp-bottom-chevron {
+  /* 浅底色（用户要求做成 el-button--primary is-plain 那种观感） */
+  background: var(--cp-brand-soft);
+  color: var(--cp-brand);
+  border-color: var(--cp-brand-soft);
   /* 比原来宽：原来是 22×22 的纯图标，点起来费劲（用户要求"弄大点/宽一点"）。
      注意里面的文字**不能**自己设 line-height：旁边的页签按钮用的是浏览器默认行盒
      （约 1.15倍字号），而 line-height:1 会把文字的轴心上移一两个像素，看起来就是
@@ -686,6 +690,39 @@ body.cp-float-window .el-overlay-dialog {
 }
 .cp-bottom-chip.is-off .cp-bottom-dot {
   background: var(--cp-text-3);
+}
+
+/* "全局"标签：红底白字（用户要求，和主流客户端一样） */
+.cp-tag-global {
+  flex: 0 0 auto;
+  margin-left: 6px;
+  padding: 0 5px;
+  height: 15px;
+  line-height: 15px;
+  border-radius: 3px;
+  background: var(--cp-danger);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+/* 模式是"全局代理"时给点颜色，一眼能看出现在处于哪种模式 */
+.cp-bottom-chip.is-mode-global {
+  color: var(--cp-brand);
+  font-weight: 600;
+}
+
+/* 异常：红色（并让圆点也跟着变红） */
+.cp-bottom-chip.is-bad {
+  color: var(--cp-danger);
+  font-weight: 600;
+  cursor: default;
+}
+.cp-bottom-chip.is-bad .cp-bottom-dot {
+  background: var(--cp-danger);
+}
+.cp-bottom-chip.is-bad:hover {
+  text-decoration: underline;
 }
 
 .cp-bottom-error {

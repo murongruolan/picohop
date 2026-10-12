@@ -301,6 +301,24 @@ export function useActions() {
     toggleActive,
     activateAll,
     deactivateAll,
+    // 设为 / 取消全局节点（整个列表只能一个）。
+    // 只改"指定用哪个节点"，不改系统设置 —— 改系统代理是下一轮的事。
+    async setGlobalNode(node) {
+      const cur = store.settings?.globalNodeId || ''
+      const next = cur === node.id ? '' : node.id
+      try {
+        await api.setGlobalNode(next)
+        store.settings = await api.getSettings()
+        notify(
+          'success',
+          next ? `已把「${node.name}」设为全局节点` : '已取消全局节点',
+          '',
+        )
+      } catch (e) {
+        notify('error', '设置全局节点失败', String(e?.message || e), 0)
+      }
+    },
+
     addNode,
     editNode,
     cloneNode,

@@ -18,6 +18,7 @@ import {
   Timer,
   VideoPlay,
   Warning,
+  Star,
 } from '@element-plus/icons-vue'
 import { useStore } from '../store'
 import { useUi } from '../ui'
@@ -63,6 +64,10 @@ const doToggle = run(async () => {
     await actions.activate(store.selectedIds, node.value)
   }
 })
+
+// 当前这个节点是不是"全局节点"（用来切换菜单文案）
+const isGlobal = computed(() => !!node.value && store.settings?.globalNodeId === node.value.id)
+const doSetGlobal = run(() => actions.setGlobalNode(node.value))
 
 const doEdit = run(() => actions.editNode(node.value))
 const doClone = run(() => actions.cloneNode(node.value))
@@ -113,6 +118,11 @@ const doResetStats = run(async () => {
       <span>{{ activateLabel }}</span>
       <span class="cp-menu-key">回车</span>
     </div>
+    <div class="cp-menu-item" @click="doSetGlobal">
+      <el-icon><Star /></el-icon>
+      <span>{{ isGlobal ? '取消全局节点' : '设为全局节点' }}</span>
+    </div>
+
     <div class="cp-menu-item" @click="doEdit">
       <el-icon><Edit /></el-icon>
       <span>编辑</span>

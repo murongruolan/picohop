@@ -701,6 +701,21 @@ async function handleDevOpen(name) {
       break
     }
 
+    // 全局节点标签自测：设第一个节点为全局节点 + 展开底栏（截图核对用）
+    case 'globaltag': {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const n = (store.nodes || [])[0]
+      if (!n) {
+        notify('error', '全局节点自测', '没有节点', 0)
+        break
+      }
+      await actions.setGlobalNode(n)
+      await wait(600)
+      ui.bottomPanelView = 'logs'
+      await wait(1200)
+      break
+    }
+
     // 连开两次浮动对话框：第一次是新建（要建 WebView2 + 加载前端），
     // 第二次应该走**复用**（窗口已在、不重新加载）。
     // 这是用户报的“打开还是卡”那条，两边的耗时在 Go 日志里（"~前端就绪 Xms"~

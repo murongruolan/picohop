@@ -117,6 +117,8 @@ export const api = {
   getIPInfo: () => call('GetIPInfo'),
   testSites: (sites, nodeIds) => call('TestSites', sites, nodeIds),
   getConnections: () => call('GetConnections'),
+  // 全局节点（整个列表只能有一个）：后端第 1 步已经实现
+  setGlobalNode: (id) => call('SetGlobalNode', id),
   closeAllConnections: () => call('CloseAllConnections'),
   resetSettings: () => call('ResetSettings'),
   getFront: () => call('GetFront'),

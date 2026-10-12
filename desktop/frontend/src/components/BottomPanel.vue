@@ -12,7 +12,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { ArrowDown, ArrowUp, Search, Delete } from '@element-plus/icons-vue'
 import { useStore } from '../store'
 import { useUi } from '../ui'
-import { api } from '../api'
+import api, { notify } from '../api'
 import { formatBytes } from '../columns'
 import TrafficView from './bottom/TrafficView.vue'
 import SiteTestView from './bottom/SiteTestView.vue'
@@ -129,6 +129,40 @@ const localPortsText = computed(() => {
   const contiguous = ps.every((p, i) => i === 0 || p === ps[i - 1] + 1)
   return contiguous ? `${ps[0]}–${ps[ps.length - 1]}` : `${ps[0]} +${ps.length - 1}`
 })
+
+// 当前模式：分端口 / 全局代理
+const sysModeLabel = computed(() => (store.settings?.systemProxy ? '全局代理' : '分端口'))
+const sysModeTip = computed(() =>
+  store.settings?.systemProxy
+    ? `全局代理模式：系统代理指向全局节点${globalNodeName.value ? `「${globalNodeName.value}」` : ''}`
+    : '分端口模式：每个节点各一个本地端口，自己把程序指到某个端口',
+)
+
+// 全局节点名（设过才有）
+const globalNodeName = computed(() => {
+  const id = store.settings?.globalNodeId
+  if (!id) return ''
+  return (store.nodes || []).find((n) => n.id === id)?.name || ''
+})
+
+// 健康判定：**已激活**的节点没在运行（含全局节点）就算异常。
+const problems = computed(() => (store.nodes || []).filter((n) => n.active && n.state !== 'running'))
+const healthLabel = computed(() => (problems.value.length ? '异常' : '正常'))
+
+// 节点出问题 → 弹一次通知（后端已经把原因写进用户日志，这里只负责"让你知道"）。
+// 用 Set 记住已经报过的节点，避免每次刷新都弹一次。
+const notifiedBad = new Set()
+watch(
+  () => (store.nodes || []).map((n) => `${n.id}:${n.state}`).join(','),
+  () => {
+    for (const n of store.nodes || []) {
+      if (n.active && n.state === 'error' && !notifiedBad.has(n.id)) {
+        notifiedBad.add(n.id)
+        notify('error', `节点「${n.name}」异常`, n.detail || '详见日志', 0)
+      }
+    }
+  },
+)
 
 // tooltip 里给完整列表
 const localPortsFull = computed(() => activePorts.value.join(' / '))
@@ -266,19 +300,30 @@ watch(
       </div>
 
       <div class="cp-bottom-status">
-        <el-tooltip
-          :content="activePorts.length ? `本地端口：${localPortsFull}（点击复制）` : '没有运行中的节点'"
-          placement="top"
-          :show-after="400"
-        >
-          <span class="cp-bottom-chip cp-num" :class="{ 'is-dim': !activePorts.length }" @click="copyPorts">
-            {{ localPortsText }}
+        <!-- 模式（用户要求：这一格从"端口列表"改成"现在是什么模式"） -->
+        <el-tooltip :content="sysModeTip" placement="top" :show-after="400">
+          <span class="cp-bottom-chip" :class="{ 'is-mode-global': store.settings?.systemProxy }">
+            {{ sysModeLabel }}
           </span>
         </el-tooltip>
 
-        <el-tooltip :content="`前置：${frontDesc}`" placement="top" :show-after="400">
-          <span class="cp-bottom-chip" :class="{ 'is-off': !frontOk }">
-            <i class="cp-bottom-dot" />前置
+        <!-- 健康（用户要求：这一格从"前置"改成"正常/异常"；
+             激活的节点或全局节点出问题 → 红色 + 可点进日志） -->
+        <el-tooltip
+          :content="
+            problems.length
+              ? `${problems.length} 个已激活的节点没在运行：${problems.map((n) => n.name).join('、')}（点击看日志）`
+              : '所有已激活的节点都在运行'
+          "
+          placement="top"
+          :show-after="400"
+        >
+          <span
+            class="cp-bottom-chip"
+            :class="{ 'is-bad': problems.length }"
+            @click="problems.length && openLogs()"
+          >
+            <i class="cp-bottom-dot" />{{ healthLabel }}
           </span>
         </el-tooltip>
 
@@ -297,16 +342,6 @@ watch(
           <span class="cp-bottom-chip cp-num">{{ store.summary?.activeConn || 0 }}</span>
         </el-tooltip>
 
-        <!-- 错误徽标：只在真有节点出错时出现（平时不占视线）。
-             数字是"启动失败的节点数"；点一下跳到日志（那里有具体原因）。 -->
-        <el-tooltip
-          v-if="store.summary?.error"
-          :content="`${store.summary.error} 个节点启动失败，点击看日志`"
-          placement="top"
-          :show-after="400"
-        >
-          <span class="cp-bottom-chip cp-bottom-error" @click="openLogs">错误 {{ store.summary.error }}</span>
-        </el-tooltip>
       </div>
     </div>
 

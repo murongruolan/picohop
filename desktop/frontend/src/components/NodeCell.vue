@@ -76,6 +76,8 @@ async function copyPort() {
     <span class="cp-name">
       <span class="cp-dot" :class="stateClass" />
       <span :title="row.name">{{ row.name }}</span>
+      <!-- 全局节点标记：列表里只能有一个，红底白字（用户要求，和主流客户端一样） -->
+      <span v-if="store.settings?.globalNodeId === row.id" class="cp-tag-global">全局</span>
       <el-icon v-if="testingFor('tcp') || testingFor('real')" class="cp-spin" style="margin-left: 6px">
         <Loading />
       </el-icon>
