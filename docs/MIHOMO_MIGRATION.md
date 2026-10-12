@@ -39,11 +39,28 @@ sing-box 不做 → **B 被多扣分**，所以"我们更省 CPU"站不住。
   `NewHysteria2` …（`adapter/outbound/*.go`）。
 - **出站包不 import `hub`/`tunnel`** → 不被全局单例绑死，**可以每节点建一个独立实例**，
   与我们现在的 sing-box 用法同构 → **"分节点端口 + 多节点同时活跃"照样成立**。
-- 拨号接口在 `constant/adapters.go`：`type Proxy interface { ProxyAdapter; ... }`，
-  `ProxyAdapter` 提供 `DialContext` 等（**下一轮第一件事：把 `ProxyAdapter` 的完整方法
-  和 `metadata` 构造方式读全**——本次没读完，见第 4 节）。
+- 拨号接口在 `constant/adapters.go`（**本轮已读全，见下**）：
+  ```go
+  type ProxyAdapter interface {
+      Name() string; Type() AdapterType; Addr() string; SupportUDP() bool
+      ProxyInfo() ProxyInfo; MarshalJSON() ([]byte, error)
+      DialContext(ctx context.Context, metadata *Metadata) (Conn, error)          // TCP
+      ListenPacketContext(ctx context.Context, metadata *Metadata) (PacketConn, error) // UDP
+      SupportUOT() ...   // 及其后若干方法
+  }
+  type Proxy interface { ProxyAdapter; Adapter() ProxyAdapter; ...URLTest/延迟记录... }
+  ```
+  **关键结论：我们不需要实现这些接口** —— mihomo 的具体类型（`*Vless` 等）已经实现好了，
+  我们只**调用** `DialContext` / `ListenPacketContext`。这一步的负担比预想的小。
+- **`Metadata` 就是 `constant.Metadata`**（所以接口里不带包名）：字段有
+  `NetWork` / `Type` / `Host` / `DstPort` / `SrcIP` / `Process` 等，方法 `RemoteAddress()`；
+  枚举用 `C.TCP` / `C.UDP`（源码里有现成用法：`&C.Metadata{NetWork: C.TCP, DstPort: 80}`）。
+- **TLS/REALITY 字段位置（已核）**：
+  - `adapter/outbound/reality.go`：`type RealityOptions struct { PublicKey; ShortID; SupportX25519MLKEM768 }`
+  - `vless.go`：`TLS bool`、`ServerName string`（SNI）；`ClientFingerprint string`（uTLS 指纹）
+    在各协议的选项结构里（`anytls.go`/`gost_relay.go` 已见同名字段；vless 的确切位置由编译器确认）。
 - **xhttp 确有实现**：`adapter/outbound/vless.go` import `.../transport/xhttp`，
-  选项结构 `XHTTPOptions`。
+  选项结构 `XHTTPOptions{ Path, Host, Mode, Headers, NoGRPCHeader, XPadding*, Session*, Seq* }`。
 
 ### 1.3 关键选项结构（已读到）
 
@@ -132,12 +149,25 @@ type XHTTPOptions struct {
 
 ---
 
-## 4. 下一轮开工的第一件事（清单）
+## 4. 进度与下一轮开工的第一件事
 
-1. 读全 `constant/adapters.go` 的 `ProxyAdapter` 全部方法（尤其 `DialContext` 签名）；
-2. 读 `RealityOptions` 与 TLS/指纹相关结构体（`adapter/outbound/vless.go` 附近）；
-3. 读 `metadata` 包的构造方式（找一个现成的 `DialContext` 调用点照抄）；
-4. 然后执行第 0 步（引依赖 + 探针）。
+**第 ① 步（补读签名）已完成**（2026-10-12，本轮）：`ProxyAdapter` 全方法、`constant.Metadata`
+字段与枚举、`RealityOptions`、`XHTTPOptions` 字段、现成的 `DialContext` 调用点
+（`adapter/outbound/base.go:380` 一带）都已读实，结论写进第 1.2 / 1.3 节。
+**副产品**：确认了"我们只需调用、不需实现 `ProxyAdapter`"，这一步的代价比预估低。
+
+**正在做**：`.cache/mihomo-meta/cmd/xprobe/main.go` —— 一个独立探针（**放在 mihomo 克隆内**，
+复用它的 go.mod 与已下载依赖，**完全不碰我们的仓库**），只读 ChainProxy 配置取参数，
+构造一个 mihomo vless 出站（xhttp + REALITY），`DialContext` 到 `www.gstatic.com:443`
+并发一个 HTTP 请求。它一次性回答两件事：
+  1. 我读到的这些字段/构造方式**能不能编译**（编译器就是权威，不靠猜）；
+  2. **用户那条 xhttp 节点在 mihomo 下到底能不能通**（这是整件事的起因）。
+
+**下一轮第一件事**：
+1. 看 xprobe 的结果；若编译不过，按编译器的报错修字段名（这是最省的定位方式）；
+2. 通了 → 进第 0 步（在**我们的模块**里引依赖，实测与现有依赖是否冲突 + 体积增量）；
+3. 不通 → 把探针的真实报错记进本文件，再决定是否继续（不要把"能构建"当成"能用"）。
+
 
 ## 5. 已知但**暂不处理**的问题（用户明确指示）
 
