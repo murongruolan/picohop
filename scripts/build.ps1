@@ -1,4 +1,4 @@
-﻿# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # ChainProxy 构建脚本
 #
 #   .\scripts\build.ps1                 构建图形界面 + 命令行两个可执行文件
@@ -18,10 +18,10 @@
 # 在控制台里跑它既不输出也不退出（挂住）。
 #
 # 【关于构建标签】
-# sing-box 把 Reality(uTLS) 与 Hysteria2(QUIC) 放在构建标签后面，
-# **必须**带 with_utls,with_quic，否则运行时才会报
-# "uTLS, which is required by reality is not included in this build"。
-# 本脚本已经把标签写死，避免忘带。
+# 命令行版与图形界面版都**不再需要任何引擎标签**：内嵌的 sing-box 已摘除
+# （它才需要 with_utls / with_quic 来开 Reality(uTLS) 与 Hysteria2(QUIC)），
+# 现在唯一的内核是 mihomo，它自带这些能力。标签只保留 v3 的 production
+# （见下面图形界面那段：它区分 production/dev 两套实现文件）。
 #
 # 所有 Go / npm 缓存都在项目目录内（见 scripts\env.ps1），不在外部留下任何文件。
 # ---------------------------------------------------------------------------
@@ -39,9 +39,6 @@ $Root   = Split-Path -Parent $PSScriptRoot
 $OutDir = Join-Path $Root 'dist'
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
-# 两个都需要：with_utls 给 Reality，with_quic 给 Hysteria2
-$Tags = "with_utls,with_quic"
-
 $buildCli = -not $Gui
 $buildGui = -not $Cli
 
@@ -53,8 +50,8 @@ Set-Location $Root
 if ($buildCli) {
     $ldflags = "-s -w -X main.Version=$Version"
     $cliName = 'chainproxy-cli.exe'
-    Write-Host "[ChainProxy] 编译命令行版（version=$Version, tags=$Tags）……"
-    go build -tags $Tags -trimpath -ldflags $ldflags -o (Join-Path $OutDir $cliName) ./cmd/chainproxy
+    Write-Host "[ChainProxy] 编译命令行版（version=$Version）……"
+    go build -trimpath -ldflags $ldflags -o (Join-Path $OutDir $cliName) ./cmd/chainproxy
     if ($LASTEXITCODE -ne 0) { throw "命令行版编译失败" }
     $size = (Get-Item (Join-Path $OutDir $cliName)).Length
     Write-Host "[ChainProxy] 完成：dist\$cliName  ($([math]::Round($size/1MB,2)) MB)"
@@ -92,9 +89,9 @@ if ($buildGui) {
         Pop-Location
     }
 
-    Write-Host "[ChainProxy] 编译图形界面（version=$Version, tags=production,$Tags）……"
+    Write-Host "[ChainProxy] 编译图形界面（version=$Version, tags=production）……"
     $guiLdflags = "-s -w -H windowsgui -X main.Version=$Version"
-    go build -tags "production,$Tags" -trimpath -buildvcs=false `
+    go build -tags "production" -trimpath -buildvcs=false `
         -ldflags $guiLdflags -o (Join-Path $OutDir 'ChainProxy.exe') ./desktop
     if ($LASTEXITCODE -ne 0) { throw "图形界面编译失败" }
 

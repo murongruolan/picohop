@@ -136,8 +136,6 @@ function blankSettings() {
     portStart: 10810,
     idleTimeoutSec: 300,
     autoActivateOnLaunch: true,
-    // 空串 = sing-box（默认）；mihomo = 优先 mihomo，接不了的节点自动回退
-    engineMode: '',
     tcpTestTimeoutMs: 5000,
     testConcurrency: 8,
     realTestUrl: '',
@@ -386,21 +384,9 @@ const meta = computed(() => store.meta || {})
             <el-switch v-model="form.autoActivateOnLaunch" />
             
           </el-form-item>
-            <!-- 代理内核（换装开关）：默认 sing-box；mihomo 接不了的节点会自动回退，
-                 所以打开它不会让任何节点变得不可用。 -->
-            <el-form-item label="代理内核">
-              <el-radio-group v-model="form.engineMode">
-                <el-radio-button value="">sing-box（默认）</el-radio-button>
-                <el-radio-button value="mihomo">mihomo</el-radio-button>
-              </el-radio-group>
-              <el-tooltip
-                content="改完要重启程序才生效；mihomo 接不了的节点会自动回退 sing-box"
-                placement="top"
-                :show-after="400"
-              >
-                <span class="cp-tip-icon">?</span>
-              </el-tooltip>
-            </el-form-item>
+          <!-- 「代理内核」开关已删除：sing-box 摘除后只剩 mihomo 一个内核，
+               没有第二个可选，留着只会让人以为还能切（理由见
+               docs/MIHOMO_MIGRATION.md 的结项报告）。 -->
         </el-form>
 
         <div class="cp-section">界面</div>
@@ -464,10 +450,9 @@ const meta = computed(() => store.meta || {})
         <el-descriptions :column="1" border size="small">
           <el-descriptions-item label="版本">{{ meta.version || 'dev' }}</el-descriptions-item>
           <el-descriptions-item label="内嵌引擎">
-            <span v-if="meta.engineOk" class="cp-ok-text">
-              sing-box（with_utls / with_quic），支持 VMess、VLESS+Reality、Shadowsocks、Trojan、Hysteria2
+            <span class="cp-ok-text">
+              mihomo（唯一内核），支持 VMess、VLESS+Reality、Shadowsocks、Trojan、Hysteria2
             </span>
-            <span v-else class="cp-error-text">{{ meta.engineError }}</span>
           </el-descriptions-item>
           <el-descriptions-item label="开机自启动">
             <span>不注册（本程序不会开机自启）</span>

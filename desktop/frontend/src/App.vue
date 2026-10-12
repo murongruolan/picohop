@@ -900,7 +900,7 @@ async function handleDevOpen(name) {
 
     // 验证「设置面板每次打开都回到默认位置」。
     // 手法：打开 → 合成一次标题栏拖动（真的把它拖走）→ 读位移 → 关闭 → 重开 → 再读位移。
-    // 打开设置弹窗并停在「运行与界面」页（截图核对"代理内核"开关用）
+    // 打开设置弹窗并停在「运行与界面」页（自测入口：核对那一页的布局）
     case 'settingsengine':
       ui.settingsInitialTab = 'appearance'
       ui.settingsDialog = true
