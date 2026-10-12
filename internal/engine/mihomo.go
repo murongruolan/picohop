@@ -45,10 +45,25 @@ type MihomoUpstream struct {
 
 // NewMihomo 构造一个走 mihomo 出站层的出口。
 //
+// front 是上层（internal/app 的 resolveFront）按节点的「前置」字段解析出来的
+// **第一跳**：直连节点是 {Type: direct}，选全局前置的节点就是设置里那份前置，
+// 以另一个节点为前置的节点则是一个指向它本地端口的 socks5。
+//
+// 【本适配层不接前置 —— 非直连一律拒绝】MihomoUpstream 目前只做单出站拨号，
+// 收下的 front 根本不会被使用。所以"实际会用到前置"的节点必须在这里就被拒
+// （判据见 mihomoFrontGap）：放它过去 = 从本机 IP 出去，绕开链式代理/住宅出口，
+// 而且完全静默。这条与 sing-box 侧 buildFrontOutbound 的 fail-closed 是同一条原则。
+//
 // 真正的出站实例在 Start 里创建（与 sing-box 侧一致：Start 才"拉起实例"）。
 func NewMihomo(n config.Node, front config.Front, logf func(string, ...any)) (proxy.Upstream, error) {
 	if !mihomoSupports(n.Protocol) {
 		return nil, fmt.Errorf("mihomo 适配层暂不支持协议 %q（本步只接了 vless；其余协议按迁移契约第 ④ 步逐条扩）", n.Protocol)
+	}
+	if gap := mihomoFrontGap(n, front); gap != "" {
+		return nil, fmt.Errorf("节点「%s」%s，而 mihomo 适配层还没接前置 —— "+
+			"它目前只会从本机直接拨号，放过去就等于绕开前置、用本机 IP 出去。"+
+			"为免静默直连，这里直接拒绝：本节点会回退 sing-box（它按前置生成 detour，链式照常生效）",
+			n.Name, gap)
 	}
 	if logf == nil {
 		logf = func(string, ...any) {}
@@ -62,6 +77,47 @@ func NewMihomo(n config.Node, front config.Front, logf func(string, ...any)) (pr
 		return nil, err
 	}
 	return &MihomoUpstream{node: n, front: front, logf: logf, built: out}, nil
+}
+
+// mihomoFrontGap 报告"这个节点实际会用到非直连前置"的原因；返回空串 = 用不到前置，放行。
+//
+// 【为什么必须在构造时就判】MihomoUpstream 只做单出站拨号：它按节点自己的服务器
+// 地址直接 DialContext，front 参数收下了也不会用。一个配了前置的节点若被放行，
+// 它就会**用本机 IP** 去连节点服务器 —— 而前置的意义恰恰是不让本机 IP 露面
+// （住宅出口、公司出口、另一跳节点……）。这种故障完全静默：链路照样通，
+// 只是身份已经暴露，用户从界面上看不出来。所以 fail-closed：宁可它起不来
+// （上层回退 sing-box），也不许它偷偷直连。这条与 singbox.go 里
+// buildFrontOutbound 的"非法前置必须报错、不许退化成直连"（审查 #10）同源。
+//
+// 【判据】Node.Front 只有三种取值（见 config.Node 的注释与 FrontKind/FrontNodeID）：
+//   - ""（FrontDirect，含纯空白）→ resolveFront 给 direct，单出站拨号正是它想要的行为；
+//   - "global"（FrontGlobal）    → 用设置里的全局前置，就是传进来的 front 参数；
+//   - 其它                       → 本项目内另一个节点的 ID（FrontNodeID 非空），
+//     resolveFront 会给一个指向它本地端口的 socks5 前置。
+//
+// 于是：节点前置指向另一个节点 → 拒；节点要用的全局前置不是 direct → 拒。
+// 另外补一条防御：节点自称直连、调用方却递了一个**明确配好的**非直连前置时也拒
+// —— mihomo 会忽略这个参数，两边不一致时只有按"有前置"处理才不会静默直连
+// （零值 Front 视为"调用方没给前置信息"，不算不一致，否则会误伤直连节点）。
+//
+// 【为什么"非 direct 一律算有前置"，而不是只认 socks5/http】proxy.NewFront 的
+// default 分支造的就是 socks5Front：Front.Type 只要不是显式 "direct"（空串也是），
+// 跑起来都是一跳真实的前置（singbox 侧同样这么判）。宁可多拒一个残缺配置，
+// 也不能漏判成"直连"。
+func mihomoFrontGap(n config.Node, front config.Front) string {
+	if id := n.FrontNodeID(); id != "" {
+		return fmt.Sprintf("的前置指向另一个节点（%s）", id)
+	}
+	if n.UsesGlobalFront() {
+		if front.Type != config.FrontTypeDirect {
+			return fmt.Sprintf("用的是非直连的全局前置（%s）", front.Describe())
+		}
+		return ""
+	}
+	if front.Type != config.FrontTypeDirect && front.Type != "" {
+		return fmt.Sprintf("传进来的前置不是直连（%s）", front.Describe())
+	}
+	return ""
 }
 
 // mihomoSupports 目前只声明已经写好的协议。

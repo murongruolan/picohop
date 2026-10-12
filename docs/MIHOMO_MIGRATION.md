@@ -423,6 +423,49 @@ NewUpstream 在五个 sing-box 协议分支之前插入：mode == "mihomo" 且 m
 
 **注**：`NewVless/NewVmess/...` 只是构造对象、不建连接，所以构造期建实例的代价可以忽略。
 
+### 第 ⑯ 轮：堵上前置缺口（配了前置的节点必须被拒，不许静默直连）
+
+**缺口是什么**：`MihomoUpstream` 只做单出站拨号 —— `out.DialContext` 直接去连节点自己的
+服务器，`NewMihomo` 收下的 `front config.Front` **从来没被用过**。于是 `engineMode=mihomo`
+时，一个"前置指向另一个节点 / 用全局前置"的节点会**从本机 IP 出去**，绕开链式代理与住宅
+出口，而且完全静默（链路照样通）。这与审查 #10（sing-box 侧 `buildFrontOutbound` 不许把
+非法前置退化成直连）是同一条原则，本轮把它补在 mihomo 侧。
+
+**复核到的字段与语义（读代码确认，不是印象）**：
+
+| 事实 | 出处 |
+|---|---|
+| 节点的前置字段是 `Node.Front string`（json `front`），三种取值：`""`（`FrontDirect`）/ `"global"`（`FrontGlobal`）/ 其它 = 本项目内另一个节点的 ID | `internal/config/model.go`、`internal/config/protocol.go` |
+| 现成判断函数：`FrontKind()`（空/空白 → direct）、`UsesGlobalFront()`、`FrontNodeID()`（direct 与 global 时返回空串） | `internal/config/model.go` |
+| 全局前置是 `config.Front`，`Type` 取 `socks5` / `http` / `direct`（`FrontTypeDirect` = 直连） | `internal/config/model.go` |
+| `proxy.NewFront` 的 `default` 分支是 **socks5Front** → `Type` 不是显式 `"direct"`（**含空串**）时跑起来都是一跳真实前置 | `internal/proxy/front.go` |
+| 上层只用一处把节点解析成第一跳：`app.resolveFrontLocked`（direct → `{Type: direct}`；global → 设置里的 `cfg.Front`；节点 ID → `127.0.0.1:<该节点本地端口>` 的 socks5），`startNode` 与 `openTestChain` 都走它 | `internal/app/nodes.go`、`internal/app/test.go` |
+| 回退在 `proxy.NewUpstream`：`mode=mihomo` 且工厂**构造失败** → 写日志并回退 sing-box | `internal/proxy/upstream.go` |
+
+**判据（`mihomoFrontGap`，构造期就判，fail-closed）**：
+节点前置指向另一个节点（`FrontNodeID() != ""`）→ 拒；节点要用全局前置（`UsesGlobalFront()`）
+而传进来的 `front.Type != direct` → 拒；另加一条防御：节点自称直连、调用方却递了**明确配好的**
+非直连前置 → 也拒（mihomo 会忽略该参数，两边不一致时按"有前置"处理才安全；零值 `Front` 视为
+"调用方没给前置信息"，不算不一致）。
+
+**放行的**：`Front` 为空或纯空白（= 直连）、全局前置本身就是 `direct`（等效直连）、
+以及直连节点配零值 Front。**一律不误伤直连**。
+
+**验证**：`internal/engine/mihomo_test.go`
+`TestNewMihomoRejectsFrontedNodes`（4 条放行 + 6 条拒绝，并断言错误信息含"前置 / 本机 IP / 节点名"）、
+`TestFrontedNodeFallsBackInsteadOfDirectDialing`（走真注册链：`mode=mihomo` + 前置节点 →
+拿到的必须是 sing-box 出口、日志里必须有 `mihomo 接不了…`）；
+`internal/proxy/upstream_engine_test.go::TestFrontRejectionFallsBack` 锁死"工厂报错就必须回退、
+绝不许当成直连放行"。`scripts/check.ps1` 全绿。
+
+**真做前置的后续方向（已读实，未实现）**：mihomo 的 `BasicOption` 有一个
+`DialerForAPI C.Dialer` 字段（`adapter/outbound/base.go:204`），注释写明
+"the dialer used for API usage has **higher priority** than all the above configurations"，
+`NewDialer` 也优先取它。所以真接前置不必走 `dialer-proxy`（那要一个全局 hub、与
+"每节点一个独立出站"冲突），而是**自己实现一个 `C.Dialer`**（在它的 `DialContext` 里先经
+前置拨到目标），赋给各协议的 `BasicOption.DialerForAPI` 即可 —— 前置那一跳我们自己已经有
+`proxy.Front`（socks5 / http / direct）可用。
+
 ## 8. 第 ⑤ 步完成情况（截至第 18 轮）：开关可用、默认未翻
 
 ### 已完成

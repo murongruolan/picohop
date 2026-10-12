@@ -1,10 +1,116 @@
 package engine
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"chainproxy/internal/config"
+	"chainproxy/internal/proxy"
 )
+
+// TestNewMihomoRejectsFrontedNodes 锁死"配了前置的节点绝不许走 mihomo 单出站"。
+//
+// 【为什么这是本项目最不能接受的失败方式】MihomoUpstream 只做单出站拨号，
+// front 参数收下了也不用。一个配了前置的节点若被放行，它就会从**本机 IP**
+// 出去 —— 链式代理/住宅出口被绕开，而且完全静默（链路照样能通）。
+// 所以这里表驱动锁死"哪些形态必须拒、哪些必须放行"。
+func TestNewMihomoRejectsFrontedNodes(t *testing.T) {
+	directFront := config.Front{Type: config.FrontTypeDirect, TimeoutMs: 10000}
+	globalSocks := config.Front{Type: config.FrontTypeSocks5, Host: "127.0.0.1", Port: 10808, TimeoutMs: 10000}
+
+	node := func(front string) config.Node {
+		return config.Node{
+			ID: "n1", Name: "测试节点", Protocol: config.ProtocolVLESS,
+			Server: "1.2.3.4", Port: 443, UUID: "11111111-2222-3333-4444-555555555555",
+			Front: front,
+		}
+	}
+
+	t.Run("直连（前置为空）必须照常放行", func(t *testing.T) {
+		if _, err := NewMihomo(node(""), directFront, nil); err != nil {
+			t.Fatalf("直连节点不该被拒，实际 %v", err)
+		}
+	})
+	t.Run("前置是纯空白（等于没选）也放行", func(t *testing.T) {
+		if _, err := NewMihomo(node("   "), directFront, nil); err != nil {
+			t.Fatalf("空白前置等同于直连，不该被拒，实际 %v", err)
+		}
+	})
+	t.Run("直连节点配零值前置不受影响", func(t *testing.T) {
+		// 零值 Front 是"调用方没给前置信息"，与节点的直连声明不冲突。
+		if _, err := NewMihomo(node(""), config.Front{}, nil); err != nil {
+			t.Fatalf("直连节点不该因为零值前置被拒，实际 %v", err)
+		}
+	})
+	t.Run("全局前置本身就是 direct 时放行（等效直连）", func(t *testing.T) {
+		if _, err := NewMihomo(node(config.FrontGlobal), directFront, nil); err != nil {
+			t.Fatalf("全局前置是直连时不该被拒，实际 %v", err)
+		}
+	})
+
+	reject := map[string]struct {
+		node  config.Node
+		front config.Front
+	}{
+		"用的是非直连的全局前置": {node(config.FrontGlobal), globalSocks},
+		"全局前置类型残缺（空串=按 socks5 跑）": {
+			node(config.FrontGlobal), config.Front{Host: "127.0.0.1", Port: 10808},
+		},
+		"前置指向另一个节点":          {node("node-b-id"), directFront},
+		"前置指向另一个节点（全局也非直连）":  {node("node-b-id"), globalSocks},
+		"节点自称直连但调用方递了非直连前置":  {node(""), globalSocks},
+		"以节点 ID 为前置时即使传直连也拒": {node("node-b-id"), config.Front{Type: config.FrontTypeDirect}},
+	}
+	for name, c := range reject {
+		t.Run(name+"：必须拒绝", func(t *testing.T) {
+			up, err := NewMihomo(c.node, c.front, nil)
+			if err == nil {
+				t.Fatalf("这种形态会从本机 IP 静默直连，必须拒绝（实际放行：%v）", up)
+			}
+			msg := err.Error()
+			for _, want := range []string{"前置", "本机 IP", c.node.Name} {
+				if !strings.Contains(msg, want) {
+					t.Errorf("错误信息要说到点子上，缺 %q：%s", want, msg)
+				}
+			}
+		})
+	}
+}
+
+// TestFrontedNodeFallsBackInsteadOfDirectDialing 走真实的注册链，
+// 锁死"前置缺口 → 上层回退 sing-box"，而不是被放行成静默直连。
+//
+// 这里用的是 engine 包自己注册的真工厂（register.go 的 init 注册了 sing-box 与 mihomo），
+// 只有"构造"没有"启动"，所以不需要网络；sing-box 实例要到 Start 才建。
+func TestFrontedNodeFallsBackInsteadOfDirectDialing(t *testing.T) {
+	proxy.SetEngineMode("mihomo")
+	t.Cleanup(func() { proxy.SetEngineMode("") })
+
+	n := config.Node{
+		ID: "n1", Name: "配了前置的节点", Protocol: config.ProtocolVLESS,
+		Server: "1.2.3.4", Port: 443, UUID: "11111111-2222-3333-4444-555555555555",
+		Front: "node-b-id",
+	}
+	var logged []string
+	up, err := proxy.NewUpstream(n, config.Front{
+		Type: config.FrontTypeSocks5, Host: "127.0.0.1", Port: 10808, TimeoutMs: 10000,
+	}, func(format string, args ...any) {
+		logged = append(logged, fmt.Sprintf(format, args...))
+	})
+	if err != nil {
+		t.Fatalf("配了前置的节点应当回退 sing-box 而不是直接失败，实际 %v", err)
+	}
+	if _, isMihomo := up.(*MihomoUpstream); isMihomo {
+		t.Fatal("配了前置的节点绝不能交给 mihomo：那会从本机 IP 静默直连")
+	}
+	if _, isSing := up.(*Upstream); !isSing {
+		t.Fatalf("应当回退成 sing-box 出口，实际 %T", up)
+	}
+	if !strings.Contains(strings.Join(logged, "\n"), "mihomo 接不了") {
+		t.Errorf("回退必须留下日志说明原因，实际日志：%q", logged)
+	}
+}
 
 // TestVlessOptionMapping 锁死"我们的节点 → mihomo vless 选项"的映射。
 //
