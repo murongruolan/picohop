@@ -240,6 +240,8 @@ async function genKeys() {
     const k = await api.genWireGuardKey()
     form.wireguard.privateKey = k.privateKey || ''
     form.wireguard.peerPublicKey = form.wireguard.peerPublicKey || ''
+    // 公钥是要交给服务端登记的公开信息，不是凭据，所以照旧走普通复制、不安排清理；
+    // 私钥（下面的 copyText）才是必须清的。
     await api.copyText(k.publicKey || '')
     notify(
       'success',
@@ -251,10 +253,12 @@ async function genKeys() {
   }
 }
 
+// 复制**凭据**（UUID / WireGuard 私钥）：走敏感复制，后端到点自动清剪贴板。
+// 非敏感内容（上面的公钥、别处的日志/端口）不要走这里。
 async function copyText(t, label) {
   try {
-    await api.copyText(t || '')
-    notify('success', `已复制${label}`, '')
+    const secs = await api.copySensitiveText(t || '')
+    notify('success', `已复制${label}`, `${secs} 秒后会自动从剪贴板清除`)
   } catch (e) {
     notify('error', '复制失败', String(e?.message || e))
   }

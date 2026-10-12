@@ -28,8 +28,10 @@ watch(result, (r) => {
 
 async function copyLink() {
   try {
-    await api.copyText(link.value)
-    notify('success', '已复制分享链接', '')
+    // 走敏感复制（后端到点自动清剪贴板）：链接里是节点的全部连接凭据，
+    // 粘贴出去之后没有任何理由继续留在剪贴板上，任何能读剪贴板的程序都能拿走它。
+    const secs = await api.copySensitiveText(link.value)
+    notify('success', '已复制分享链接', `${secs} 秒后会自动从剪贴板清除`)
   } catch (e) {
     notify('error', '复制失败', String(e?.message || e))
   }

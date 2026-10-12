@@ -155,6 +155,9 @@ export const api = {
   shareNode: (id) => call('ShareNode', id),
   saveShareImage: (id) => call('SaveShareImage', id),
   copyText: (t) => call('CopyText', t),
+  // 含凭据的复制（分享链接 / UUID / 私钥）：后端会在 sensitiveClipboardTTL
+  // 之后自动清理剪贴板，返回值是"多少秒后清理"，用于如实提示用户。
+  copySensitiveText: (t) => call('CopySensitiveText', t),
 
   // 测试
   runTest: (ids, kind) => call('RunTest', ids, kind),

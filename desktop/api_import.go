@@ -353,6 +353,9 @@ func (a *API) SaveShareImage(id string) (string, error) {
 }
 
 // CopyText 把文本写进剪贴板。
+//
+// 【只用于非敏感内容】日志、本地代理地址、端口这类东西用户往往要反复粘贴，
+// 所以不安排清理。含凭据的内容（分享链接、UUID、私钥）必须走 CopySensitiveText。
 func (a *API) CopyText(text string) error {
 	if strings.TrimSpace(text) == "" {
 		return fmt.Errorf("没有可复制的内容")
@@ -361,6 +364,28 @@ func (a *API) CopyText(text string) error {
 		return fmt.Errorf("写入剪贴板失败：系统剪贴板暂时不可用")
 	}
 	return nil
+}
+
+// CopySensitiveText 把含凭据的文本写进剪贴板，并在 sensitiveClipboardTTL 之后自动清理（审查 #25）。
+//
+// 返回清理前的秒数，供界面如实告诉用户"这条链接会在多少秒后消失"——
+// 这个数字只有后端知道，写死在前端迟早会和常量对不上。
+//
+// 【为什么这类复制要清而其它复制不清】见 clipboard_guard.go 顶部。
+func (a *API) CopySensitiveText(text string) (int, error) {
+	if strings.TrimSpace(text) == "" {
+		return 0, fmt.Errorf("没有可复制的内容")
+	}
+	g := a.clipGuard
+	if g == nil {
+		// 兜底：直接 &API{} 构造的测试/异常路径没有 clipGuard。
+		// 注意不要写回 a.clipGuard —— 那会变成并发写字段。
+		g = newClipboardGuard(a.clipboardText, a.setClipboard, sensitiveClipboardTTL)
+	}
+	if !g.copySensitive(text) {
+		return 0, fmt.Errorf("写入剪贴板失败：系统剪贴板暂时不可用")
+	}
+	return int(sensitiveClipboardTTL / time.Second), nil
 }
 
 // ------------------------------------------------------------------

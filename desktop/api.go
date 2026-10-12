@@ -43,6 +43,11 @@ type API struct {
 
 	unsub func()
 
+	// clipGuard 负责「敏感内容（分享链接 / 凭据）复制后延迟清理剪贴板」。
+	// 见 clipboard_guard.go 顶部：为什么全项目只有这一类复制要清，以及
+	// 为什么到点不是无条件清空。
+	clipGuard *clipboardGuard
+
 	mu       sync.Mutex
 	scanning bool
 
@@ -73,7 +78,13 @@ type API struct {
 }
 
 // NewAPI 创建 API 实例。devOpen 为空表示正常运行。
-func NewAPI(devOpen string) *API { return &API{devOpen: devOpen} }
+func NewAPI(devOpen string) *API {
+	a := &API{devOpen: devOpen}
+	// 读写仍然走 a 上的那两个方法（它们自己处理 wapp 还没就位的情况），
+	// 这样清理逻辑本身与 Wails 解耦、可单测（见 clipboard_guard.go）。
+	a.clipGuard = newClipboardGuard(a.clipboardText, a.setClipboard, sensitiveClipboardTTL)
+	return a
+}
 
 // ServiceStartup 是 Wails v3 的服务启动钩子（v2 里是 OnStartup + ctx 字段）。
 //
@@ -148,6 +159,9 @@ func (a *API) ServiceShutdown() error {
 	if a.unsub != nil {
 		a.unsub()
 	}
+	// 停掉"敏感内容延迟清理"的定时器：退出过程中不再去碰剪贴板
+	// （理由见 clipboardGuard.release 的注释）。
+	a.clipGuard.release()
 	if a.app != nil {
 		a.app.Close()
 	}
