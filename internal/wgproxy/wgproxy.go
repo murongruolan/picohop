@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -38,6 +39,17 @@ import (
 	"chainproxy/internal/proxy"
 )
 
+// 握手等待的两个常数。
+const (
+	// handshakeTimeout 是"等首包握手"的总时长。
+	handshakeTimeout = 12 * time.Second
+	// handshakePollInterval 是轮询 UAPI 里 last_handshake_time 的间隔。
+	handshakePollInterval = 300 * time.Millisecond
+)
+
+// errStoppedDuringHandshake 表示隧道还没握手完就被 Stop 掉了。
+var errStoppedDuringHandshake = errors.New("WireGuard 隧道在握手完成前被停止")
+
 // Upstream 是一条 WireGuard 链路的实现，满足 proxy.Upstream 接口。
 type Upstream struct {
 	node  config.Node
@@ -51,6 +63,25 @@ type Upstream struct {
 	bind   *socksBind
 	local  netip.Addr
 	closed bool
+
+	// startMu 串行化**整个** Start（含下面那段不持 mu 的"等握手"）。
+	//
+	// 【为什么需要第二把锁（审查 #27）】mu 保护的是"状态"：Stop() 与 Dial() 必须能
+	// 随时拿到它，绝不能被 12 秒的握手等待挡住。但"启动过程"本身仍然必须串行 ——
+	// 两个并发的 Start 若各建一条隧道，后一个会覆盖前一个，
+	// 前一条的设备/UDP 套接字/收包协程就再也没人关了。
+	startMu sync.Mutex
+
+	// stopping 是"当前这一轮 Start"的停机信号：stopLocked 会关掉它，
+	// 让在锁外等握手的 Start 立刻收手，而不是干等满 12 秒。每轮 Start 换一个新的。
+	stopping chan struct{}
+
+	// handshaking 表示"设备已建好、但握手还没确认"。
+	//
+	// 【为什么必须显式记这个状态】旧实现里 Dial 靠"和 Start 抢同一把锁"顺带保证
+	// 不会用到还没握手的隧道；现在 Start 在等握手时已经放开锁，就必须自己拒绝
+	// 这个窗口里的拨号（fail-closed），不能把没通的隧道当通的用。
+	handshaking bool
 }
 
 // New 按配置构造 WireGuard 出口（此时还不会建立隧道）。
@@ -76,46 +107,98 @@ func (u *Upstream) log(format string, args ...any) {
 }
 
 // Start 建立 UDP 外层通道 → 用户态网络栈 → WireGuard 设备 → 等待握手。
+//
+// 【锁的纪律（审查 #27）】12 秒的握手等待**绝不能**放在 u.mu 里做：
+// 那会把 Stop()（停止/重启节点、取消测试、端口占用回滚）和 Dial() 一起堵住，
+// 现象是"点了停止没反应、要卡十几秒"。所以这里拆成两段：
+// setupDevice 持锁把设备建好（建好即发布，Stop 当场就能关掉它），
+// 等握手在**锁外**做，并且可以被 Stop 立刻打断。
 func (u *Upstream) Start(ctx context.Context, front proxy.Front) error {
+	u.startMu.Lock()
+	defer u.startMu.Unlock()
+
+	dev, stopCh, err := u.setupDevice(ctx, front)
+	if err != nil {
+		return err
+	}
+	if dev == nil {
+		return nil // 已经有一条建好且握手确认过的隧道
+	}
+
+	// --- 6. 等待握手完成（不持 u.mu）---
+	werr := u.waitHandshake(ctx, stopCh, dev.IpcGet, handshakeTimeout)
+
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.handshaking = false
+	if u.dev != dev || u.stopping != stopCh {
+		// 这一轮已经被 Stop 换掉了：设备早已被 stopLocked 关干净，
+		// 此刻 u.* 可能已经属于下一轮，这里绝不能再碰，只需要不报成功。
+		if werr == nil {
+			werr = errStoppedDuringHandshake
+		}
+		return werr
+	}
+	if werr != nil {
+		// 握手失败时把设备状态打出来，便于区分"配置没生效"和"对端不回包"：
+		// 看得到 public_key / endpoint / allowed_ip / preshared_key 就说明配置进去了，
+		// 再看 tx_bytes / rx_bytes 就能判断包到底有没有发出去、有没有收到。
+		u.log("握手失败，设备状态：\n%s", u.dumpDeviceState())
+		_ = u.stopLocked()
+		return werr
+	}
+	u.log("隧道已建立，出口经 %s:%d", u.node.Server, u.node.Port)
+	u.log("设备状态：\n%s", u.dumpDeviceState())
+	return nil
+}
+
+// setupDevice 建好一条 WireGuard 隧道（外层 UDP + 用户态栈 + 设备 + UAPI），但**不等握手**。
+//
+// 全程持 u.mu：中间资源必须"要么全部可见、要么全不可见"，否则并发的 Stop()
+// 会看到半截状态（例如 bind 挂上了、dev 还是 nil）。建好之后立刻发布到 u.*，
+// 正是为了握手等待期间的 Stop() 能真正把它们关掉。
+//
+// 返回 (nil, nil, nil) 表示已经有一条建好且握手确认过的隧道，调用方直接成功返回。
+func (u *Upstream) setupDevice(ctx context.Context, front proxy.Front) (*device.Device, <-chan struct{}, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if u.dev != nil {
-		return nil
+		return nil, nil, nil
 	}
 	w := u.node.WireGuard
 	if w == nil {
-		return fmt.Errorf("缺少 WireGuard 配置")
+		return nil, nil, fmt.Errorf("缺少 WireGuard 配置")
 	}
 	if front == nil {
 		front = u.front
 	}
 	if front == nil {
-		return fmt.Errorf("没有可用的前置代理")
+		return nil, nil, fmt.Errorf("没有可用的前置代理")
 	}
 
 	// --- 1. 外层 UDP：经前置代理的 SOCKS5 UDP ASSOCIATE ---
 	udpCh, err := front.DialUDP(ctx)
 	if err != nil {
-		return fmt.Errorf("无法经前置代理建立 UDP 通道：%w", err)
+		return nil, nil, fmt.Errorf("无法经前置代理建立 UDP 通道：%w", err)
 	}
 
 	// --- 2. 解析密钥 ---
 	privHex, err := keyToHex(w.PrivateKey)
 	if err != nil {
 		udpCh.Close()
-		return fmt.Errorf("私钥无效：%w", err)
+		return nil, nil, fmt.Errorf("私钥无效：%w", err)
 	}
 	pubHex, err := keyToHex(w.PeerPublicKey)
 	if err != nil {
 		udpCh.Close()
-		return fmt.Errorf("对端公钥无效：%w", err)
+		return nil, nil, fmt.Errorf("对端公钥无效：%w", err)
 	}
 
 	// --- 3. 用户态网络栈 ---
 	localAddr, err := parseAddrWithPrefix(w.Address)
 	if err != nil {
 		udpCh.Close()
-		return fmt.Errorf("隧道地址无效：%w", err)
+		return nil, nil, fmt.Errorf("隧道地址无效：%w", err)
 	}
 	u.local = localAddr.Addr()
 
@@ -127,7 +210,7 @@ func (u *Upstream) Start(ctx context.Context, front proxy.Front) error {
 	tunDev, tnet, err := netstack.CreateNetTUN([]netip.Addr{u.local}, dnsAddrs, mtu)
 	if err != nil {
 		udpCh.Close()
-		return fmt.Errorf("创建用户态网络栈失败：%w", err)
+		return nil, nil, fmt.Errorf("创建用户态网络栈失败：%w", err)
 	}
 
 	// --- 4. WireGuard 设备 ---
@@ -145,7 +228,7 @@ func (u *Upstream) Start(ctx context.Context, front proxy.Front) error {
 		if lerr != nil || len(addrs) == 0 {
 			_ = tunDev.Close()
 			udpCh.Close()
-			return fmt.Errorf("无法解析 WireGuard 服务器地址 %q：%v", u.node.Server, lerr)
+			return nil, nil, fmt.Errorf("无法解析 WireGuard 服务器地址 %q：%v", u.node.Server, lerr)
 		}
 		bind.peer = netip.AddrPortFrom(addrs[0], uint16(u.node.Port))
 	}
@@ -184,7 +267,7 @@ func (u *Upstream) Start(ctx context.Context, front proxy.Front) error {
 		psHex, perr := keyToHex(ps)
 		if perr != nil {
 			dev.Close()
-			return fmt.Errorf("预共享密钥无效：%w", perr)
+			return nil, nil, fmt.Errorf("预共享密钥无效：%w", perr)
 		}
 		fmt.Fprintf(&sb, "preshared_key=%s\n", psHex)
 	}
@@ -192,27 +275,21 @@ func (u *Upstream) Start(ctx context.Context, front proxy.Front) error {
 	if err := dev.IpcSet(sb.String()); err != nil {
 		dev.Close()
 		udpCh.Close()
-		return fmt.Errorf("应用 WireGuard 配置失败：%w", err)
+		return nil, nil, fmt.Errorf("应用 WireGuard 配置失败：%w", err)
 	}
 	if err := dev.Up(); err != nil {
 		dev.Close()
-		return fmt.Errorf("启动 WireGuard 失败：%w", err)
+		return nil, nil, fmt.Errorf("启动 WireGuard 失败：%w", err)
 	}
 
 	u.dev, u.tnet, u.tunDev, u.bind = dev, tnet, tunDev, bind
-
-	// --- 6. 等待握手完成 ---
-	if err := u.waitHandshake(ctx, 12*time.Second); err != nil {
-		// 握手失败时把设备状态打出来，便于区分"配置没生效"和"对端不回包"：
-		// 看得到 public_key / endpoint / allowed_ip / preshared_key 就说明配置进去了，
-		// 再看 tx_bytes / rx_bytes 就能判断包到底有没有发出去、有没有收到。
-		u.log("握手失败，设备状态：\n%s", u.dumpDeviceState())
-		_ = u.stopLocked()
-		return err
-	}
-	u.log("隧道已建立，出口经 %s:%d", u.node.Server, u.node.Port)
-	u.log("设备状态：\n%s", u.dumpDeviceState())
-	return nil
+	// 【必须复位 closed】Stop() 之后同一个实例再次 Start 是允许的（重启同一条出口）。
+	// 若不复位，下一轮 stopLocked 会因为 closed==true 直接返回：新建设备的收包协程
+	// 与 UDP 套接字永远没人关（泄漏，且端口/连接一直挂着）。
+	u.closed = false
+	u.stopping = make(chan struct{})
+	u.handshaking = true
+	return dev, u.stopping, nil
 }
 
 // dumpDeviceState 返回 wireguard-go 的 UAPI 状态（含握手指纹、收发字节数）。
@@ -228,50 +305,85 @@ func (u *Upstream) dumpDeviceState() string {
 }
 
 // waitHandshake 轮询 WireGuard 的 last_handshake，确认真的握手上了。
-func (u *Upstream) waitHandshake(ctx context.Context, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
+//
+// get 由调用方传进来（生产上是 dev.IpcGet），而不是在这里读 u.dev，有两个原因：
+//  1. 调用方是在持锁时把 dev 取出来的，而这段轮询恰恰在**解锁之后**跑。
+//     直接读 u.dev 既是数据竞争，又**真的会 panic**：Stop 把 u.dev 置空之后
+//     才被调度起来的轮询协程，会对着 nil 调 IpcGet；
+//  2. 传函数就能在单测里注入"卡住不返回"的假 IpcGet，不必真建一个设备。
+//
+// 【为什么固定一个轮询协程 + done 通道（审查 #27）】
+// IpcGet 要抢 wireguard-go 的 ipcMutex，可能长时间不返回，且**没法从外面打断**。
+// 旧实现每轮（300ms）都新开一个协程、2 秒收不到就 continue：一次 12 秒的等待能堆出
+// 好几个收不回来的协程，反复重连就是无限堆积，而它们醒来时设备可能已经被 Stop 关掉。
+// 现在固定一个协程负责轮询，结果送进带缓冲的通道；调用方只 select
+// 结果/超时/ctx 取消/停机信号，返回前 close(done)，轮询协程在下一次边界立刻退出。
+func (u *Upstream) waitHandshake(ctx context.Context, stop <-chan struct{}, get func() (string, error), timeout time.Duration) error {
+	done := make(chan struct{})
+	defer close(done)
+
 	type ipcResult struct {
 		out string
 		err error
 	}
-	for time.Now().Before(deadline) {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(300 * time.Millisecond):
+	// 缓冲 1：调用方已经返回（超时/取消）时，轮询协程也能把结果放下就走，不会卡在发送上。
+	resCh := make(chan ipcResult, 1)
+	ticker := time.NewTicker(handshakePollInterval)
+	defer ticker.Stop()
+	go func() {
+		for {
+			out, err := get()
+			select {
+			case resCh <- ipcResult{out, err}:
+			case <-done:
+				return
+			}
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+			}
 		}
+	}()
 
-		// 把 IpcGet 放进 goroutine 并加超时：wireguard-go 的 ipcMutex 在设备
-		// 密集握手 / 通道重建时可能被长时间持有，直接调用会把启动流程整个卡死。
-		ch := make(chan ipcResult, 1)
-		go func() {
-			s, e := u.dev.IpcGet()
-			ch <- ipcResult{s, e}
-		}()
-		var res ipcResult
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
 		select {
-		case res = <-ch:
-		case <-time.After(2 * time.Second):
-			continue
 		case <-ctx.Done():
 			return ctx.Err()
-		}
-		if res.err != nil {
-			continue
-		}
-		for _, line := range strings.Split(res.out, "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" {
+		case <-stop:
+			// 设备已被 Stop() 关掉：如实报"被停止"，不要伪装成超时。
+			return errStoppedDuringHandshake
+		case <-timer.C:
+			return fmt.Errorf("WireGuard 握手超时（%d 秒）：请确认前置代理支持 UDP、服务端地址/密钥正确，且服务端未被墙", int(timeout.Seconds()))
+		case res := <-resCh:
+			if res.err != nil {
 				continue
 			}
-			if v := strings.TrimPrefix(line, "last_handshake_time_sec="); v != line {
-				if secs, perr := strconv.ParseInt(v, 10, 64); perr == nil && secs > 0 {
-					return nil
-				}
+			if handshakeSeen(res.out) {
+				return nil
 			}
 		}
 	}
-	return fmt.Errorf("WireGuard 握手超时（%d 秒）：请确认前置代理支持 UDP、服务端地址/密钥正确，且服务端未被墙", int(timeout.Seconds()))
+}
+
+// handshakeSeen 判断 UAPI 状态里有没有出现有效的 last_handshake_time_sec。
+//
+// 【为什么单独拆成一个纯函数】不碰真实设备就能测；顺带把"什么算握上了"
+// 这件事只留一份定义，免得以后有人在这里和别处各写一套。
+func handshakeSeen(out string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		v := strings.TrimPrefix(line, "last_handshake_time_sec=")
+		if v == line {
+			continue
+		}
+		if secs, err := strconv.ParseInt(v, 10, 64); err == nil && secs > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // Dial 从用户态网络栈建立到目标的连接。
@@ -281,9 +393,17 @@ func (u *Upstream) waitHandshake(ctx context.Context, timeout time.Duration) err
 func (u *Upstream) Dial(ctx context.Context, front proxy.Front, target string) (net.Conn, error) {
 	u.mu.Lock()
 	tnet := u.tnet
+	handshaking := u.handshaking
 	u.mu.Unlock()
 	if tnet == nil {
 		return nil, fmt.Errorf("WireGuard 隧道尚未启动")
+	}
+	// 【为什么这里要显式拒绝（审查 #27）】Start 现在是在锁外等握手的，而这个窗口里
+	// u.tnet 已经发布出来了。旧实现靠"Dial 和 Start 抢同一把锁"顺带保证拨号只发生在
+	// 握手确认之后；锁不再覆盖握手等待，就得在这里自己把住，宁可明确报错，
+	// 也不能把一条还没通的隧道当通的用（那会变成一堆查不出原因的连接超时）。
+	if handshaking {
+		return nil, fmt.Errorf("WireGuard 隧道正在建立（尚未完成握手），请稍后重试")
 	}
 
 	host, port, err := proxy.SplitHostPort(target, 443)
@@ -331,6 +451,14 @@ func (u *Upstream) stopLocked() error {
 		return nil
 	}
 	u.closed = true
+	// 先打断"锁外等握手"的那一轮：关掉信号之后 waitHandshake 立刻返回
+	// （否则它要干等满 handshakeTimeout 才收手）。它也顺带告诉 Start：
+	// 这一轮已经作废，不要再对 u.* 做任何事。
+	if u.stopping != nil {
+		close(u.stopping)
+		u.stopping = nil
+	}
+	u.handshaking = false
 
 	var firstErr error
 	// 【顺序：必须先关 bind，再关设备】
