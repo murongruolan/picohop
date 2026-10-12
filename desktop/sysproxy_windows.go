@@ -84,6 +84,13 @@ func writeSysProxySetting(name string, value any) error {
 	}
 }
 
+// sysProxyWrite 是"往注册表写一个值"的接缝，生产环境就是 writeSysProxySetting。
+//
+// 【为什么要留这个接缝】"先写地址、最后开开关"这条顺序，只有在**中间某一步失败**
+// 时才看得出对错，而失败在真实注册表上没法稳定制造；单测把它换成假的 writer，
+// 就能逐个位置注入失败。测试不能直接写真注册表 —— 那会弄脏用户自己配的系统代理。
+var sysProxyWrite = writeSysProxySetting
+
 // notifySysProxyChanged 通知系统"网络设置变了"，让浏览器等程序立刻重新读取
 // （只写注册表的话，已经跑着的程序可能要等下次启动才认）。
 func notifySysProxyChanged() {
@@ -108,17 +115,26 @@ func enableSystemProxy(addr string) error {
 		}
 	}
 
-	if err := writeSysProxySetting("ProxyEnable", uint32(1)); err != nil {
+	// 【顺序即安全：地址先写，开关**最后**写】（审查 #30）
+	//
+	// 注册表没有事务，这几次写的中间任何一步都可能失败（被安全软件拦、键被别的
+	// 程序占着、句柄失效）。如果第一步就写 ProxyEnable=1，而后面 ProxyServer 写失败，
+	// 用户就停在"代理开着、地址还是旧的（甚至是空的）"这个状态：浏览器把流量发给一个
+	// 没人监听的地址，等于断网 —— 而界面上这一步是**报错**的，用户以为没生效。
+	// 反过来先写地址/绕过表/清 PAC，最后才开开关：中途失败时开关保持原值，系统要么
+	// 照旧不用代理、要么照旧用用户自己的代理，最坏也只是地址被改成了我们的本地口
+	// （备份文件还在，下次启动 restoreSystemProxyIfNeeded 会自愈）。
+	if err := sysProxyWrite("ProxyServer", addr); err != nil {
 		return err
 	}
-	if err := writeSysProxySetting("ProxyServer", addr); err != nil {
-		return err
-	}
-	if err := writeSysProxySetting("ProxyOverride", proxyBypass); err != nil {
+	if err := sysProxyWrite("ProxyOverride", proxyBypass); err != nil {
 		return err
 	}
 	// 清掉 PAC：它和"手动代理"同时存在时会优先 PAC，导致我们的地址被忽略
-	if err := writeSysProxySetting("AutoConfigURL", ""); err != nil {
+	if err := sysProxyWrite("AutoConfigURL", ""); err != nil {
+		return err
+	}
+	if err := sysProxyWrite("ProxyEnable", uint32(1)); err != nil {
 		return err
 	}
 	notifySysProxyChanged()
