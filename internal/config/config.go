@@ -69,6 +69,19 @@ type Settings struct {
 	// 做成可配置是因为这类免费接口随时可能限流或失效，换一个不该要改代码。
 	IPInfoURL string `json:"ipInfoUrl"`
 
+	// ---- 全局节点 / 系统代理 ----
+	//
+	// 与主流客户端一样的两种用法：
+	//   分端口模式：每个节点各开一个本地端口，自己把程序指到某个端口；
+	//   全局代理模式：把 Windows 系统代理指到**全局节点**的端口，全机走它。
+	//
+	// GlobalNodeID 只能有一个（空 = 未设置）。
+	// SystemProxy 为真时表示"全局代理模式开着" —— 注意它**不**在启动时自动恢复：
+	// 上次退出时若指向的端口已经没人监听，自动恢复等于把浏览器指向死端口。
+	// 启动时先还原系统代理、把这个开关置回 false，由用户点一下再开（见 docs）。
+	GlobalNodeID string `json:"globalNodeId"`
+	SystemProxy  bool   `json:"systemProxy"`
+
 	// ---- 底部栏目 ----
 	//
 	// 这三项是界面的布局偏好，跟着配置一起走：

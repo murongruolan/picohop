@@ -109,12 +109,36 @@ func (a *API) ServiceStartup(ctx context.Context, options application.ServiceOpt
 	// 把外壳（托盘/快捷键）的初始化结果写进日志，并把后端就绪前攒下的告警补投给界面。
 	a.reportShellStatus(inst)
 
+	// 【先自愈系统代理，再做别的】
+	//
+	// 改系统代理是**进程外**状态：上次被强杀/崩溃时来不及还原，用户就会在
+	// "浏览器指向一个没人监听的端口"的状态下继续用整台机器。所以启动第一件事
+	// 是检查有没有留下备份，有就按备份还原。
+	if restoreSystemProxyIfNeeded() {
+		inst.Logf("检测到上次退出时未还原的系统代理，已自动恢复成原来的设置")
+	}
+	// 备份既然已经还原，开关也必须跟着对齐 —— 否则界面显示"全局代理开着"，
+	// 而实际系统代理已经被我们还原了，两边说的不是一回事。
+	if s := inst.Settings(); s.SystemProxy {
+		s.SystemProxy = false
+		_ = inst.SetSettings(s)
+		inst.Logf("启动时把「全局代理模式」置为关闭（系统代理已还原；要重新开启请点一下）")
+	}
+
 	inst.AutoActivate()
 	return nil
 }
 
 // ServiceShutdown 是 Wails v3 的服务关闭钩子（v2 里是 OnShutdown）。
 func (a *API) ServiceShutdown() error {
+	// 退出前一定要把系统代理还回去：这是**进程外**的状态，漏了就是用户整机断网。
+	if a.app != nil {
+		if a.app.Settings().SystemProxy {
+			if err := disableSystemProxy(); err != nil {
+				log.Printf("退出时还原系统代理失败：%v", err)
+			}
+		}
+	}
 	if a.unsub != nil {
 		a.unsub()
 	}
@@ -218,6 +242,92 @@ func (a *API) GetNodes() []app.NodeView {
 		return []app.NodeView{}
 	}
 	return a.app.Nodes()
+}
+
+// SetGlobalNode 设置"全局节点"（整个列表只能有一个；传空串表示取消）。
+//
+// 它只是"指定用哪个节点做全局代理"，本身不改系统设置 —— 改系统代理是
+// SetSystemProxyMode(true) 的事。分开是有意的：指定节点没有副作用，随时可改。
+func (a *API) SetGlobalNode(id string) error {
+	if a.app == nil {
+		return fmt.Errorf("应用尚未就绪")
+	}
+	s := a.app.Settings()
+	s.GlobalNodeID = id
+	if err := a.app.SetSettings(s); err != nil {
+		return err
+	}
+	if id == "" {
+		a.app.Logf("已取消全局节点")
+	} else {
+		a.app.Logf("已把「%s」设为全局节点", a.nodeName(id))
+	}
+	return nil
+}
+
+// SetSystemProxyMode 开/关"全局代理模式"。
+//
+// 开：把 Windows 系统代理指到全局节点的本地端口；关：还原（有备份按备份还原）。
+// **必须先备份再改**：进程外状态一旦没还原，用户就整机断网（见 sysproxy_windows.go）。
+func (a *API) SetSystemProxyMode(on bool) error {
+	if a.app == nil {
+		return fmt.Errorf("应用尚未就绪")
+	}
+	if !on {
+		if err := disableSystemProxy(); err != nil {
+			return err
+		}
+		s := a.app.Settings()
+		s.SystemProxy = false
+		_ = a.app.SetSettings(s)
+		a.app.Logf("已关闭全局代理模式，系统代理已还原")
+		a.app.Notify("info", "系统代理已还原", "")
+		return nil
+	}
+
+	s := a.app.Settings()
+	if s.GlobalNodeID == "" {
+		return fmt.Errorf("还没有设置全局节点：先在节点右键菜单里选「设为全局节点」")
+	}
+	var port int
+	var state string
+	for _, v := range a.app.Nodes() {
+		if v.ID == s.GlobalNodeID {
+			port, state = v.ListenPort, v.State
+			break
+		}
+	}
+	if port == 0 {
+		return fmt.Errorf("全局节点不存在或没有本地端口")
+	}
+	if state != "running" {
+		return fmt.Errorf("全局节点没有在运行：先激活它，否则系统代理会指向一个没人监听的口")
+	}
+
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	if err := enableSystemProxy(addr); err != nil {
+		return err
+	}
+	s.SystemProxy = true
+	if err := a.app.SetSettings(s); err != nil {
+		return err
+	}
+	a.app.Logf("已开启全局代理模式：系统代理 → %s（全局节点「%s」）", addr, a.nodeName(s.GlobalNodeID))
+	a.app.Notify("success", "系统代理已指向全局节点", addr)
+	return nil
+}
+
+// nodeName 查节点名（日志与通知里用；查不到就回退成 id）。
+func (a *API) nodeName(id string) string {
+	if a.app == nil {
+		return id
+	}
+	for _, v := range a.app.Nodes() {
+		if v.ID == id {
+			return v.Name
+		}
+	}
+	return id
 }
 
 // GetConnections 返回连接表（活动的在前，随后是最近关闭的）。
