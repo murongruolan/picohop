@@ -9,4 +9,5 @@ import "chainproxy/internal/proxy"
 // 而主程序只要 import 本包就能获得这五种协议的能力。
 func init() {
 	proxy.RegisterSingBoxFactory(New)
+	proxy.RegisterMihomoFactory(NewMihomo)
 }

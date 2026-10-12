@@ -43,12 +43,30 @@ type Upstream interface {
 var (
 	wgFactory   func(config.Node, Front) (Upstream, error)
 	singFactory func(config.Node, config.Front, func(string, ...any)) (Upstream, error)
+	// mihomoFactory 由 internal/engine 在 init 时注册（换装期与 sing-box 并存）。
+	mihomoFactory func(config.Node, config.Front, func(string, ...any)) (Upstream, error)
+
+	// engineMode 决定优先用哪个内核：空串 / "singbox" = sing-box；"mihomo" = 优先 mihomo。
+	// 【为什么默认 sing-box】换装分步走：mihomo 只在明确打开时启用，而且接不了的节点
+	// 会自动回退 —— 任何时刻都不会因为换装而少一个可用节点。
+	engineMode string
 )
 
 // RegisterWireGuardFactory 让 internal/wgproxy 在 init 时注册构造器。
 func RegisterWireGuardFactory(f func(config.Node, Front) (Upstream, error)) {
 	wgFactory = f
 }
+
+// RegisterMihomoFactory 让 internal/engine 在 init 时注册 mihomo 构造器（与 sing-box 并存）。
+func RegisterMihomoFactory(f func(config.Node, config.Front, func(string, ...any)) (Upstream, error)) {
+	mihomoFactory = f
+}
+
+// SetEngineMode 选择优先使用的内核（空串 / "singbox" / "mihomo"）。
+func SetEngineMode(mode string) { engineMode = mode }
+
+// EngineMode 返回当前引擎模式（测试与日志用）。
+func EngineMode() string { return engineMode }
 
 // RegisterSingBoxFactory 让 internal/engine 在 init 时注册构造器。
 func RegisterSingBoxFactory(f func(config.Node, config.Front, func(string, ...any)) (Upstream, error)) {
@@ -78,6 +96,15 @@ func NewUpstream(n config.Node, frontCfg config.Front, logf func(string, ...any)
 
 	case config.ProtocolVMess, config.ProtocolVLESS,
 		config.ProtocolShadowsocks, config.ProtocolTrojan, config.ProtocolHysteria2:
+		// 【换装开关】mode=mihomo 时优先用它；它接不了这个节点就回退 sing-box，
+		// 并写一行日志说明原因 —— 宁可少一次用上新内核，也不能让节点不可用。
+		if engineMode == "mihomo" && mihomoFactory != nil {
+			if up, err := mihomoFactory(n, frontCfg, logf); err == nil {
+				return up, nil
+			} else if logf != nil {
+				logf("mihomo 接不了「%s」，回退 sing-box：%v", n.Name, err)
+			}
+		}
 		if singFactory == nil {
 			return nil, fmt.Errorf("当前构建未包含 %s 支持", config.ProtocolLabel(n.Protocol))
 		}

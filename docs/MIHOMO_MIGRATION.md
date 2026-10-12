@@ -369,6 +369,28 @@ mihomo 侧（`constant.PacketConn`，v1.19.32 模块缓存里的源码）：
 
 **③ 验证方式不变**：经通道把 DNS 查询发到 `8.8.8.8:53`，看是否收到应答。
 
+### 第 ⑪ 轮：UDP 打通（按目标建通道）
+
+    UDP 通道建立（0 ms）
+    已发出 DNS 查询（29 字节）-> 8.8.8.8:53
+    收到应答：61 字节  来自 8.8.8.8:53
+    DNS 应答 ID=0x1234  应答记录数=2      <- ID 匹配即真实往返
+
+设计：按目标建通道（map["host:port"]C.PacketConn，首次发送时 ListenPacketContext + ResolveUDP）；
+DialUDP 用 SupportUDP() 尽早失败；C.ErrNotSupport 原样透传；
+ReceiveFromUDP 先用轮询版（升级路径：每 conn 一个读协程 + 共享 chan）。
+**未覆盖**：hysteria2(QUIC) 的 UDP、WireGuard 经 mihomo 的 UDP、多目标并发压力。
+
+### 第 ⑫/⑬ 轮：换装开关的机制（第 ⑤ 步前半）
+
+internal/proxy 新增 RegisterMihomoFactory / SetEngineMode / EngineMode；
+NewUpstream 在五个 sing-box 协议分支之前插入：mode == "mihomo" 且 mihomo 工厂接得了 -> 用它，
+**接不了就回退 sing-box 并写日志**。默认空串（sing-box）-> 行为零变化。
+单测 TestEngineSelectionAndFallback 用假工厂锁死三条。
+
+**还没做**：应用侧读 Settings.EngineMode 调 SetEngineMode；第 ⑤ 步后半（把默认翻成 mihomo）；
+第 ⑥ 步（清依赖/构建标记 + 重测实际打包体积）。
+
 ### 第 ⑩ 轮：UDP 试做后被实测否掉 —— 设计要件是"按目标建通道"
 
 按第 ⑨ 轮的思路写了 `mihomo_udp.go`（`C.PacketConn` → `proxy.UDPChannel`）并接上 `DialUDP`，
