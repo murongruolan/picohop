@@ -75,14 +75,23 @@ func (a *App) TestNodes(ids []string, kind string) error {
 
 		sem := make(chan struct{}, conc)
 		var wg sync.WaitGroup
-		for _, j := range jobs {
+		// 【这个 label 不是装饰，别删】裸 `break` 只跳出它所在的那个 select，
+		// for 会**继续**把剩下的节点一个个派发出去：ctx 已经取消，这些测试必然
+		// 失败，却仍会被 updateTest 写成"连不上 + 延迟清零" —— 用户点了"停止"，
+		// 结果反而把没测的节点全判成了无效项（审查 #14）。必须 break 到 label，
+		// 一次结束整轮派发。
+		//
+		// 取消检查合并进"等并发额度"这一句（用 select 而不是裸 `sem <- ...`）：
+		// 额度满时循环正是阻塞在这里，取消后不该再多跑一个节点。
+	dispatch:
+		for i, j := range jobs {
 			select {
+			case sem <- struct{}{}:
 			case <-ctx.Done():
-				break
-			default:
+				a.Logf("测试已取消：不再派发剩余 %d 个节点", len(jobs)-i)
+				break dispatch
 			}
 			wg.Add(1)
-			sem <- struct{}{}
 			go func(n config.Node) {
 				defer wg.Done()
 				defer func() { <-sem }()
@@ -141,6 +150,22 @@ func testLabel(kind string) string {
 func (a *App) runOneTest(ctx context.Context, n config.Node, kind string) {
 	s := a.Settings()
 
+	// 【为什么写回要包一层】测试被取消（用户点"停止"）之后，链路上的一切都会
+	// 立刻失败（TCP 握手拿到的是 context canceled），但那**不是节点的结论**：
+	// 原样写回会把节点标成"连不上" —— 紧接着「移除测试无效项」就会删掉它 ——
+	// 同时把已经测出来的延迟/速度用 0 覆盖。所以取消后一律不写：宁可不写，
+	// 也不能写错（审查 #14）。
+	//
+	// 【判据是 ctx.Err()，不是"这次测试失败了"】失败路径里本来就有一部分是
+	// "记成功/清结论"（真连接、测速、出口 IP 失败时不代表节点不可用，见各分支
+	// 注释）；只有"取消"才是整批结果作废的信号，别把两者混起来。
+	write := func(unreachable bool, latencyMs int64, speed float64, exitIP string) {
+		if ctx.Err() != nil {
+			return
+		}
+		a.updateTest(n.ID, kind, unreachable, latencyMs, speed, exitIP)
+	}
+
 	switch kind {
 	case TestTCP:
 		timeout := time.Duration(s.TCPTestTimeoutMs) * time.Millisecond
@@ -148,11 +173,11 @@ func (a *App) runOneTest(ctx context.Context, n config.Node, kind string) {
 		d, err := tester.TCPPing(ctx, n.Server, n.Port, timeout)
 		if err != nil {
 			a.Logf("「%s」TCP 延迟测试失败：%v", n.Name, err)
-			a.updateTest(n.ID, kind, true, 0, 0, "")
+			write(true, 0, 0, "")
 			return
 		}
 		a.Logf("「%s」TCP 延迟 %d ms（%d ms 内完成）", n.Name, d.Milliseconds(), time.Since(start).Milliseconds())
-		a.updateTest(n.ID, kind, false, d.Milliseconds(), 0, "")
+		write(false, d.Milliseconds(), 0, "")
 		return
 	}
 
@@ -160,7 +185,7 @@ func (a *App) runOneTest(ctx context.Context, n config.Node, kind string) {
 	chain, err := a.openTestChain(ctx, n)
 	if err != nil {
 		a.Logf("「%s」%s测试失败：无法建立链路：%v", n.Name, testLabel(kind), err)
-		a.updateTest(n.ID, kind, true, 0, 0, "")
+		write(true, 0, 0, "")
 		return
 	}
 	defer chain.Close()
@@ -180,11 +205,11 @@ func (a *App) runOneTest(ctx context.Context, n config.Node, kind string) {
 			a.Logf("「%s」真连接延迟测试失败：%v", n.Name, err)
 			// 链路已经建起来了 —— 请求失败说明不了节点无效（可能是目标站点
 			// 不可达/被墙），所以这里记"不算无效"，把之前可能的失败结论清掉。
-			a.updateTest(n.ID, kind, false, 0, 0, "")
+			write(false, 0, 0, "")
 			return
 		}
 		a.Logf("「%s」真连接延迟 %d ms", n.Name, d.Milliseconds())
-		a.updateTest(n.ID, kind, false, d.Milliseconds(), 0, "")
+		write(false, d.Milliseconds(), 0, "")
 
 	case TestSpeed:
 		url := s.SpeedTestURL
@@ -193,22 +218,22 @@ func (a *App) runOneTest(ctx context.Context, n config.Node, kind string) {
 		if err != nil {
 			a.Logf("「%s」速度测试失败：%v", n.Name, err)
 			// 同上：链路通了就算"节点有效"，测速失败与节点是否可用无关。
-			a.updateTest(n.ID, kind, false, 0, 0, "")
+			write(false, 0, 0, "")
 			return
 		}
 		a.Logf("「%s」速度 %.2f MB/s（%s 用时约 %d 秒）", n.Name, mbps, FormatBytes(total), secs)
-		a.updateTest(n.ID, kind, false, 0, mbps, "")
+		write(false, 0, mbps, "")
 
 	case TestExit:
 		res := tester.FetchIP(ctx, dial, "https://api.ipify.org?format=json", n.Name)
 		if !res.OK {
 			a.Logf("「%s」出口 IP 探测失败：%v", n.Name, res.Err)
 			// 同上：出口 IP 查不到 ≠ 节点不可用（查询服务本身也可能不通）。
-			a.updateTest(n.ID, kind, false, 0, 0, "")
+			write(false, 0, 0, "")
 			return
 		}
 		a.Logf("「%s」出口 IP = %s（%d ms）", n.Name, res.IP, res.Latency.Milliseconds())
-		a.updateTest(n.ID, kind, false, 0, 0, res.IP)
+		write(false, 0, 0, res.IP)
 	}
 }
 
