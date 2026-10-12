@@ -297,10 +297,13 @@ WireGuard 协议本身**不会告诉你**是密钥不对还是网络不通，所
 6. 看日志里的「设备状态」：能看到 `public_key / endpoint / allowed_ip` 就说明
    配置进去了；再看 `tx_bytes / rx_bytes` 判断包有没有发出去、有没有收到回包。
 
-### Reality / Hysteria2 节点激活时报「缺少构建标签」
+### Reality / Hysteria2 节点激活时报「mihomo 适配层暂不支持…」
 
-说明这个程序不是用 `-tags "with_utls,with_quic"` 编译的。
-用 `chainproxy engines` 可以确认。重新跑 `.\scripts\build.ps1` 即可。
+说明节点的某个字段 mihomo 接不了（例如 REALITY 没填「指纹」、vmess 用了 xhttp 传输、
+trojan 用了它没有的传输选项）。**这不是构建问题**：内核是内嵌的 mihomo、不需要任何构建标签
+（`with_utls` / `with_quic` 那套已随 sing-box 一起删除）。
+按日志里那句错误改节点配置即可；用 `chainproxy engines` 可以确认内核确实被编进来了。
+（历史上这条曾经是"缺少构建标签"，那条路已不存在。）
 
 ### 导入的链接解析不了
 

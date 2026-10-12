@@ -103,11 +103,11 @@ func NewMihomo(n config.Node, front config.Front, logf func(string, ...any)) (pr
 // 唯一的例外补一条一致性检查：节点以另一个节点为前置（那是**必须有**一跳 socks5 的
 // 形态），解析出来却是直连 —— 正常流程不该出现，一律拒绝，因为按直连跑就是从本机 IP 出去。
 // （反过来，"节点选全局前置、而全局前置本身被设成 direct"是合法配置：那就是不走前置，
-// 与 sing-box 侧 buildFrontOutbound 对 direct 的处理一致，不能拒。）
+// 与"显式 direct 才算直连"这条一贯判据一致，不能拒。）
 //
 // 【为什么"非显式 direct"都算有前置】proxy.NewFront 的 default 分支造的就是
 // socks5Front：Type 不是 "direct"（空串也是）时跑起来都是一跳真实的前置
-// （singbox 侧 buildFrontOutbound 同样这么判，见审查 #10）。零值 Front
+// （这条判据来自审查 #10：写坏的/残缺的前置绝不许被当成"没配前置"）。零值 Front
 // （什么都没填）是唯一的例外，按"调用方没给前置信息"处理，等同直连。
 func mihomoFrontPlan(n config.Node, front config.Front) (bool, string) {
 	if isDirectFront(front) {

@@ -50,11 +50,15 @@ ChainProxy 做的事：**把前置和出口拆开，各自绑定一个本地端�
 | SOCKS5 | 自研（第二次握手套在前置隧道里） | ✅ |
 | HTTP | 自研（CONNECT 隧道） | ❌（HTTP 代理本身不支持 UDP） |
 | WireGuard | 自研（纯用户态，见下） | ❌ |
-| VMess | 内嵌 sing-box | ✅ |
-| VLESS（含 XTLS-Reality） | 内嵌 sing-box | ✅ |
-| Shadowsocks | 内嵌 sing-box | ✅ |
-| Trojan | 内嵌 sing-box | ✅ |
-| Hysteria2 | 内嵌 sing-box（QUIC） | ✅ |
+| VMess | 内嵌 mihomo | ✅ |
+| VLESS（含 XTLS-Reality） | 内嵌 mihomo | ✅ |
+| Shadowsocks | 内嵌 mihomo | ✅ |
+| Trojan | 内嵌 mihomo | ✅ |
+| Hysteria2 | 内嵌 mihomo（QUIC） | ✅ |
+
+> 这五种协议的出口由**内嵌的 mihomo**（单一内核）负责；此前内嵌的 sing-box 已完整摘除
+> （迁移过程与实测体积见 [`docs/MIHOMO_MIGRATION.md`](docs/MIHOMO_MIGRATION.md)）。
+> 配了前置的节点由 mihomo 出站自己的拨号器经前置拨号（TCP 与 UDP 两条路都覆盖）。
 
 ### 前置可以指向项目内的另一个节点
 

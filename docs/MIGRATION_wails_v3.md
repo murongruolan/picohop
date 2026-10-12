@@ -69,7 +69,9 @@ GOOS=windows CGO_ENABLED=0 go build \
 
 - **`production` 标签是必需的**：v3 用它与 `dev` 区分不同实现文件
   （`application_production.go` / `application_debug.go`、`roles_production.go` / `roles_dev.go` 等）。
-- `EXTRA_TAGS` 就是我们已有的 `with_utls,with_quic`，**构建标签机制不变**。
+- `EXTRA_TAGS` 当时是我们已有的 `with_utls,with_quic`。
+  > **后续变化（引擎迁移结项后）**：那两个标签是 sing-box 的，已随 sing-box 摘除；
+  > 现在图形界面只带 `production` 一个标签。见 `docs/MIHOMO_MIGRATION.md` 第 ⑱ 轮。
 - 因此 `scripts/build.ps1` 只需把 `wails build` 换成 `go build`（前端仍用 Vite），
   命令行的构建方式完全不变。
 

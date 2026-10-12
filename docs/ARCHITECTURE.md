@@ -1,8 +1,12 @@
 # ChainProxy 架构设计
 
-本文记录 v2（Wails v3 + Vue 3 + 内嵌 sing-box）的模块划分、数据流与关键取舍。
+本文记录 v2（Wails v3 + Vue 3 + 内嵌 mihomo）的模块划分、数据流与关键取舍。
 v1（纯 Win32 界面）的架构说明已随那次重构一起过时，
 对应的代码可以在 git 的 `v0.1-win32-gui` 标签处找回。
+
+> 代理内核在 v2 期间从内嵌 sing-box 换成了内嵌 mihomo，sing-box 与它的回退**已完整摘除**
+> （只剩 mihomo 一个内核）。换装过程、源码级依据与**实测打包体积**见
+> [`MIHOMO_MIGRATION.md`](MIHOMO_MIGRATION.md)；本文只描述**当前**架构。
 
 ---
 
@@ -23,7 +27,7 @@ v1（纯 Win32 界面）的架构说明已随那次重构一起过时，
 ┌──────────────┐   ┌───────────────────────────┐
 │ 自研出口      │   │ internal/engine           │
 │ socks5/http  │   │  每个节点一个"只有出口     │
-│ wireguard    │   │  没有入口"的 sing-box 实例 │
+│ wireguard    │   │  没有入口"的 mihomo 出站   │
 └──────┬───────┘   └──────────┬────────────────┘
        │                      │
        └──────────┬───────────┘
@@ -43,7 +47,7 @@ v1（纯 Win32 界面）的架构说明已随那次重构一起过时，
 | `internal/config` | 配置模型、默认值、校验、v1→v2 迁移 | 协议元信息（哪些协议、需要哪些字段）只在这里定义一份，界面读它来渲染表单 |
 | `internal/ports` | 端口分配、随机、占用检测 | 界面上的三条端口规则集中在一处，可单测 |
 | `internal/proxy` | mixed 入口、前置代理、自研出口、中继与统计 | 数据面核心，不依赖任何界面代码 |
-| `internal/engine` | 内嵌 sing-box 的五种协议出口 | 把 sing-box 这个重依赖关在一个包里；`internal/proxy` 通过**注册函数**拿到它，不需要 import |
+| `internal/engine` | 内嵌 mihomo 的五种协议出口（唯一内核） | 把 mihomo 这个重依赖关在一个包里；`internal/proxy` 通过**注册函数**拿到它，不需要 import |
 | `internal/wgproxy` | 纯用户态 WireGuard 出口 | 同上，也是注册进去的 |
 | `internal/app` | 应用状态机：节点生命周期、激活链、今日统计、测试编排 | 界面与命令行共用的唯一业务入口 |
 | `internal/tester` | TCP 延迟 / 真连接延迟 / 测速 / 出口 IP | 纯函数式的测试能力，与状态机解耦 |
@@ -65,11 +69,13 @@ cmd/chainproxy ─┘                 ▲
 `internal/proxy` **不 import** `internal/engine`，而是暴露一个注册点：
 
 ```go
-proxy.RegisterSingBoxFactory(func(config.Node, config.Front, func(string, ...any)) (proxy.Upstream, error))
+proxy.RegisterMihomoFactory(func(config.Node, config.Front, func(string, ...any)) (proxy.Upstream, error))
 ```
 
 主程序 `import _ "chainproxy/internal/engine"` 即可获得那五种协议。
-这样做的实际收益：`internal/proxy` 的单元测试不需要编译整个 sing-box。
+这样做的实际收益：`internal/proxy` 的单元测试不需要编译整个 mihomo。
+（这个注册点也是**唯一**的内核入口：没有第二个内核、也没有回退 —— 工厂接不了某个节点时
+直接把错误交出去，绝不退化成直连。）
 
 ---
 
@@ -109,44 +115,36 @@ conn := front.DialTCP(出口服务器地址)   // 已经在前置隧道内部
 握手(conn, 目标)                        // 第二次握手
 ```
 
-**sing-box 出口（vmess / vless / ss / trojan / hysteria2）** 则把"前置"
-翻译成 sing-box 自己的配置：
-
-```json
-{
-  "outbounds": [
-    {"type": "socks", "tag": "cp-front", "server": "127.0.0.1", "server_port": 10808},
-    {"type": "vless", "tag": "cp-node", "server": "…", "detour": "cp-front", "…": "…"}
-  ]
-}
-```
-
-`detour` 就是 sing-box 里的链式代理（等价于 Xray 的 `dialerProxy`、mihomo 的
-`dialer-proxy`）。每个节点对应**一个独立实例**，只取它的 `cp-node` 出口来拨号：
+**mihomo 出口（vmess / vless / ss / trojan / hysteria2）** 走的是另一条路：把前置做成
+**出站自己的拨号器**，装在 mihomo 的 `BasicOption.DialerForAPI` 上：
 
 ```go
-inst.Outbound().Outbound("cp-node").DialContext(ctx, "tcp", dest)
+opt.BasicOption.DialerForAPI = &mihomoDialer{front: proxy.NewFront(frontCfg)}
+// 出站连它的服务器时，那一跳因此经前置出去（TCP 与 UDP 两条路都覆盖）
 ```
 
-一个实例一个节点（而不是一个大实例装所有节点）的代价是多几份 router，
-好处是**启停互不影响** —— 这正是"每个节点独立本地端口"所要求的语义。
+为什么不用 mihomo 的 `dialer-proxy`：它要一个全局 hub + 出站注册表，与本项目
+"每节点一个独立出站、可同时激活多个"的用法冲突。`DialerForAPI` 的优先级高于其它所有
+拨号配置，且不需要 hub。细节、覆盖范围（哪些协议走 `DialContext`、哪些走 `ListenPacket`）
+与验证方式见 `internal/engine/mihomo_dialer.go` 与
+[`MIHOMO_MIGRATION.md`](MIHOMO_MIGRATION.md) 第 ⑰ 轮。
+
+每个节点对应**一个独立出站实例**，只取它来拨号，启停互不影响 —— 这正是"每个节点独立
+本地端口"所要求的语义。
 
 ---
 
 ## 4. 关键技术结论（都是实测出来的）
 
-这些结论在写代码之前用 `.cache/spike-singbox` 验证过，写成测试固化在
-`internal/engine/singbox_test.go` 里：
+这些结论在写代码之前用一次性探针验证过，写成测试固化在
+`internal/engine/mihomo_test.go` / `mihomo_front_test.go` 里：
 
 | 结论 | 表现 | 处理 |
 |---|---|---|
-| 必须 `include.Context` | 否则反序列化报 `missing outbound options registry in context` | 每个实例用一个**新的** ctx（`box.New` 会往 ctx 里注册本实例的 Manager，共享会互相覆盖） |
-| 必须带构建标签 | 否则运行时报 `uTLS, which is required by reality is not included in this build` | 统一 `-tags "with_utls,with_quic"`；并加 `BuildCheck()` 把运行期错误提前成一句明确的话 |
-| 取出口要用 `inst.Outbound().Outbound(tag)` | `adapter.Router` 上没有 `Outbound` 方法 | 见 `internal/engine/singbox.go` |
-| `direct` 出口不允许 `detour` | 报 `'detour' is not supported in direct context` | 直连模式**完全不生成**前置出口，也不写 detour |
-| `transport.type` 没有 `tcp` | 只能取 http/ws/grpc/quic/httpupgrade | 网络为 tcp 时**整个 transport 字段都不写** |
-| `transport.host` 的类型不统一 | http 传输是数组、httpupgrade 是字符串、ws 走 headers | 分别处理，见 `applyTransport` |
-| sing-box 对未知字段会报错 | 字段名写错不会静默失效 | 因此"能被它解析成功"是有效断言，见 `TestParseStrictnessIsReal` |
+| mihomo 的 REALITY 必须显式给 `client-fingerprint` | 否则报 `REALITY is based on uTLS, please set a client-fingerprint` | 映射时就拦住并提示（sing-box 会自动推断，mihomo 不会） |
+| 各协议"连服务器"那一跳都走 `BasicOption.DialerForAPI` | 前置不装进去就**静默从本机 IP 出去** | 非直连时必须装 `mihomoDialer`（见 `mihomo_dialer.go`） |
+| UDP 有两条不同的路 | ss 原生 UDP 与 hysteria2 的 QUIC 走 `ListenPacket`；vless/vmess/trojan 的 UDP 走 `DialContext("tcp")` | 两个方法都实现；前置做不了 UDP 时明确报错，不回落直连 |
+| mihomo 不需要任何构建标签 | — | 与 sing-box 不同，`with_utls` / `with_quic` 都已删除 |
 
 ---
 
@@ -411,14 +409,15 @@ v3 已经能开多个窗口了，但圈选那一刻需要的是"**全屏置顶�
 ## 9. 已知限制
 
 - **UDP**：本地端口的 UDP 能力取决于出口协议与前置能力。
-  `http` 出口与 `wireguard` 出口不支持 UDP；
+  `http` 出口与 `wireguard` 出口不支持 UDP；**HTTP 前置也不支持 UDP**
+  （所以 Hysteria2 这种纯 QUIC 协议不能用 HTTP 前置，配了会在构造期被拒）；
   Reality / Hysteria2 等在部分网络下也可能被运营商 QoS，浏览器会回落到 TCP。
-- **单实例内存**：每个 sing-box 出口是一个独立实例（带自己的 router），
-  节点很多时（几十个）会有一点固定开销。
+- **单实例内存**：每个 mihomo 出口是一个独立出站实例，节点很多时（几十个）会有一点固定开销。
 - **托盘图标在 Windows 11 上默认落在折叠区**：新注册的托盘图标会被系统放进
   `^` 折叠区，需要用户自己拖出来固定。功能不受影响，但"怎么没看到图标"多半是这个原因。
 - **无障碍未适配**：界面是自用的桌面工具，没有做完整的键盘导航与读屏支持。
 - **端到端验证的边界**：本机对"真实 Reality / Hysteria2 服务器"只验证到
-  「生成的配置能被 sing-box 接受、实例能启动、拨号能发出去」这一层；
+  「出站能构造、拨号能发得出去、前置那一跳确实经前置」这一层；
   真链式端到端是用**自研 SOCKS5 出口**打通的（前置 204.197.163.238 →
   住宅 24.40.126.216 / 76.46.0.200）。
+  mihomo 侧的逐传输真实验证与端到端证据见 [`MIHOMO_MIGRATION.md`](MIHOMO_MIGRATION.md) 第 ⑰ 轮。

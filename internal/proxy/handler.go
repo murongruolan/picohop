@@ -529,7 +529,7 @@ func (h *Handler) httpConnect(client net.Conn, br *bufio.Reader, head *httpHead)
 //
 // 【为什么必须是 var 而不是 const】回归测试要复现的场景是"客户端发了请求就再也不读，
 // 写回被内核缓冲堵死"，而真等满 60 秒的用例没人会跑 —— 所以留一个测试接缝，
-// 让用例把它临时压到几百毫秒（与 idle_test.go 里替换 singFactory 是同一类做法）。
+// 让用例把它临时压到几百毫秒（与 idle_test.go 里替换 mihomoFactory 是同一类做法）。
 // 生产代码不许改它。
 var httpForwardWriteTimeout = writeTimeout
 

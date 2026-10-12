@@ -1,5 +1,15 @@
 # 引擎迁移契约：sing-box → mihomo（整体换装）
 
+> **现状（第 ⑱ 轮，已结项）：换装完成，sing-box 已完整摘除。**
+> 项目现在只有 **mihomo 一个内核**：没有回退、没有 `engineMode` 开关、
+> `with_utls` / `with_quic` 构建标记已删除、`go.mod`/`go.sum` 里不再有 `sagernet/sing-box`。
+> 配了前置的节点由 mihomo 出站自己的拨号器**真的经前置**拨号（TCP 与 UDP，第 ⑰ 轮）。
+> **实测打包体积**：`dist\ChainProxy.exe` **35.86 MB**、`dist\chainproxy-cli.exe` **24.46 MB**
+> —— 详见文末《第 ⑱ 轮：结项报告》，那里也解释了为什么 GUI 比 CLI 大 ~11 MB。
+>
+> ⚠️ 下面各轮记录里的"回退 / 换装开关 / 保留 sing-box / 58.46 MB"都是**当时**的状态，
+> 读的时候请对照本横幅与文末结项报告。
+
 > 决策人：用户。原话："**整体换吧**"（2026-10-12）。
 > 依据：A/B 实测（见 `.cache/ab/REPORT.md` 与下方第 1 节）。用户此前的门槛是
 > "mihomo 相当或优于 sing-box 就全面换装" —— 数据满足该门槛。
@@ -383,6 +393,9 @@ ReceiveFromUDP 先用轮询版（升级路径：每 conn 一个读协程 + 共�
 
 ### 第 ⑫/⑬ 轮：换装开关的机制（第 ⑤ 步前半）
 
+> ⚠️ 本节提到的 `SetEngineMode` / `Settings.EngineMode` / "回退 sing-box" 都已在
+> 第 ⑰/⑱ 轮删除（只剩 mihomo 一个内核）。保留原文只为记录当时的分步做法。
+
 internal/proxy 新增 RegisterMihomoFactory / SetEngineMode / EngineMode；
 NewUpstream 在五个 sing-box 协议分支之前插入：mode == "mihomo" 且 mihomo 工厂接得了 -> 用它，
 **接不了就回退 sing-box 并写日志**。默认空串（sing-box）-> 行为零变化。
@@ -425,6 +438,11 @@ NewUpstream 在五个 sing-box 协议分支之前插入：mode == "mihomo" 且 m
 
 ### 第 ⑯ 轮：堵上前置缺口（配了前置的节点必须被拒，不许静默直连）
 
+> ⚠️ **本轮是过渡措施，其判据已在第 ⑰ 轮收窄、回退已在第 ⑱ 轮删除。**
+> 现在配了前置的节点**由 mihomo 经前置拨号**（`mihomoFrontPlan` + `mihomoDialer`）；
+> 只剩两种"确实做不到"的拒绝（节点以前置节点解析出直连、Hysteria2 配 HTTP 前置）。
+> 下面记的是当时为什么必须先堵住这个缺口。
+
 **缺口是什么**：`MihomoUpstream` 只做单出站拨号 —— `out.DialContext` 直接去连节点自己的
 服务器，`NewMihomo` 收下的 `front config.Front` **从来没被用过**。于是 `engineMode=mihomo`
 时，一个"前置指向另一个节点 / 用全局前置"的节点会**从本机 IP 出去**，绕开链式代理与住宅
@@ -442,35 +460,37 @@ NewUpstream 在五个 sing-box 协议分支之前插入：mode == "mihomo" 且 m
 | 上层只用一处把节点解析成第一跳：`app.resolveFrontLocked`（direct → `{Type: direct}`；global → 设置里的 `cfg.Front`；节点 ID → `127.0.0.1:<该节点本地端口>` 的 socks5），`startNode` 与 `openTestChain` 都走它 | `internal/app/nodes.go`、`internal/app/test.go` |
 | 回退在 `proxy.NewUpstream`：`mode=mihomo` 且工厂**构造失败** → 写日志并回退 sing-box | `internal/proxy/upstream.go` |
 
-**判据（`mihomoFrontGap`，构造期就判，fail-closed）**：
+**判据（当时的 `mihomoFrontGap`，构造期就判，fail-closed；第 ⑰ 轮已收窄为 `mihomoFrontPlan`）**：
 节点前置指向另一个节点（`FrontNodeID() != ""`）→ 拒；节点要用全局前置（`UsesGlobalFront()`）
 而传进来的 `front.Type != direct` → 拒；另加一条防御：节点自称直连、调用方却递了**明确配好的**
 非直连前置 → 也拒（mihomo 会忽略该参数，两边不一致时按"有前置"处理才安全；零值 `Front` 视为
 "调用方没给前置信息"，不算不一致）。
 
 **放行的**：`Front` 为空或纯空白（= 直连）、全局前置本身就是 `direct`（等效直连）、
-以及直连节点配零值 Front。**一律不误伤直连**。
+以及直连节点配零值 Front。**一律不误伤直连**（这一条在第 ⑰ 轮之后依然成立）。
 
-**验证**：`internal/engine/mihomo_test.go`
+**验证（当时的形态）**：`internal/engine/mihomo_test.go`
 `TestNewMihomoRejectsFrontedNodes`（4 条放行 + 6 条拒绝，并断言错误信息含"前置 / 本机 IP / 节点名"）、
 `TestFrontedNodeFallsBackInsteadOfDirectDialing`（走真注册链：`mode=mihomo` + 前置节点 →
 拿到的必须是 sing-box 出口、日志里必须有 `mihomo 接不了…`）；
-`internal/proxy/upstream_engine_test.go::TestFrontRejectionFallsBack` 锁死"工厂报错就必须回退、
-绝不许当成直连放行"。`scripts/check.ps1` 全绿。
+`internal/proxy/upstream_engine_test.go::TestFrontRejectionFallsBack` 锁死"工厂报错就必须回退"。
+`scripts/check.ps1` 全绿。
+（第 ⑰ 轮把这三条改写成"必须经前置"：`TestNewMihomoFrontPlan`、`TestFrontedNodeStaysOnMihomo`、
+`TestUpstreamHasNoFallback` / `TestFrontedNodeKeepsFrontReachingEngine`。）
 
-**真做前置的后续方向（已读实，未实现）**：mihomo 的 `BasicOption` 有一个
+**真做前置的方向（当时记为"未实现"，第 ⑰ 轮已实现）**：mihomo 的 `BasicOption` 有一个
 `DialerForAPI C.Dialer` 字段（`adapter/outbound/base.go:204`），注释写明
 "the dialer used for API usage has **higher priority** than all the above configurations"，
 `NewDialer` 也优先取它。所以真接前置不必走 `dialer-proxy`（那要一个全局 hub、与
-"每节点一个独立出站"冲突），而是**自己实现一个 `C.Dialer`**（在它的 `DialContext` 里先经
-前置拨到目标），赋给各协议的 `BasicOption.DialerForAPI` 即可 —— 前置那一跳我们自己已经有
-`proxy.Front`（socks5 / http / direct）可用。
+"每节点一个独立出站"冲突），而是**自己实现一个 `C.Dialer`**，赋给各协议的
+`BasicOption.DialerForAPI` —— 前置那一跳我们本来就有 `proxy.Front`（socks5 / http / direct）可用。
 
 ### 第 ⑰ 轮：真接前置（A′）—— 配了前置的节点现在**经前置拨号**
 
 第 ⑯ 轮把"配了前置的节点"挡在 mihomo 之外（回退 sing-box）。但用户真实的两个住宅节点前置
 就是「全局前置 · SOCKS5 127.0.0.1:10808」——**删掉 sing-box 就等于链式代理彻底不能用**。
 所以本轮先把前置在 mihomo 适配层里真正接通，再谈删依赖。
+（顺序上本轮**必须先于**摘除 sing-box；第 ⑱ 轮删的回退与开关，在这里已经不再需要。）
 
 **机制（读源码确认，不是猜）**：`adapter/outbound/base.go:204` 的
 `BasicOption.DialerForAPI C.Dialer` 注释写明"优先级高于上面所有配置"，`NewDialer`（同文件
@@ -522,6 +542,10 @@ chainproxy-cli.exe test --kind real --node probe-node
 ③ grpc / xhttp 传输没单独验（它们走同一条 DialContext，但没实测过）。
 
 ## 8. 第 ⑤ 步完成情况（截至第 18 轮）：开关可用、默认未翻
+
+> ⚠️ **这一节记录的是第 18 轮当时的状态，其中"回退路径"与"界面开关"两项已经在
+> 第 ⑰/⑱ 轮被替换/删除**（前置改为真经前置拨号；开关与 `Settings.EngineMode` 已移除）。
+> 当前状态见文首横幅与第 12 节。
 
 ### 已完成
 
@@ -593,9 +617,9 @@ chainproxy-cli.exe test --kind real --node probe-node
   - 真连接延迟中位数比翻之前差 20% 以上；
   - 日志里出现以前没有的 mihomo 报错。
 
-### C. 摘掉 sing-box 回退（拿到 ~21~24 MB 的体积）
+### C. 摘掉 sing-box 回退（拿到最终体积）✅ **已在第 ⑱ 轮做完**
 
-只在"**所有你会用到的传输都验证过 + 你明确同意失去回退**"之后做。步骤：
+当时的步骤（保留在这里作为记录）：
   1. 删 `internal/engine/singbox.go` 与 sing-box 相关依赖、`register.go` 里的 sing 注册；
   2. 删 `with_utls,with_quic` 构建标记（它们是 sing-box 的）—— 脚本里 `scripts/build.ps1`、
      `scripts/check.ps1` 都要改；
@@ -603,7 +627,13 @@ chainproxy-cli.exe test --kind real --node probe-node
   4. 跑全量门禁 + 真机验证（同 B-4）；
   5. **重新测打包体积**并把实测值写进本文档（此刻才第一次有"最终体积"的真数）。
 
-判定：体积若没有明显下降，说明还有别的依赖在撑着 —— 先查清再继续删，别为了一个数字删出问题。
+**实际结果（第 ⑱ 轮）**：五条都做了，另外多做了两件当时没写进步骤、但必须做的事 ——
+   - **先真接前置（第 ⑰ 轮）**：`engineMode=mihomo` 下配了前置的节点原本只能回退 sing-box；
+     直接删回退会让链式代理彻底不能用。所以先在 mihomo 里把前置接通并端到端验证，再删；
+   - **删掉「代理内核」开关与 `Settings.EngineMode`**：只剩一个内核，没有可切的东西。
+体积实测：GUI **35.86 MB** / CLI **24.46 MB**（当时估的是 21~24 MB；差异原因见文末结项报告）。
+
+判定（原样保留）：体积若没有明显下降，说明还有别的依赖在撑着 —— 先查清再继续删，别为了一个数字删出问题。
 
 ### D. 每一步的纪律（本项目一贯要求）
 
@@ -613,13 +643,16 @@ chainproxy-cli.exe test --kind real --node probe-node
   - 生成的代码也要当代码审：本迁移期间因"锚点凭记忆写""Go 字符串里嵌半角引号"
     "编造不存在的配置字段"各翻过一次车，都记在第 7 节。
 
-## 9. 需要用户决定的事（第 ⑥ 步的真正前提）
+## 9. 需要用户决定的事（第 ⑥ 步的真正前提）—— ✅ 已决
 
-  1. 是否**放弃 sing-box 回退**（决定体积 58.46 MB vs 约 21~24 MB）；
-  2. 是否**翻默认引擎**为 mihomo（我建议先补更多传输验证）；
-  3. 若要补验证：需要对应传输的节点（例如一条 ws 或 trojan 节点）。
-     —— 另一条不依赖外部节点的路子是"用 mihomo 自己起一个本地 ws/gRPC inbound 当被测服务"，
-     契约记在这里，下一轮可以试。
+  1. ~~是否**放弃 sing-box 回退**（决定体积 58.46 MB vs 约 21~24 MB）~~
+     → **用户明确要求：不留回退，项目完全依靠 mihomo。** 第 ⑱ 轮执行完毕，
+     实测 GUI 35.86 MB / CLI 24.46 MB（结项报告里有逐项拆解）。
+  2. ~~是否**翻默认引擎**为 mihomo~~ → **只剩 mihomo 一个内核，没有"翻默认"这件事了**；
+     `Settings.EngineMode` 与界面开关一并删除。
+  3. ~~若要补验证：需要对应传输的节点~~ → 仍未做（属于遗留，不影响换装收尾）：
+     仍然只验过 vless+xhttp、vmess+tcp、vmess+UDP(DNS) 三条真实链路，
+     以及 ws/grpc/http/h2/httpupgrade 与 trojan/ss/hysteria2 的**映射**单测。
 
 ### 第 ⑩ 轮：UDP 试做后被实测否掉 —— 设计要件是"按目标建通道"
 
@@ -670,6 +703,10 @@ chainproxy-cli.exe test --kind real --node probe-node
 
 ## 11. 结项报告（第 20 轮 / 20）
 
+> ⚠️ **本节是第 20 轮当时的结项，已被第 ⑱ 轮取代**：⑤ 的回退与开关已删除、
+> ⑥ 的"清理依赖与构建标记"已完成、真实体积已重测 —— 见第 12 节。
+> 保留本节是因为它如实记录了"当时为什么停在这里"（两条目标句互斥）。
+
 ### 已完成（逐条对目标）
 
 | 目标步骤 | 状态 | 关键证据 |
@@ -703,15 +740,110 @@ chainproxy-cli.exe test --kind real --node probe-node
   1. **是否翻默认引擎为 mihomo**（建议：先补 1~2 条传输验证）；
   2. **是否放弃 sing-box 回退**（决定 58.46 MB vs 约 21~24 MB）。
 
+> 这两件用户都已拍板（第 ⑱ 轮）：放弃回退、完全依靠 mihomo；"翻默认"随之失去意义 ——
+> 现在只有 mihomo 一个内核，`Settings.EngineMode` 与界面开关都已删除。
+
 这两件之外，迁移的**技术工作已经做完并可运行**：
-现在把 `settings.engineMode` 设成 `"mihomo"`（界面：设置 → 运行与界面 → 代理内核）
+当时把 `settings.engineMode` 设成 `"mihomo"`（界面：设置 → 运行与界面 → 代理内核）
 就能用新内核跑 **xhttp 节点**（这正是整件事的起因），其余节点自动回退 sing-box，不会变不可用。
+
+> **现在（第 ⑱ 轮之后）**：`engineMode` 与那个开关都不存在了 —— 所有节点直接用 mihomo，
+> 没有回退可退；老配置里残留的 `engineMode` 被忽略（已实测）。
 
 ### 遗留清单（交给后续的人）
 
   - `ws/grpc/http/h2/httpupgrade` + `trojan/shadowsocks/hysteria2` 的真实链路验证；
   - UDP 的 `ReceiveFromUDP` 目前是**轮询版**（活跃目标会拖慢其它目标）；升级路径：
     每 conn 一个读协程 + 共享 chan（第 11 节记了理由与做法）；
-  - 界面开关**改完要重启程序**才生效（tooltip 已写明）；
-  - 翻默认时 `TestEngineModeJSON` 的断言要跟着改（第 10-B 节写明了怎么改）；
+  - ~~界面开关**改完要重启程序**才生效（tooltip 已写明）~~ → 开关本身已删除（第 ⑱ 轮）；
+  - ~~翻默认时 `TestEngineModeJSON` 的断言要跟着改（第 10-B 节写明了怎么改）~~ →
+    `Settings.EngineMode` 与那条测试都已删除；
   - 未测：hysteria2(QUIC) 的 UDP、WireGuard 经 mihomo 的 UDP、多目标并发压力、长稳内存。
+
+---
+
+## 12. 第 ⑱ 轮：结项报告（摘除 sing-box / 实测体积）
+
+用户指令："**不留 sing-box 回退，项目完全依靠 mihomo。**" 本轮执行完毕。
+顺序上**先做第 ⑰ 轮（真接前置）再做本轮** —— 反过来会让"配了前置的节点"直接不可用，
+那比换装前更糟。三个提交：`refactor(engine)!` 摘除引擎 → `chore(engine,desktop,scripts)`
+清标记与开关 → 本轮（体积实测 + 文档）。
+
+### 删掉了什么（逐项）
+
+| 项 | 位置 |
+|---|---|
+| sing-box 引擎与它的测试 | `internal/engine/singbox.go`(835 行)、`singbox_test.go`、`singbox_stop_dial_test.go`、`redact_test.go` |
+| 构建标签自检 | `tags_ok.go` / `tags_missing.go` / `engine.BuildCheck()` |
+| 注册与回退 | `register.go` 里的 `RegisterSingBoxFactory`；`internal/proxy` 的 `singFactory`、`RegisterSingBoxFactory`、`SetEngineMode/EngineMode/engineMode` 与"接不了就回退"整段 |
+| 内核开关 | `Settings.EngineMode`、`enginemode_test.go`、界面「设置 → 运行与界面 → 代理内核」 |
+| 只服务 sing-box 的元信息 | `config.UsesSingBox`、`MetaView.EngineOK/EngineError`、界面「关于」页的标签自检文案 |
+| 构建标记 | `scripts/build.ps1`、`scripts/check.ps1` 里的 `with_utls,with_quic`；`scripts/env.ps1` 注释 |
+| 依赖 | `go mod tidy`：`go.mod` 279 → **140 行**，`go.sum` 里 `sagernet/sing-box*` **零残留** |
+
+### 实测打包体积（`.\scripts\build.ps1`，无任何引擎标签）
+
+| 产物 | 字节数 | 实测 MB |
+|---|---|---|
+| `dist\ChainProxy.exe`（图形界面） | 37,598,720 B | **35.86 MB** |
+| `dist\chainproxy-cli.exe`（命令行） | 25,646,592 B | **24.46 MB** |
+
+| 阶段 | `ChainProxy.exe`（GUI，同口径） | 相对现在 |
+|---|---|---|
+| 换装前：纯 sing-box | 46.40 MB | 现在小 **10.54 MB** |
+| 过渡期：sing-box + mihomo 并存 | 58.46 MB | 现在小 **22.60 MB** |
+| **现在：纯 mihomo** | **35.86 MB** | — |
+
+（命令行版此前没有同口径记录，所以只给现在的实测值：24.46 MB。）
+
+### 体积归因：GUI 为什么比 CLI 大 ~11.4 MB（不是 sing-box 残留）
+
+先确认没有残留：
+  - `go version -m dist\ChainProxy.exe`：模块清单里 **没有** `github.com/sagernet/sing-box`
+    （GUI 98 个依赖 / CLI 92 个，多出来的正是 wails 那几个）；
+  - 二进制里 `findstr /M /C:"sing-box"` **无匹配**；`go.mod`/`go.sum` 也零残留。
+
+那 35.86 − 24.46 = **11.40 MB** 是什么：
+  - **1.52 MB** = 嵌进二进制的界面资源（`desktop/frontend/dist` 共 4 个文件、1,589,422 B，
+    `index.js` 1.19 MB + `index.css` 0.39 MB —— 未压缩地躺在二进制里）；
+  - **~9.9 MB** = Wails v3 运行时 + WebView2/托盘/快捷键/系统代理这些**界面专属**代码与绑定。
+    交叉验证：sing-box 时代 GUI 与 CLI 的差距是 46.40 − 36.29 = **10.11 MB**，
+    同量级 —— 也就是说这 ~10 MB 一直是桌面外壳的固定成本，与内核无关。
+
+所以"约 21~24 MB"那个估计口径其实命中的是 **CLI**（实测 24.46 MB，落在区间上沿）；
+GUI 必然要再多一个 ~10 MB 的桌面外壳 + 1.5 MB 界面资源。
+
+### 删掉回退之后，前置仍然真的生效（本轮重测，同口径）
+
+用**新编出来的** `dist\chainproxy-cli.exe`（无任何引擎标签）走真实 CLI 与 app 解析链，
+临时数据目录 + 一次性 SOCKS5 探针；**并故意在配置里留着已经被删除的
+`settings.engineMode = "singbox"`**（验证老配置照旧能载入、且不再影响内核选择）：
+
+```
+[探针节点] 「探针节点」mihomo 出站已就绪：127.0.0.1:18082（type=Vless）；经前置 SOCKS5 127.0.0.1:18080
+探针侧：CONNECT 127.0.0.1:18082
+```
+
+"没有任何路径静默退化成直连"这件事现在由三层钉住：
+  1. `NewUpstream` **没有**第二分支：工厂报错就把错误交出去
+     （`TestUpstreamHasNoFallback`），并且前置必须**原样**传给工厂
+     （`TestFrontedNodeKeepsFrontReachingEngine`）；
+  2. 非直连时出站一定装了 `mihomoDialer`（`TestNewMihomoFrontPlan` /
+     `TestEveryProtocolGetsTheFrontDialer`）；
+  3. 前置做不了 UDP 时明确报错（`TestMihomoDialerNeverSilentlyDirectsUDP`），
+     Hysteria2 配 HTTP 前置在**构造期**就被拒（`mihomoFrontPlan`）。
+
+### 为什么删掉「代理内核」开关（用户可见的变化）
+
+它原本是 sing-box / mihomo 的二选一。sing-box 摘除后**没有第二个引擎可切**，
+留着只会让人以为还能切、或者以为切了会生效（它还要重启才生效）—— 这是最保守的处理：
+mihomo 成为唯一内核，开关与 `Settings.EngineMode` 一起删除。
+老配置里残留的 `engineMode` 字段会被 JSON 反序列化直接忽略（不需要迁移代码，本轮已实测）。
+
+### 本轮未做 / 仍需注意
+
+  - **逐传输真实验证**仍只有三条（vless+xhttp、vmess+tcp、vmess+UDP(DNS)）：
+    ws/grpc/http/h2/httpupgrade 与 trojan/ss/hysteria2 只有映射单测；这是换装期就记下的遗留；
+  - **UDP 经前置**只到拨号器层证据（UDP ASSOCIATE + 数据报 + 回包），没有真的 QUIC 服务端；
+  - **真实节点上"出口 IP 变成前置身后的出口"**没实测（需要一条真节点 + 真前置）；
+  - UDP 的 `ReceiveFromUDP` 仍是轮询版（见上一条遗留清单）。
