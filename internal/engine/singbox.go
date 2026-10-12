@@ -302,7 +302,9 @@ func buildNodeOutbound(n config.Node) (map[string]any, error) {
 		if n.AlterID != 0 {
 			m["alter_id"] = n.AlterID
 		}
-		applyTransport(m, n)
+		if err := applyTransport(m, n); err != nil {
+			return nil, err
+		}
 		applyTLS(m, n)
 
 	case config.ProtocolVLESS:
@@ -311,7 +313,9 @@ func buildNodeOutbound(n config.Node) (map[string]any, error) {
 		if strings.TrimSpace(n.Flow) != "" {
 			m["flow"] = strings.TrimSpace(n.Flow)
 		}
-		applyTransport(m, n)
+		if err := applyTransport(m, n); err != nil {
+			return nil, err
+		}
 		applyTLS(m, n)
 
 	case config.ProtocolShadowsocks:
@@ -322,7 +326,9 @@ func buildNodeOutbound(n config.Node) (map[string]any, error) {
 	case config.ProtocolTrojan:
 		m["type"] = "trojan"
 		m["password"] = n.Password
-		applyTransport(m, n)
+		if err := applyTransport(m, n); err != nil {
+			return nil, err
+		}
 		applyTLS(m, n)
 
 	case config.ProtocolHysteria2:
@@ -355,7 +361,10 @@ func buildNodeOutbound(n config.Node) (map[string]any, error) {
 //
 // 注意：sing-box 的 transport.type 只接受 http/ws/quic/grpc/httpupgrade，
 // **没有 tcp** —— 用 tcp 时必须整个不写 transport 字段。
-func applyTransport(m map[string]any, n config.Node) {
+//
+// 返回 error 的那些情况是**内核做不到**（不是配置写错了）：讲清楚"跑不起来、可以换什么"，
+// 比把原样透传给 sing-box、让它报一句难懂的英文有用得多。
+func applyTransport(m map[string]any, n config.Node) error {
 	network := strings.ToLower(strings.TrimSpace(n.Transport.Network))
 	if network == "" {
 		network = "tcp"
@@ -363,7 +372,7 @@ func applyTransport(m map[string]any, n config.Node) {
 	switch network {
 	case "tcp":
 		// http 伪装头（主流客户端的 tcp+http header）sing-box 不支持，忽略。
-		return
+		return nil
 	case "ws":
 		t := map[string]any{"type": "ws"}
 		if p := strings.TrimSpace(n.Transport.Path); p != "" {
@@ -398,11 +407,21 @@ func applyTransport(m map[string]any, n config.Node) {
 			t["path"] = p
 		}
 		m["transport"] = t
+	case "xhttp", "splithttp":
+		// 【实测】sing-box v1.14.3 没有 xhttp 传输（它的传输只有 http/ws/quic/grpc/httpupgrade）。
+		// 用户拿一个 xhttp 节点来测，原来会得到 sing-box 那句
+		// "outbounds[0].transport: unknown transport type: xhttp" —— 既没说是谁的问题，
+		// 也没说该怎么办。这里直接把话说清楚。
+		return fmt.Errorf("本程序内嵌的 sing-box 内核不支持 xhttp 传输（Xray 的较新传输，前身 SplitHTTP）——" +
+			"这个节点在当前内核下跑不起来。" +
+			"可选：① 用主流客户端（Xray 内核）跑它，再把本程序的「前置」指向主流客户端的 SOCKS5 口；" +
+			"② 或在服务端改用 ws / grpc / h2 / httpupgrade 传输后重新导入")
 	default:
-		// 不认识的传输层类型：原样透传，让 sing-box 自己报错，
-		// 这样用户能看到"不支持 ws 之外的 xxx"这种明确信息。
+		// 其它不认识的类型：原样透传，让 sing-box 自己报错 ——
+		// 至少那是"内核真的不认识"，我们也不该替它猜。
 		m["transport"] = map[string]any{"type": network}
 	}
+	return nil
 }
 
 // applyTLS 写入 TLS / Reality 配置。

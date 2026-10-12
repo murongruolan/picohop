@@ -397,3 +397,34 @@ func BuildConfigJSONMustString(t *testing.T) string {
 	}
 	return string(raw)
 }
+
+// TestBuildOutboundXHTTP 锁死 xhttp 的失败方式。
+//
+// 背景：实测用户导入了一个 xhttp 传输的 VLESS 节点，我们原样透传给 sing-box，
+// 用户看到的是 "unknown transport type: xhttp" —— 只有"哪里错"，没有"怎么办"。
+// 现在必须返回中文且可操作的原因（提到内核不支持 + 可以换什么）。
+func TestBuildOutboundXHTTP(t *testing.T) {
+	n := config.Node{
+		ID:       "xhttp-1",
+		Name:     "①US1直连出口",
+		Protocol: config.ProtocolVLESS,
+		Server:   "204.197.163.238",
+		Port:     30022,
+		UUID:     "ed401d40-9c96-4217-8e6b-ab6ac21169c1",
+	}
+	n.Transport.Network = "xhttp"
+	n.TLS.Enabled = true
+	n.TLS.ServerName = "www.amazon.com"
+
+	_, err := buildNodeOutbound(n)
+	if err == nil {
+		t.Fatal("xhttp 应当返回错误，而不是生成一个内核不认识的配置")
+	}
+	msg := err.Error()
+	for _, want := range []string{"xhttp", "不支持"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("错误信息应当包含 %q，实际：%s", want, msg)
+		}
+	}
+	t.Logf("实际错误信息：%s", msg)
+}
