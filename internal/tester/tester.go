@@ -126,7 +126,6 @@ func Speed(ctx context.Context, dial DialFunc, rawURL string, maxSeconds int, ti
 		return 0, 0, fmt.Errorf("测速地址非法: %w", err)
 	}
 
-	start := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, 0, err
@@ -138,7 +137,16 @@ func Speed(ctx context.Context, dial DialFunc, rawURL string, maxSeconds int, ti
 
 	// 只采样 maxSeconds 秒，时间到就主动断开 —— 测速地址通常是 100MB 的大文件，
 	// 不掐断会把用户的流量白跑掉。
-	deadline := time.Now().Add(time.Duration(maxSeconds) * time.Second)
+	//
+	// 【为什么计时起点放在这里，而不是 client.Do 之前】分子（total）只是下面这个
+	// 窗口里读到的字节：建链、TLS 握手、等响应头这些时间里**一个字节都不计入**。
+	// 如果分母从 client.Do 之前起算，就等于把这些"零字节的时间"也摊进了速度里，
+	// 节点被系统性低估 —— 建链/首字节越慢（跨洲节点、TLS 握手慢）低估越狠，
+	// 几倍的差距都出现过。所以计时起点和采样窗口必须共用同一个 now，
+	// 让分子分母都只覆盖真正的传输窗口（审查 #20）。
+	// 别再把它挪回 client.Do 之前。
+	windowStart := time.Now()
+	deadline := windowStart.Add(time.Duration(maxSeconds) * time.Second)
 	buf := make([]byte, 64*1024)
 	var total int64
 	for {
@@ -159,7 +167,9 @@ func Speed(ctx context.Context, dial DialFunc, rawURL string, maxSeconds int, ti
 			break
 		}
 	}
-	elapsed := time.Since(start).Seconds()
+	// 分母与上面的 windowStart 配对：同样是"传输窗口"，不含建链/首字节等待，
+	// 这样它和 total 的口径才一致（审查 #20）。
+	elapsed := time.Since(windowStart).Seconds()
 	if elapsed <= 0 || total == 0 {
 		return 0, 0, fmt.Errorf("没有收到数据")
 	}
