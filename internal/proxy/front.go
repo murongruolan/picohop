@@ -116,20 +116,15 @@ func (f *socks5Front) DialUDP(ctx context.Context) (UDPChannel, error) {
 		ctrl.Close()
 		return nil, fmt.Errorf("前置代理不支持 UDP 转发（UDP ASSOCIATE 失败）: %w", err)
 	}
-	// 有些服务端返回 0.0.0.0 作为 relay 地址，此时应使用前置代理所在主机。
-	if relayHost == "" || relayHost == "0.0.0.0" || relayHost == "::" {
-		relayHost = f.fc.Host
-	}
 	_ = ctrl.SetDeadline(time.Time{})
 
-	udpAddr := &net.UDPAddr{IP: net.ParseIP(relayHost), Port: relayPort}
-	if udpAddr.IP == nil {
-		udpAddr.IP = net.IPv4zero
-	}
-	relay, err := net.DialUDP("udp", nil, udpAddr)
+	// relay 主机名可能是域名（服务端回了 ATYP=0x03，或它回 0.0.0.0 时退回
+	// 配置里的前置主机名）。这里必须真的解析成 IP；解析不了就硬报错，
+	// 绝不许像以前那样把域名静默换成 0.0.0.0（详见 dialSocks5UDPRelay 的注释）。
+	relay, err := dialSocks5UDPRelay(ctx, relayHost, relayPort, f.fc.Host, timeout)
 	if err != nil {
 		ctrl.Close()
-		return nil, fmt.Errorf("连接前置 UDP relay %s 失败: %w", udpAddr, err)
+		return nil, err
 	}
 	return newSocks5UDPChannel(ctrl, relay), nil
 }

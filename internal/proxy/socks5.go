@@ -7,6 +7,7 @@
 package proxy
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ------------------------------------------------------------------
@@ -249,6 +251,56 @@ func socks5UDPAssociate(conn net.Conn, username, password string) (string, int, 
 		return "", 0, fmt.Errorf("SOCKS5 拒绝了 UDP ASSOCIATE（应答码 0x%02x：%s）", head[1], ReplyText(head[1]))
 	}
 	return readSocks5Addr(conn)
+}
+
+// dialSocks5UDPRelay 按 UDP ASSOCIATE 应答里的 relay 地址拨一条 UDP 套接字。
+//
+// 【这个坑是什么（审查 #18）】relay 主机名**经常**是域名，但原来的写法是：
+//
+//	udpAddr := &net.UDPAddr{IP: net.ParseIP(relayHost), Port: relayPort}
+//	if udpAddr.IP == nil { udpAddr.IP = net.IPv4zero }   // ← 域名在这里被静默吃掉
+//
+// net.ParseIP 对域名一律返回 nil，于是 UDP 中继被拨到 0.0.0.0:relayPort：
+// **不报错**，Windows 还会把它改写成 127.0.0.1（本机回环），
+// 所有 SOCKS5 UDP 帧于是发给了本机一个没人监听的端口 —— 日志里一行错误都没有，
+// 外面只看到"WireGuard 一直发握手包、永远连不上"。域名从哪来：
+//   - RFC 1928 允许服务端在 BND.ADDR 里回域名（ATYP=0x03）；
+//   - 服务端回 0.0.0.0 / :: / 空时我们退回 fallbackHost（配置里的前置/出口主机名），
+//     用户填的通常就是域名（本仓库 data/config.json 的出口节点就是域名）。
+//
+// 【为什么这么修】域名交给 net.Dialer 解析（受 timeout 与 ctx 约束），
+// 解析或连接失败一律返回错误 —— 宁可明确失败，也**绝不允许**把地址降级成 0.0.0.0。
+// 这里刻意不写成"先 ResolveUDPAddr 拿 IP、再 DialUDP"：DialContext 会按解析结果
+// 逐个地址尝试，并按远端地址族选 AF_INET / AF_INET6（与原来的 DialUDP 语义一致）；
+// 自己取解析结果的第一条，会在 IPv6 优先的双栈机器上挑到不通的那一族。
+func dialSocks5UDPRelay(ctx context.Context, relayHost string, relayPort int, fallbackHost string, timeout time.Duration) (*net.UDPConn, error) {
+	// 服务端回 0.0.0.0 / :: / 空：按 RFC 1928 的含义就是"用你连我的那个地址"，
+	// 退回配置里的主机名（可能仍是域名，下面统一解析）。
+	if relayHost == "" || relayHost == "0.0.0.0" || relayHost == "::" {
+		relayHost = fallbackHost
+	}
+	// 兜底之后还是通配/空，说明配置里也没有可用主机名：直接失败，
+	// 不许"退化成 0.0.0.0"（那等于把中继指向本机）。
+	if relayHost == "" || relayHost == "0.0.0.0" || relayHost == "::" {
+		return nil, fmt.Errorf("SOCKS5 服务端没有给出可用的 UDP relay 地址（%q），配置里也没有可用主机名", relayHost)
+	}
+	if relayPort <= 0 || relayPort > 65535 {
+		return nil, fmt.Errorf("SOCKS5 服务端给出的 UDP relay 端口 %d 非法", relayPort)
+	}
+
+	addr := net.JoinHostPort(relayHost, strconv.Itoa(relayPort))
+	d := &net.Dialer{Timeout: timeout}
+	conn, err := d.DialContext(ctx, "udp", addr)
+	if err != nil {
+		// 域名解析不了、地址不可用都会走到这里；错误里带上原始主机名便于用户定位。
+		return nil, fmt.Errorf("连接 UDP relay %s 失败: %w", addr, err)
+	}
+	uc, ok := conn.(*net.UDPConn)
+	if !ok {
+		_ = conn.Close()
+		return nil, fmt.Errorf("UDP relay %s 返回了非 UDP 连接（%T）", addr, conn)
+	}
+	return uc, nil
 }
 
 // ------------------------------------------------------------------

@@ -162,19 +162,15 @@ func (s *socks5Upstream) DialUDP(ctx context.Context, front Front) (UDPChannel, 
 		ctrl.Close()
 		return nil, fmt.Errorf("SOCKS5 出口不支持 UDP ASSOCIATE: %w", err)
 	}
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		host = s.n.Server
-	}
 	_ = ctrl.SetDeadline(time.Time{})
 
-	udpAddr := &net.UDPAddr{IP: net.ParseIP(host), Port: port}
-	if udpAddr.IP == nil {
-		udpAddr.IP = net.IPv4zero
-	}
-	relay, err := net.DialUDP("udp", nil, udpAddr)
+	// 同一处缺陷的第二处实例（审查 #18）：出口地址在真实配置里常常就是域名，
+	// 旧写法把域名喂给 net.ParseIP（返回 nil）后静默改成 0.0.0.0，
+	// 等于把 UDP 中继指向本机。详见 dialSocks5UDPRelay 的注释。
+	relay, err := dialSocks5UDPRelay(ctx, host, port, s.n.Server, s.DialTimeout())
 	if err != nil {
 		ctrl.Close()
-		return nil, fmt.Errorf("连接出口 UDP relay %s 失败: %w", udpAddr, err)
+		return nil, err
 	}
 	return newSocks5UDPChannel(ctrl, relay), nil
 }
