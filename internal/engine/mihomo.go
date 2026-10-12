@@ -141,7 +141,17 @@ func (u *MihomoUpstream) Dial(ctx context.Context, _ proxy.Front, target string)
 // 要把它包成 proxy.UDPChannel（SendToUDP / ReceiveFromUDP + quit 语义）才算完成，
 // 见迁移契约第 ④ 步。这里明确报错，不假装成功。
 func (u *MihomoUpstream) DialUDP(ctx context.Context, _ proxy.Front) (proxy.UDPChannel, error) {
-	return nil, fmt.Errorf("mihomo 适配层：UDP 通道尚未接入（迁移契约第 ④ 步；当前只接了 TCP）")
+	out, err := u.outbound()
+	if err != nil {
+		return nil, err
+	}
+	// 尽早失败：出站自己说它不支持 UDP 时，别等到用户发了第一个包才报。
+	// （mihomo 的 Base.SupportUDP 读的就是各协议选项里的 udp 字段，我们的映射里都开了。）
+	if !out.SupportUDP() {
+		return nil, fmt.Errorf("mihomo 出站 %s 不支持 UDP: %w", u.node.Name, proxy.ErrUDPUnsupported)
+	}
+	// 目标按数据报给（SendToUDP），所以这里只建一个"空壳"，真正建通道延后到第一次发送。
+	return newMihomoUDPChannel(u, ctx), nil
 }
 
 // ------------------------------------------------------------------
