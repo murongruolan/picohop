@@ -12,6 +12,9 @@ package engine
 //   ✅ 隧道建立（382 ms）-> 204.197.163.238:30022
 //   ✅ 响应首行：HTTP/1.1 204 No Content
 //
+// 【前置（链式代理）怎么表达】mihomo 的常规做法是 dialer-proxy，那要一个全局 hub；
+// 我们走的是每个出站自己的 BasicOption.DialerForAPI —— 见 mihomo_dialer.go 的完整说明。
+//
 // 【与 sing-box 那个实现的关系】两者实现同一个 proxy.Upstream 接口，形状完全一致，
 // 上层（handler / 链路 / 统计 / 网络日志）不需要知道底下是谁。
 
@@ -37,6 +40,10 @@ type MihomoUpstream struct {
 	front config.Front
 	logf  func(string, ...any)
 
+	// dialer 是"经前置"的拨号器；直连时为 nil（出站用 mihomo 自己的默认拨号器）。
+	// 出站是构造时建好的，所以它也必须在这里存一份：Start 的兜底重建要用。
+	dialer C.Dialer
+
 	mu  sync.Mutex
 	out C.ProxyAdapter
 	// built 是构造时就建好的出站实例；Stop 只清 out（激活态），built 留着以便重新激活。
@@ -49,75 +56,84 @@ type MihomoUpstream struct {
 // **第一跳**：直连节点是 {Type: direct}，选全局前置的节点就是设置里那份前置，
 // 以另一个节点为前置的节点则是一个指向它本地端口的 socks5。
 //
-// 【本适配层不接前置 —— 非直连一律拒绝】MihomoUpstream 目前只做单出站拨号，
-// 收下的 front 根本不会被使用。所以"实际会用到前置"的节点必须在这里就被拒
-// （判据见 mihomoFrontGap）：放它过去 = 从本机 IP 出去，绕开链式代理/住宅出口，
-// 而且完全静默。这条与 sing-box 侧 buildFrontOutbound 的 fail-closed 是同一条原则。
+// 【前置是怎么生效的】非直连时，我们把一个自己的 C.Dialer（mihomoDialer）装进
+// 各协议的 BasicOption.DialerForAPI —— 出站"连服务器"那一跳因此经前置出去，
+// TCP 与 UDP 两条路径都覆盖（证据与覆盖范围见 mihomo_dialer.go）。
+// 直连时**不装**，让 mihomo 用它自己的默认拨号器（interface-name / routing-mark
+// 等选项照旧生效）。
 //
 // 真正的出站实例在 Start 里创建（与 sing-box 侧一致：Start 才"拉起实例"）。
 func NewMihomo(n config.Node, front config.Front, logf func(string, ...any)) (proxy.Upstream, error) {
 	if !mihomoSupports(n.Protocol) {
 		return nil, fmt.Errorf("mihomo 适配层暂不支持协议 %q（本步只接了 vless；其余协议按迁移契约第 ④ 步逐条扩）", n.Protocol)
 	}
-	if gap := mihomoFrontGap(n, front); gap != "" {
-		return nil, fmt.Errorf("节点「%s」%s，而 mihomo 适配层还没接前置 —— "+
-			"它目前只会从本机直接拨号，放过去就等于绕开前置、用本机 IP 出去。"+
-			"为免静默直连，这里直接拒绝：本节点会回退 sing-box（它按前置生成 detour，链式照常生效）",
-			n.Name, gap)
+	viaFront, reject := mihomoFrontPlan(n, front)
+	if reject != "" {
+		// 【fail-closed】宁可这个节点起不来，也不许它从本机 IP 出去。
+		return nil, fmt.Errorf("节点「%s」%s，mihomo 适配层做不了，已拒绝启动（避免静默用本机 IP 直连）", n.Name, reject)
 	}
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
 	// 【为什么在构造时就把出站建出来】映射错误（字段缺失、传输不支持等）原本要等到
 	// Start 才暴露，那样上层就没法回退了 —— 用户会看到"节点激活失败"，
-	// 而这个节点在 sing-box 下本来是能用的。构造时就建好，让 proxy.NewUpstream
-	// 能按"构造失败 → 回退 sing-box"处理，换装期不会让任何节点从可用变不可用。
-	out, err := buildMihomoOutbound(n)
+	// 而这个节点本来是能用的（sing-box 下能跑，mihomo 只该是"换了个内核"）。
+	// 构造时就建好，换装期不会让任何节点从可用变不可用。
+	var dialer C.Dialer
+	if viaFront {
+		dialer = newMihomoDialer(front)
+	}
+	out, err := buildMihomoOutbound(n, dialer)
 	if err != nil {
 		return nil, err
 	}
-	return &MihomoUpstream{node: n, front: front, logf: logf, built: out}, nil
+	return &MihomoUpstream{node: n, front: front, logf: logf, dialer: dialer, built: out}, nil
 }
 
-// mihomoFrontGap 报告"这个节点实际会用到非直连前置"的原因；返回空串 = 用不到前置，放行。
+// mihomoFrontPlan 决定这个节点的第一跳怎么走，以及有没有"确实做不到"的情况。
 //
-// 【为什么必须在构造时就判】MihomoUpstream 只做单出站拨号：它按节点自己的服务器
-// 地址直接 DialContext，front 参数收下了也不会用。一个配了前置的节点若被放行，
-// 它就会**用本机 IP** 去连节点服务器 —— 而前置的意义恰恰是不让本机 IP 露面
-// （住宅出口、公司出口、另一跳节点……）。这种故障完全静默：链路照样通，
-// 只是身份已经暴露，用户从界面上看不出来。所以 fail-closed：宁可它起不来
-// （上层回退 sing-box），也不许它偷偷直连。这条与 singbox.go 里
-// buildFrontOutbound 的"非法前置必须报错、不许退化成直连"（审查 #10）同源。
+// 返回 (viaFront, reject)：
+//   - viaFront=true 表示要经前置拨号（调用方会把 mihomoDialer 装进出站）；
+//   - reject 非空表示这种组合 mihomo 适配层做不到，必须**拒绝启动**。
 //
-// 【判据】Node.Front 只有三种取值（见 config.Node 的注释与 FrontKind/FrontNodeID）：
-//   - ""（FrontDirect，含纯空白）→ resolveFront 给 direct，单出站拨号正是它想要的行为；
-//   - "global"（FrontGlobal）    → 用设置里的全局前置，就是传进来的 front 参数；
-//   - 其它                       → 本项目内另一个节点的 ID（FrontNodeID 非空），
-//     resolveFront 会给一个指向它本地端口的 socks5 前置。
+// 【为什么判据看的是解析出来的 front，而不是节点的 Front 字段】
+// 上层只有一个解析处（app.resolveFrontLocked）：直连 → {Type: direct}、
+// global → 设置里那份前置、节点 ID → 指向该节点本地端口的 socks5。所以
+// "节点字段"能表达的三种形态在 front 里都有对应，而**真正决定往哪拨的是 front**。
+// 唯一的例外补一条一致性检查：节点以另一个节点为前置（那是**必须有**一跳 socks5 的
+// 形态），解析出来却是直连 —— 正常流程不该出现，一律拒绝，因为按直连跑就是从本机 IP 出去。
+// （反过来，"节点选全局前置、而全局前置本身被设成 direct"是合法配置：那就是不走前置，
+// 与 sing-box 侧 buildFrontOutbound 对 direct 的处理一致，不能拒。）
 //
-// 于是：节点前置指向另一个节点 → 拒；节点要用的全局前置不是 direct → 拒。
-// 另外补一条防御：节点自称直连、调用方却递了一个**明确配好的**非直连前置时也拒
-// —— mihomo 会忽略这个参数，两边不一致时只有按"有前置"处理才不会静默直连
-// （零值 Front 视为"调用方没给前置信息"，不算不一致，否则会误伤直连节点）。
-//
-// 【为什么"非 direct 一律算有前置"，而不是只认 socks5/http】proxy.NewFront 的
-// default 分支造的就是 socks5Front：Front.Type 只要不是显式 "direct"（空串也是），
-// 跑起来都是一跳真实的前置（singbox 侧同样这么判）。宁可多拒一个残缺配置，
-// 也不能漏判成"直连"。
-func mihomoFrontGap(n config.Node, front config.Front) string {
-	if id := n.FrontNodeID(); id != "" {
-		return fmt.Sprintf("的前置指向另一个节点（%s）", id)
-	}
-	if n.UsesGlobalFront() {
-		if front.Type != config.FrontTypeDirect {
-			return fmt.Sprintf("用的是非直连的全局前置（%s）", front.Describe())
+// 【为什么"非显式 direct"都算有前置】proxy.NewFront 的 default 分支造的就是
+// socks5Front：Type 不是 "direct"（空串也是）时跑起来都是一跳真实的前置
+// （singbox 侧 buildFrontOutbound 同样这么判，见审查 #10）。零值 Front
+// （什么都没填）是唯一的例外，按"调用方没给前置信息"处理，等同直连。
+func mihomoFrontPlan(n config.Node, front config.Front) (bool, string) {
+	if isDirectFront(front) {
+		if n.FrontNodeID() != "" {
+			return false, fmt.Sprintf("前置指向另一个节点（%s），但解析出来的第一跳却是直连", n.FrontNodeID())
 		}
-		return ""
+		return false, ""
 	}
-	if front.Type != config.FrontTypeDirect && front.Type != "" {
-		return fmt.Sprintf("传进来的前置不是直连（%s）", front.Describe())
+	// 经前置：目前只有"整个协议跑在 UDP 上、而前置只能走 TCP"这一种确实做不到。
+	if n.Protocol == config.ProtocolHysteria2 && front.Type == config.FrontTypeHTTP {
+		return true, "Hysteria2 整个协议跑在 QUIC(UDP) 上，而 HTTP 前置不支持 UDP 转发" +
+			"（换成 SOCKS5 前置即可）"
 	}
-	return ""
+	return true, ""
+}
+
+// isDirectFront 判断一份前置配置是不是"直连"。
+//
+// 显式 direct 与**零值**（一个字段都没填 = 调用方没给前置信息）都算直连；
+// 其余一律按"有前置"处理。别把它简化成只认 Type：空 Type 在 proxy.NewFront 的
+// default 分支里就是 socks5 前置，漏判会让节点偷偷直连。
+func isDirectFront(f config.Front) bool {
+	if f.Type == config.FrontTypeDirect {
+		return true
+	}
+	return f.Type == "" && strings.TrimSpace(f.Host) == "" && f.Port == 0
 }
 
 // mihomoSupports 目前只声明已经写好的协议。
@@ -152,7 +168,7 @@ func (u *MihomoUpstream) Start(ctx context.Context, _ proxy.Front) error {
 	out := u.built
 	if out == nil {
 		// 兜底：正常流程里构造时就建好了
-		built, err := buildMihomoOutbound(u.node)
+		built, err := buildMihomoOutbound(u.node, u.dialer)
 		if err != nil {
 			u.mu.Unlock()
 			return err
@@ -161,7 +177,12 @@ func (u *MihomoUpstream) Start(ctx context.Context, _ proxy.Front) error {
 	}
 	u.out = out
 	u.mu.Unlock()
-	u.logf("「%s」mihomo 出站已就绪：%s（type=%v）", u.node.Name, out.Addr(), out.Type())
+	// 把"这一跳经谁出去"写进日志：出问题时用户能一眼看出前置有没有生效。
+	via := ""
+	if !isDirectFront(u.front) {
+		via = fmt.Sprintf("；经前置 %s", u.front.Describe())
+	}
+	u.logf("「%s」mihomo 出站已就绪：%s（type=%v）%s", u.node.Name, out.Addr(), out.Type(), via)
 	return nil
 }
 
@@ -231,13 +252,17 @@ func (u *MihomoUpstream) DialUDP(ctx context.Context, _ proxy.Front) (proxy.UDPC
 // ------------------------------------------------------------------
 
 // buildMihomoOutbound 按协议构造 mihomo 出站实例。
-func buildMihomoOutbound(n config.Node) (C.ProxyAdapter, error) {
+//
+// dialer 非 nil 时会被装进该协议的 BasicOption.DialerForAPI：出站连服务器那一跳
+// 因此走我们的前置（见 mihomo_dialer.go）。直连时传 nil，mihomo 用它自己的默认拨号器。
+func buildMihomoOutbound(n config.Node, dialer C.Dialer) (C.ProxyAdapter, error) {
 	switch n.Protocol {
 	case config.ProtocolVLESS:
 		opt, err := vlessOption(n)
 		if err != nil {
 			return nil, err
 		}
+		opt.BasicOption.DialerForAPI = dialer
 		out, err := outbound.NewVless(opt)
 		if err != nil {
 			return nil, fmt.Errorf("构造 mihomo vless 出站失败: %w", err)
@@ -248,6 +273,7 @@ func buildMihomoOutbound(n config.Node) (C.ProxyAdapter, error) {
 		if err != nil {
 			return nil, err
 		}
+		opt.BasicOption.DialerForAPI = dialer
 		out, err := outbound.NewVmess(opt)
 		if err != nil {
 			return nil, fmt.Errorf("构造 mihomo vmess 出站失败: %w", err)
@@ -258,6 +284,7 @@ func buildMihomoOutbound(n config.Node) (C.ProxyAdapter, error) {
 		if err != nil {
 			return nil, err
 		}
+		opt.BasicOption.DialerForAPI = dialer
 		out, err := outbound.NewTrojan(opt)
 		if err != nil {
 			return nil, fmt.Errorf("构造 mihomo trojan 出站失败: %w", err)
@@ -268,6 +295,7 @@ func buildMihomoOutbound(n config.Node) (C.ProxyAdapter, error) {
 		if err != nil {
 			return nil, err
 		}
+		opt.BasicOption.DialerForAPI = dialer
 		// 注意拼写：mihomo 是 NewShadowSocks（不是 NewShadowsocks）
 		out, err := outbound.NewShadowSocks(opt)
 		if err != nil {
@@ -279,6 +307,7 @@ func buildMihomoOutbound(n config.Node) (C.ProxyAdapter, error) {
 		if err != nil {
 			return nil, err
 		}
+		opt.BasicOption.DialerForAPI = dialer
 		out, err := outbound.NewHysteria2(opt)
 		if err != nil {
 			return nil, fmt.Errorf("构造 mihomo hysteria2 出站失败: %w", err)

@@ -466,6 +466,61 @@ NewUpstream 在五个 sing-box 协议分支之前插入：mode == "mihomo" 且 m
 前置拨到目标），赋给各协议的 `BasicOption.DialerForAPI` 即可 —— 前置那一跳我们自己已经有
 `proxy.Front`（socks5 / http / direct）可用。
 
+### 第 ⑰ 轮：真接前置（A′）—— 配了前置的节点现在**经前置拨号**
+
+第 ⑯ 轮把"配了前置的节点"挡在 mihomo 之外（回退 sing-box）。但用户真实的两个住宅节点前置
+就是「全局前置 · SOCKS5 127.0.0.1:10808」——**删掉 sing-box 就等于链式代理彻底不能用**。
+所以本轮先把前置在 mihomo 适配层里真正接通，再谈删依赖。
+
+**机制（读源码确认，不是猜）**：`adapter/outbound/base.go:204` 的
+`BasicOption.DialerForAPI C.Dialer` 注释写明"优先级高于上面所有配置"，`NewDialer`（同文件
+209-216）优先取它；各协议在构造时用它建自己的 dialer（`vless.go:509`、`vmess.go:517`、
+`trojan.go:306`、`shadowsocks.go:523`、`hysteria2.go:144`）。于是**不需要 hub、不需要
+dialer-proxy**：我们自己实现一个 `C.Dialer` 装进去即可（`internal/engine/mihomo_dialer.go`）。
+
+**它盖住了哪两跳**：
+
+| 出站 | 连服务器那一跳 | 谁覆盖 |
+|---|---|---|
+| vless / vmess / trojan | `dialContext -> dialer.DialContext(ctx,"tcp",addr)`（TCP 与 UDP-over-TCP 都走它） | `mihomoDialer.DialContext` |
+| shadowsocks | TCP 同上；**原生 UDP 走 `dialer.ListenPacket`**（`shadowsocks.go:242`） | `DialContext` + `ListenPacket` |
+| hysteria2 | QUIC：客户端把 `PacketListener`（= 这个 dialer）交给 `common.DialQuic`，后者用 `pDialer.ListenPacket` 建 UDP 套接字（`hysteria2.go:223/229`、`transport/tuic/common/dial.go:24`） | `ListenPacket` |
+
+`ListenPacket` 返回的是把 `proxy.UDPChannel` 桥接成的 `net.PacketConn`
+（`mihomo_frontconn.go`：收包协程 + 队列 + **真正生效的 SetReadDeadline**，QUIC 那类调用方
+靠截止时间推进自己的计时器）。前置做不到 UDP（HTTP 前置）时**明确报错**，绝不回落本机直连。
+
+**判据随之收窄**（`mihomoFrontPlan`）：能经前置的一律放行并装上拨号器；只剩两种拒绝 ——
+① 节点以**另一个节点**为前置、但解析出来的第一跳是直连（两边不一致，正常流程不该出现）；
+② Hysteria2（纯 QUIC 协议）配 **HTTP** 前置（HTTP 前置没有 UDP 转发）。直连时**不装**拨号器，
+让 mihomo 自己的默认拨号器继续负责 interface-name / routing-mark 等选项。
+
+**单测证据**（`internal/engine/mihomo_front_test.go`，本地自建 SOCKS5 前置当被测对象）：
+- `TestMihomoVLESSDialsThroughFront`：经前置时假前置必须收到「到节点服务器地址的 CONNECT」；
+  **反向断言**：改成直连后前置一个请求都收不到（这条界线就是"静默直连"）；
+- `TestMihomoDialerUDPGoesThroughFront`：UDP ASSOCIATE + 数据报确实经前置，回包也能读回；
+- `TestEveryProtocolGetsTheFrontDialer`：五种协议逐个验"出站真的用了我们的拨号器"
+  （哨兵拨号器计数 —— 漏一个协议就等于那个协议静默直连）；
+- `TestMihomoDialerNeverSilentlyDirectsUDP`、`TestFrontPacketConnBasics`（截止时间/关闭语义）。
+
+**端到端证据（走真实 CLI 与 app 的解析链）**：临时数据目录 + `engineMode=mihomo`，
+全局前置指向一个一次性 SOCKS5 探针（`.cache/cpprobe`，未入库），节点前置选「全局」：
+
+```
+# CHAINPROXY_DATA_DIR=<临时目录>；front=socks5 127.0.0.1:18080；node=vless 127.0.0.1:18082, front="global"
+chainproxy-cli.exe test --kind real --node probe-node
+  → [探针节点] 「探针节点」mihomo 出站已就绪：127.0.0.1:18082（type=Vless）；经前置 SOCKS5 127.0.0.1:18080
+  → 探针侧：CONNECT 127.0.0.1:18082          ← 连"节点服务器"那一跳确实经前置
+# 对照：同一节点 front=""（直连）
+  → 「直连对照节点」mihomo 出站已就绪：127.0.0.1:18082（type=Vless）   ← 日志里没有"经前置"
+  → 探针侧：没有任何 CONNECT
+```
+（两侧都"测不出延迟"是预期的：探针不是真的 VLESS 服务端。这里验的是**往哪拨**。）
+
+**未做 / 遗留**：① 真实节点上的"出口 IP 变成前置身后的出口"没有实测（本机前置代理 前置未运行，
+且这需要一条真节点）；② UDP 经前置只到**拨号器层**证据（没有真的 QUIC 服务端）；
+③ grpc / xhttp 传输没单独验（它们走同一条 DialContext，但没实测过）。
+
 ## 8. 第 ⑤ 步完成情况（截至第 18 轮）：开关可用、默认未翻
 
 ### 已完成

@@ -54,11 +54,13 @@ func TestEngineSelectionAndFallback(t *testing.T) {
 	}
 }
 
-// TestFrontRejectionFallsBack 锁死"mihomo 因为前置缺口被拒 → 回退 sing-box"。
+// TestFrontRejectionFallsBack 锁死"mihomo 因为做不了这个节点而报错 → 回退 sing-box"。
 //
-// 真实的判据在 internal/engine（mihomoFrontGap，那里不允许 import 本包的反向依赖），
+// 真实的判据在 internal/engine（mihomoFrontPlan，那里不允许 import 本包的反向依赖），
 // 本包只保证一件事：mihomo 工厂一旦报错就**必须回退**，绝不能被当成
 // "这个节点走直连"放行 —— 那正是"配了前置的节点静默从本机 IP 出去"这条路。
+// （配了前置的节点在 A′ 之后由 mihomo 自己经前置接住；这里覆盖的是"它确实做不了"
+// 那一类，例如 Hysteria2 配 HTTP 前置。）
 func TestFrontRejectionFallsBack(t *testing.T) {
 	origSing, origMihomo, origMode := singFactory, mihomoFactory, engineMode
 	defer func() { singFactory, mihomoFactory, engineMode = origSing, origMihomo, origMode }()
