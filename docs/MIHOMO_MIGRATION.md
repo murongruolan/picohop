@@ -568,4 +568,52 @@ NewUpstream 在五个 sing-box 协议分支之前插入：mode == "mihomo" 且 m
 因为一个"已知跑不通的 UDP"不该留在树里；事实与实现规格写进本文件，下一轮据此重做。
 （项目始终处于"可运行、测试全绿"的状态。）
 
+---
 
+## 11. 结项报告（第 20 轮 / 20）
+
+### 已完成（逐条对目标）
+
+| 目标步骤 | 状态 | 关键证据 |
+|---|---|---|
+| ① 补读 `ProxyAdapter`/`metadata`/`RealityOptions` 签名 | ✅ | 第 1 节；并确认"只需调用、不需实现 `ProxyAdapter`" |
+| ② 引依赖 + 探针验证编译与体积增量 | ✅ | 第 2 节：`mihomo v1.19.32`、无依赖冲突、净增量 **+7.36 MB**（实测） |
+| ③ 新写 mihomo 适配层（`proxy.Upstream`，每节点一实例、不经 hub/inbound） | ✅ | `internal/engine/mihomo.go` + `mihomo_udp.go`；`Start/Stop/Dial/DialUDP/Describe/DialTimeout/SupportsUDP` 全实现 |
+| ④ 选项与传输映射（tcp/ws/grpc/http/h2/httpupgrade/xhttp + TLS/Reality/uTLS） | ✅ | 五种协议 + 六种传输；**17+ 个子测试**锁死映射 |
+| ④′ **每个传输至少一条真实节点连通验证** | ⚠️ **部分** | **3 条**：vless+xhttp、vmess+tcp、vmess+UDP(DNS)；其余**无真实节点可验**（见下） |
+| ⑤ 切换默认引擎并保留 sing-box 回退开关 | ✅ | 工厂注册 + 模式选择 + **失败回退**；`Settings.EngineMode`；界面开关；**端到端 + 回退路径均已实测**；默认仍是 sing-box（未翻） |
+| ⑥ 清理依赖与构建标记 / 更新文档 / 重测实际打包体积 | ⚠️ **部分** | 文档 ✅；**实测体积 58.46 MB** ✅；**"清理依赖与构建标记"与 ⑤ 的"保留回退"互斥**（见下） |
+
+### 未完成的部分，以及为什么（不是"难度"，是外部条件）
+
+1. **④′ 其余传输/协议没有真实验证**
+   手上的节点只有：vless+xhttp、vmess+tcp、两条 SOCKS5（**我们的节点协议不支持 SOCKS5**）。
+   `ws/grpc/http/h2/httpupgrade` 与 `trojan/shadowsocks/hysteria2` **没有可用节点**。
+   → 需要用户提供对应传输的节点，或同意花一整轮做"本地起 inbound 当被测服务"（见第 10-A 节）。
+
+2. **⑤ 的"翻默认"没有做**
+   按第 10-B 节：应先补齐传输验证，再改前端 `blankSettings` + Go 默认值 + 两条测试断言；
+   且翻默认是**面向你日常使用**的开关，不该在你不知情时改。
+
+3. **⑥ 的"清理依赖与构建标记"做不到**
+   目标第 ⑤ 句要求"**保留 sing-box 回退开关**"，第 ⑥ 句要求"清理依赖与构建标记"。
+   只要回退保留，sing-box 依赖与 `with_utls,with_quic` 就必须存在 —— **这两句互斥**。
+   当前体积 **58.46 MB** 就是"保留回退"下的真实结果；21~24 MB 只在放弃回退后可能。
+
+### 需要用户拍板的两件事
+
+  1. **是否翻默认引擎为 mihomo**（建议：先补 1~2 条传输验证）；
+  2. **是否放弃 sing-box 回退**（决定 58.46 MB vs 约 21~24 MB）。
+
+这两件之外，迁移的**技术工作已经做完并可运行**：
+现在把 `settings.engineMode` 设成 `"mihomo"`（界面：设置 → 运行与界面 → 代理内核）
+就能用新内核跑 **xhttp 节点**（这正是整件事的起因），其余节点自动回退 sing-box，不会变不可用。
+
+### 遗留清单（交给后续的人）
+
+  - `ws/grpc/http/h2/httpupgrade` + `trojan/shadowsocks/hysteria2` 的真实链路验证；
+  - UDP 的 `ReceiveFromUDP` 目前是**轮询版**（活跃目标会拖慢其它目标）；升级路径：
+    每 conn 一个读协程 + 共享 chan（第 11 节记了理由与做法）；
+  - 界面开关**改完要重启程序**才生效（tooltip 已写明）；
+  - 翻默认时 `TestEngineModeJSON` 的断言要跟着改（第 10-B 节写明了怎么改）；
+  - 未测：hysteria2(QUIC) 的 UDP、WireGuard 经 mihomo 的 UDP、多目标并发压力、长稳内存。
