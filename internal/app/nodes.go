@@ -38,9 +38,39 @@ func (a *App) AddNode(n config.Node) (config.Node, error) {
 	if autoName {
 		n.Name = a.suggestNameLocked(n.Protocol)
 	}
+	// 【审查 #29】导入查重。share.DecodeAny 把去重明确留给调用方
+	// （见 internal/share/link.go 的 DecodeAny 注释），而两条导入路径 ——
+	// 界面的 PortOnlyDialog 与 CLI 的 import —— 最终都调这个**唯一的写入口**，
+	// 收在这里一处就够。不查的话，同一条链接导入两次（用户"以为没成功又点一次"）
+	// 会静默留下两份 server/port/凭据完全相同的节点。
+	//
+	// 判据只看"远端入口"（见 config.Node.IdentityKey）：换别名/备注/本地端口
+	// 都不算另一个节点 —— 那种需求要的是「克隆」，所以克隆路径
+	// （CloneNode 直接 append）刻意不走这里。这是 fail-closed：宁可让用户
+	// 看见"已存在相同节点"，也不要再往配置里塞一份重复数据。
+	if dup, ok := a.findDuplicateLocked(n); ok {
+		a.mu.Unlock()
+		return config.Node{}, fmt.Errorf("已存在相同节点「%s」（%s %s），未重复导入；如需同一个远端的第二个本地端口，请用「克隆」",
+			dup.Name, config.ProtocolLabel(dup.Protocol), dup.Address())
+	}
 	needPort := n.ListenPort == 0
 	if !needPort {
-		// 端口是用户填的：不需要任何探测，就在这一把锁里落盘
+		// 【审查 #29】用户（或 CLI 的 -port）显式给了端口：老代码在这里直接 append，
+		// 端口撞了谁都不管。CLI 批量导入更狠 —— 一批节点全拿到同一个端口，
+		// 只有第一个能真的监听起来，其余的点启动才报"端口绑定失败"，
+		// 而坏配置已经落盘。所以这里必须拦一次。
+		//
+		// 【为什么只查占用表、不在这里 bind 探测】占用表是纯内存查表；真的 bind
+		// 一次是系统调用，持着全局写锁做它会冻住整个界面（审查 #28）。
+		// "本机其它程序占着这个端口"那一半仍然由 startNode 的探测兜底 ——
+		// 那里本来就是放锁之后才探测的，失败同样会明确报出来。
+		if name, taken := a.allocatorLocked("").Project[n.ListenPort]; taken {
+			a.mu.Unlock()
+			if name == "" {
+				name = "本项目其它节点"
+			}
+			return config.Node{}, fmt.Errorf("本地端口 %d 已被「%s」占用，请换一个端口", n.ListenPort, name)
+		}
 		a.cfg.Nodes = append(a.cfg.Nodes, n)
 	}
 	a.mu.Unlock()
@@ -71,6 +101,20 @@ func (a *App) AddNode(n config.Node) (config.Node, error) {
 	a.Logf("已新增节点「%s」（%s，本地端口 %d）", n.Name, config.ProtocolLabel(n.Protocol), n.ListenPort)
 	a.emit(EventNodes, "")
 	return n, a.Save()
+}
+
+// findDuplicateLocked 在已持写锁的前提下，找出和 n 是**同一个远端入口**的已有节点。
+//
+// 判据是 config.Node.IdentityKey（协议 + 服务器 + 端口 + 凭据摘要），
+// 与别名、备注、前置、本地端口、统计无关 —— 理由见 AddNode 里审查 #29 的注释。
+func (a *App) findDuplicateLocked(n config.Node) (config.Node, bool) {
+	key := n.IdentityKey()
+	for _, e := range a.cfg.Nodes {
+		if e.IdentityKey() == key {
+			return e, true
+		}
+	}
+	return config.Node{}, false
 }
 
 // UpdateNode 按 ID 替换一个节点。

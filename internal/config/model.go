@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"strconv"
@@ -279,6 +281,42 @@ const TestResultTTL = 24 * time.Hour
 // 但改服务器地址或端口之后，旧结论说的就是另一个目标了，不能再当删除依据。
 func (n Node) TestKey() string {
 	return net.JoinHostPort(strings.ToLower(strings.TrimSpace(n.Server)), strconv.Itoa(n.Port))
+}
+
+// IdentityKey 是"这个节点连的是哪个远端入口"的指纹，用于**导入查重**（审查 #29）。
+//
+// 只包含"换一个就说明是另一个远端"的字段：协议 + 服务器 + 端口 + 凭据摘要。
+//
+// 【为什么不带别名 / 备注 / 前置 / 本地端口 / 统计】
+// 改别名、改备注都不等于换了节点；本地端口不同只是"同一个远端的第二个入口"，
+// 那是「克隆」的语义、不该被查重拦下。把这些算进 key 会让查重形同虚设。
+//
+// 【为什么凭据只进摘要、不直接拼进 key】
+// key 会被当 map 的键在内存里传来传去，将来很可能被顺手打进日志或错误信息里。
+// 摘要（SHA-256 取前 8 字节，只看是否相等）保证 key 里永远不含凭据原文 ——
+// 明文凭据只留在 Node 自己身上（审查 #23/#25 对"凭据不入日志"的一贯要求）。
+func (n Node) IdentityKey() string {
+	h := sha256.New()
+	// 用 \x00 分隔各字段：否则 ("ab","c") 与 ("a","bc") 会拼出同一个指纹。
+	// 只有"换了就必须当成另一个账号"的字段进来：ss 的加密方法、hysteria2 的
+	// obfs 密码也算在内；flow / TLS / 传输层只是同一账号的不同用法（审查 #29
+	// 给的判据就是 server+port+凭据），刻意不进 key，免得漏判重复。
+	parts := []string{n.UUID, n.Username, n.Password, n.Method, n.ObfsPassword}
+	if n.WireGuard != nil {
+		// WireGuard 的"凭据"是密钥对，不进来的话所有同地址的 wg 节点都会被判成同一个
+		parts = append(parts, n.WireGuard.PrivateKey, n.WireGuard.PeerPublicKey)
+	}
+	for _, p := range parts {
+		h.Write([]byte(strings.TrimSpace(p)))
+		h.Write([]byte{0})
+	}
+
+	return strings.Join([]string{
+		strings.ToLower(strings.TrimSpace(n.Protocol)),
+		strings.ToLower(strings.TrimSpace(n.Server)),
+		strconv.Itoa(n.Port),
+		hex.EncodeToString(h.Sum(nil)[:8]),
+	}, "|")
 }
 
 // KnownUnreachable 判断"最近一次测试明确证明它连不上，且这个结论现在还算数"。

@@ -33,6 +33,7 @@ import (
 	"chainproxy/internal/app"
 	"chainproxy/internal/config"
 	"chainproxy/internal/engine"
+	"chainproxy/internal/ports"
 	"chainproxy/internal/share"
 	"chainproxy/internal/wgproxy"
 
@@ -418,9 +419,48 @@ func runFetch(args []string) {
 // import / express
 // ------------------------------------------------------------------
 
+// batchPorts 给"一次导入多个节点"的场景分配本地端口（审查 #29）。
+//
+// 【缺陷】-port 以前被原样塞给这一批里的**每一个**节点：一条文本里带 3 条分享链接时，
+// 3 个节点会拿到同一个本地端口，只有第一个能真的监听起来，另外两个要到点启动才报
+// "端口绑定失败"—— 而坏配置已经落盘了。
+//
+// 现在的语义：-port 是这一批的**起始端口**，逐个往后找空闲端口，已占用的跳过。
+// free 就是"这个端口现在能不能用"（本项目别的节点占着、本机别的程序占着都算不能用）。
+// 返回长度与 count 相同；找不到空闲端口的位置是 ports.NoPort(0)，
+// 调用方据此明确报错 —— 绝不返回一个没验证过的端口（与 ports.NoPort 的约定一致）。
+//
+// free 由调用方注入是为了让这个函数保持纯粹：测试直接给一张占用表就够了，
+// 不必真的去 bind 端口（也就不会因为开发机上恰好跑着什么而偶发变红）。
+func batchPorts(start, count int, free func(int) bool) []int {
+	out := make([]int, 0, count)
+	next := start
+	for i := 0; i < count; i++ {
+		p := next
+		found := ports.NoPort
+		for scanned := 0; scanned < ports.MaxScanAhead && p <= 65535; scanned++ {
+			if free(p) {
+				found = p
+				break
+			}
+			p++
+		}
+		out = append(out, found)
+		if found == ports.NoPort {
+			// 后面已经没有空闲端口了：剩下的位置全部标失败，不再逐个空扫占用表。
+			for j := i + 1; j < count; j++ {
+				out = append(out, ports.NoPort)
+			}
+			return out
+		}
+		next = found + 1
+	}
+	return out
+}
+
 func runImport(args []string) {
 	fs := flag.NewFlagSet("import", flag.ContinueOnError)
-	port := fs.Int("port", 0, "指定本地端口（默认自动分配）")
+	port := fs.Int("port", 0, "指定本地端口（默认自动分配；一条文本里有多条链接时是起始端口）")
 	front := fs.String("front", "", "前置：留空=直连，global=全局前置，或另一个节点的 ID")
 	activate := fs.Bool("activate", false, "导入后立即激活")
 	_ = fs.Parse(args)
@@ -430,6 +470,13 @@ func runImport(args []string) {
 	}
 	link := fs.Arg(0)
 
+	// -port 至少要过 ports.Check 那一关（1-1023 是系统保留端口，>65535 非法）：
+	// 这种值以前会被原样写进配置，节点要到点启动才报错。顺带保证下面的
+	// "从起始端口往后顺延"是从一个合法端口起步的（审查 #29）。
+	if *port != 0 && (*port < 1024 || *port > 65535) {
+		fatal("本地端口 %d 非法，应在 1024-65535 之间", *port)
+	}
+
 	nodes, err := share.DecodeAny(link)
 	if err != nil {
 		fatal("解析分享链接失败：%v", err)
@@ -438,9 +485,27 @@ func runImport(args []string) {
 	a := newApp()
 	defer a.Close()
 
+	// 【审查 #29】批量导入的端口必须各占一个：-port 只当起始端口。
+	// 单个节点保持原语义 —— -port 就是它的端口，被占用时由 AddNode 明确报错，
+	// 不悄悄换成用户没要的端口。
+	var batch []int
+	if *port > 0 && len(nodes) > 1 {
+		batch = batchPorts(*port, len(nodes), func(p int) bool { return a.PortStatus(p, "").Free })
+	}
+
 	var added []string
-	for _, n := range nodes {
-		n.ListenPort = *port
+	for i, n := range nodes {
+		if *port > 0 {
+			switch {
+			case len(nodes) == 1:
+				n.ListenPort = *port
+			case batch[i] == ports.NoPort:
+				fmt.Printf("  ❌ 导入「%s」失败：从端口 %d 起找不到空闲端口，请先释放一个端口再导入\n", n.Name, *port)
+				continue
+			default:
+				n.ListenPort = batch[i]
+			}
+		}
 		n.Front = *front
 		out, aerr := a.AddNode(n)
 		if aerr != nil {
