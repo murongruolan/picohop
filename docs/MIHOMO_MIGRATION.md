@@ -309,11 +309,12 @@ type XHTTPOptions struct {
   | 2 | vmess + tcp | 无 | 204 | 第 7 轮 |
   | 3 | vmess + UDP（QUIC/原生 UDP 通道） | 无 | DNS 往返（ID 匹配） | 第 ⑪ 轮 |
   | 4 | **hysteria2 + TLS 证书 pin** | sni / pinSHA256 / mport(未支持) | 真连接秒级（899 / 1928 ms）、出口 IP 与服务器同 /24、204 | 第 ⑲ 轮 |
-  | 5 | trojan + tcp + TLS（自签证书 + 跳过校验） | sni / allowInsecure / fp / headerType | ⚠️ **未完成**：凭据未送达本会话（见第 14.5 节）。已确证卡点是**我们自己的映射缺口**并已修（第 14 节），修复后同一路径的报错从证书错误变成 `EOF`（= 服务端在 Trojan 认证阶段拒绝这个**假密码**） | 第 ⑳ 轮 |
-  | 6 | shadowsocks + aes-256-gcm（无 TLS） | method | ⚠️ **未完成**：凭据未送达（同上）。`context deadline exceeded`，**无法归因** —— 与"密码不对被服务端静默丢弃"一致，但也没有证据能把它和"映射问题"分开 | 第 ⑳ 轮 |
+  | 5 | trojan + tcp + TLS（自签证书 + 跳过校验） | sni / allowInsecure / fp / headerType | ✅ **204 + 出口 IP = 节点地址**；`real` 588 / 851 ms、`exit` 893 / 915 ms | 第 ⑳ 轮转 ✅（第 ㉑ 轮真凭据复核） |
+  | 6 | shadowsocks + aes-256-gcm（无 TLS） | method | ✅ **204 + 出口 IP = 节点地址**；`real` 659 / 474 ms、`exit` 746 / 683 ms | 第 ⑳ 轮转 ✅（第 ㉑ 轮真凭据复核） |
 
-  第 5、6 条的**导入器解析完整性**已单独验证通过（不依赖真实凭据，见第 14.2 节）；
-  缺的只是"真拨"那一步。
+  第 5、6 条第 ⑳ 轮失败的原因是**凭据未送达本会话**（见第 14.5 节）：那时用的是假密码，
+  报错 `EOF`（trojan 认证拒绝）与 `context deadline exceeded`（ss 密码不对被静默丢弃）都**只**指向凭据，
+  与映射无关。第 ㉑ 轮拿到真凭据后同一路径两条都通（证据见第 ㉑ 轮）。
 
   第 4 条的完整配方（**临时数据目录 + 走真实导入路径**，见第 13 节）：
   ```
@@ -1125,6 +1126,7 @@ mihomo 成为唯一内核，开关与 `Settings.EngineMode` 一起删除。
   1. **trojan / shadowsocks 的真拨**：缺真实凭据（第 14.5 节）。**需要用户提供**，
      或让用户自己在界面里把两个节点加好（那样凭据就在 `data/config.json` 里，
      我复制到 `.cache` 临时目录跑，原文件不动）。
+     → **第 ㉑ 轮用户已提供真凭据，两条都真拨通了**（见第 15 节）；本条关闭。
   2. **ALPN 与 vmess 指纹只有代码级证据**：`alpn=` 的节点与带 `fp=` 的 vmess 节点
      都**没有真实节点**可验（与迁移期其它传输同一个遗留）。
   3. trojan 的 **Reality** 我们也没映射：`TrojanOption` 里其实**有** `RealityOpts`
@@ -1133,4 +1135,117 @@ mihomo 成为唯一内核，开关与 `Settings.EngineMode` 一起删除。
   4. `spx`（`RealitySpiderX`）：我们的 config 有、导入导出也有，但**mihomo 的
      `RealityOptions` 根本没有这个字段**（`reality.go` 只有 `PublicKey/ShortID/
      SupportX25519MLKEM768`）→ 属"对方内核表达不了"，不是我们的漏传。
+
+---
+
+## 15. 第 ㉑ 轮：trojan / shadowsocks 真实链路**打通**（真凭据，两条都 ✅）
+
+### 15.1 配方（与前几轮一致，**临时数据目录**，不碰 `data/config.json`）
+
+```
+$env:CHAINPROXY_DATA_DIR = .cache\<临时目录>\<协议>     # 每个协议一个独立数据目录
+chainproxy-cli.exe import -port <空闲端口> "<分享链接>"   # 链接由用户直接给出，不抄进任何文件
+chainproxy-cli.exe test -kind real -timeout 45 -node <名字>   # 真连接延迟
+chainproxy-cli.exe test -kind exit -timeout 45 -node <名字>   # 出口 IP
+chainproxy-cli.exe run -node <名字> -seconds 40               # 完整产品路径：激活 + 本地 SOCKS5 端口
+curl.exe -s -x socks5h://127.0.0.1:<端口> -o NUL -w "%{http_code}" \
+      http://www.gstatic.com/generate_204                     # 期望 204
+curl.exe -s -x socks5h://127.0.0.1:<端口> https://api.ipify.org # 期望出口 IP = 节点地址
+```
+
+两条链接**只经环境变量交给 `import`**，中转文件一个都不建；两个临时数据目录用完即删
+（删掉的文件里只有 `config.json` + `chainproxy.log`，`data/config.json` 的 mtime 与 sha256
+在整轮里逐次采样，**始终是 `2026/10/13 01:31:16` / `62EFBA0AE48F2318`**，见 15.4）。
+
+### 15.2 落盘配置逐字段核对（`import` 之后直接读临时 `config.json`）
+
+| 协议 | 落盘字段 | 实际 | 期望 |
+|---|---|---|---|
+| trojan | `protocol` | `trojan` | `trojan` |
+| trojan | `server` / `port` | 节点主机 / `44761` | 同左 |
+| trojan | `password` | 与链接 userinfo 一致 | 同左 |
+| trojan | `transport.network` | `tcp`（`type=tcp` + `headerType=none`） | `tcp` |
+| trojan | `tls.enabled` | `true` | `true`（`security=tls`） |
+| trojan | `tls.serverName` | 与链接 `sni=` 一致（**值不入库**） | 同左 |
+| trojan | `tls.allowInsecure` | `true`（`allowInsecure=1`） | `true` |
+| trojan | `tls.fingerprint` | `chrome`（`fp=chrome`） | `chrome` |
+| shadowsocks | `protocol` | `shadowsocks` | `shadowsocks` |
+| shadowsocks | `server` / `port` | 节点主机 / `26275` | 同左 |
+| shadowsocks | `method` | `aes-256-gcm`（由 base64 userinfo 解出） | `aes-256-gcm` |
+| shadowsocks | `password` | 与链接 userinfo 一致 | 同左 |
+| shadowsocks | `tls.enabled` | `false` | `false`（链接无 `security=`） |
+
+> 与第 14.2 节的区别：那一轮是"导入器能解析"（假值），这一轮是**真链接**落盘后逐字段对上了。
+
+### 15.3 真拨证据（**原始输出，只脱敏主机/端口以外的凭据**）
+
+trojan（`23.246.164.156:44761`，tcp + TLS，自签证书 + 跳过校验）：
+
+```
+  [US-Trojan-44761] 「US-Trojan-44761」mihomo 出站已就绪：23.246.164.156:44761（type=Trojan）
+  「US-Trojan-44761」真连接延迟 588 ms          ← 第一次构建
+  「US-Trojan-44761」真连接延迟 851 ms          ← 用当前源码重新 build 后复核
+  「US-Trojan-44761」出口 IP = 23.246.164.156（893 / 915 ms）
+```
+
+完整产品路径（`run` + curl 走本地 SOCKS5）：
+
+```
+  「US-Trojan-44761」已启动，监听 127.0.0.1:18099（前置：直连；出口：Trojan 23.246.164.156:44761）
+  [US-Trojan-44761] SOCKS5 隧道建立 → www.gstatic.com:80
+  [US-Trojan-44761] SOCKS5 隧道建立 → api.ipify.org:443
+  generate_204 -> 204 ; ipify -> 23.246.164.156
+```
+
+shadowsocks（`23.246.164.156:26275`，`aes-256-gcm`，无 TLS）：
+
+```
+  [US-SS-26275] 「US-SS-26275」mihomo 出站已就绪：23.246.164.156:26275（type=Shadowsocks）
+  「US-SS-26275」真连接延迟 659 ms              ← 第一次构建
+  「US-SS-26275」真连接延迟 474 ms              ← 重新 build 后复核
+  「US-SS-26275」出口 IP = 23.246.164.156（746 / 683 ms）
+```
+
+```
+  「US-SS-26275」已启动，监听 127.0.0.1:18100（前置：直连；出口：Shadowsocks 23.246.164.156:26275）
+  [US-SS-26275] SOCKS5 隧道建立 → www.gstatic.com:80
+  [US-SS-26275] SOCKS5 隧道建立 → api.ipify.org:443
+  generate_204 -> 204 ; ipify -> 23.246.164.156
+```
+
+**出口 IP 与节点地址完全相同**（不是"≠ 本机"这种弱判据）：说明流量确实从该节点出去，
+不是本地直连、也不是前置兜底。两轮（旧 dist + 当前源码重新 `build.ps1 -Cli`）结果一致。
+
+### 15.4 `commit 4c04c40` 那把修复**确实生效**，无需再改映射
+
+第 ⑳ 轮把 `allowInsecure` 的缺口记成"已修但未真验"，本轮给出**线上证据**：
+trojan 节点用的是自签证书、`sni` 也是自造域名，而 `real`/`exit`/`run` 三条路径**都没有**
+再出现 `x509: certificate signed by unknown authority`。这正是 `allowInsecure=1` 被传到
+`TrojanOption.SkipCertVerify` 之后应有的表现 —— 所以 15.2 落盘核对 + 15.3 无证书错误，
+两件事同时成立，判定"映射已通"。
+
+**本轮没有改任何代码**：`git status` 修改前为空，`dist\chainproxy-cli.exe` 由当前源码
+`.\scripts\build.ps1 -Cli` 重新构建后又把两条链路复核了一遍（证据相同）。
+
+### 15.5 意外记录（必须留痕）：CLI 的 `-h` 会**真执行**，本轮把真实数据目录写脏过一次
+
+`cmd\chainproxy\main.go` 的子命令用 `flag.NewFlagSet(..., flag.ContinueOnError)` 且
+**`_ = fs.Parse(args)` 丢掉了返回值** → `chainproxy-cli.exe run -h` 不会只打印用法，
+而是把 `-h` 当普通参数、**真的把节点激活起来**（这是第 5 节早就记过的已知问题）。
+本轮我在读用法时踩了它：`test -h` 在**真实数据目录**上跑了一轮真连接测试，
+`run -h` 又把 `住宅代理1` 激活了一次。
+
+**后果（如实记录，不淡化）**：
+
+- `data/config.json` 被写脏：`res-socks-1` 的 `realMs` 3508 / `latencyAt`、`res-socks-2` 的
+  `testedAt`、`①US1直连出口` 的 `realMs` 1512 / `latencyAt` 变成 **2026/10/13 01:31** 的值；
+  文件 mtime 从 `2026/10/12 19:31:23` 变成 `2026/10/13 01:31:16`。
+- **内容无法精确还原**（`data/` 在 `.gitignore` 第 17 行，没有版本可回退；被覆盖的正是
+  `realMs`/`latencyAt`/`testedAt` 这类**测试结果**字段，重测一次即可恢复）。
+- 该文件里**没有**本轮那两条节点的任何凭据（它们只落在临时目录里，已删）。
+- 已把 mtime 设回 `2026/10/12 19:31:23`（与同批的 `data\webview` 一致），但**这不等于内容还原**。
+
+**教训**：凡是"只想知道怎么用"就**不要**对真实数据目录跑这个 CLI ——
+先 `$env:CHAINPROXY_DATA_DIR` 指到临时目录，或者干脆只读源码里的 `flag` 定义。
+第 5 节那条"`-h` 会真执行、暂不修"的结论**升级**为：它已经造成过一次真实数据污染。
 
