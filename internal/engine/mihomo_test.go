@@ -488,3 +488,168 @@ func TestOtherProtocolOptions(t *testing.T) {
 		}
 	})
 }
+
+// TestTLSParamMappingAllTLSProtocols 锁死"带 TLS 的三个协议"的公共 TLS 字段落位。
+//
+// 【这一轮为什么会有这条测试】真机验证 trojan（`allowInsecure=1` + 自签证书）时，
+// 出站构造成功、TCP 也通、SNI 也发出去了，却卡在
+//
+//	tls: failed to verify certificate: x509: certificate signed by unknown authority
+//
+// 归因实验（同一端点、**两次都用同一个假密码**，唯一变量是 SkipCertVerify）：
+//
+//	SkipCertVerify=false → 413ms 失败于上面那条证书错误
+//	SkipCertVerify=true  → 387ms ✅ 拨号成功（TLS 握手已过）
+//
+// 证明卡点**只**在证书校验，与凭据无关 —— 也就是我们自己的映射缺口：
+// `hysteria2Option` 在第 ⑲ 轮补过 `SkipCertVerify`，但 **vless / vmess / trojan
+// 从来没把 `n.TLS.AllowInsecure` 传出去**（界面上勾了「跳过校验」等于没勾）。
+//
+// 【为什么表驱动 + 三个协议一起断言】这是一类**跨协议同类缺口**：只给 trojan 补上，
+// 下次换个 vless 自签节点还会踩同一个坑。所以判据写成"凡是带 TLS 的协议都必须传"。
+//
+// 【反向验证】把任一协议的 `opt.SkipCertVerify = tlsSkipCertVerify(n)`
+// 或 `opt.ALPN = tlsALPN(n)` 删掉，对应子测试立刻变红。
+func TestTLSParamMappingAllTLSProtocols(t *testing.T) {
+	// 夹具一律假值：真实节点的 SNI / 凭据绝不进仓库。
+	vlessNode := func() config.Node {
+		return config.Node{
+			ID: "v", Name: "v", Protocol: config.ProtocolVLESS,
+			Server: "v.example.com", Port: 443,
+			UUID: "11111111-2222-3333-4444-555555555555",
+		}
+	}
+	vmessNode := func() config.Node {
+		return config.Node{
+			ID: "m", Name: "m", Protocol: config.ProtocolVMess,
+			Server: "m.example.com", Port: 443,
+			UUID: "11111111-2222-3333-4444-555555555555", Security: "auto",
+		}
+	}
+	trojanNode := func() config.Node {
+		return config.Node{
+			ID: "t", Name: "t", Protocol: config.ProtocolTrojan,
+			Server: "t.example.com", Port: 443, Password: "fake-password",
+		}
+	}
+
+	for _, c := range []struct {
+		protocol string
+		node     func() config.Node
+		// skip / alpn / sni / fp 从映射结果里各取一个
+		get func(config.Node) (skip bool, alpn []string, sni, fp string, err error)
+	}{
+		{"vless", vlessNode, func(n config.Node) (bool, []string, string, string, error) {
+			o, err := vlessOption(n)
+			return o.SkipCertVerify, o.ALPN, o.ServerName, o.ClientFingerprint, err
+		}},
+		{"vmess", vmessNode, func(n config.Node) (bool, []string, string, string, error) {
+			o, err := vmessOption(n)
+			return o.SkipCertVerify, o.ALPN, o.ServerName, o.ClientFingerprint, err
+		}},
+		{"trojan", trojanNode, func(n config.Node) (bool, []string, string, string, error) {
+			o, err := trojanOption(n)
+			return o.SkipCertVerify, o.ALPN, o.SNI, o.ClientFingerprint, err
+		}},
+	} {
+		t.Run(c.protocol+"：allowInsecure → SkipCertVerify", func(t *testing.T) {
+			// 先确认"没勾的时候不许跳过"——否则下面那条断言可能因为恒真而失去意义。
+			n := c.node()
+			_, _, _, _, err := c.get(n)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if skip, _, _, _, _ := c.get(n); skip {
+				t.Fatalf("%s：没开 allowInsecure 时不该跳过证书校验", c.protocol)
+			}
+			n.TLS.Enabled = true
+			n.TLS.AllowInsecure = true
+			skip, _, _, _, err := c.get(n)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !skip {
+				t.Fatalf("%s：「跳过校验」没往下传（SkipCertVerify 仍是 false）—— "+
+					"用户勾了等于没勾，自签证书的节点会在 TLS 握手阶段报 "+
+					"x509: certificate signed by unknown authority", c.protocol)
+			}
+		})
+
+		t.Run(c.protocol+"：ALPN → ALPN", func(t *testing.T) {
+			n := c.node()
+			n.TLS.Enabled = true
+			n.TLS.ALPN = []string{"h2", "http/1.1"}
+			_, alpn, _, _, err := c.get(n)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(alpn) != 2 || alpn[0] != "h2" || alpn[1] != "http/1.1" {
+				t.Fatalf("%s：ALPN 没落位（实际 %v）；分享链接 alpn= 会读进 TLS.ALPN，"+
+					"漏传会让只认 h2 的节点协商失败", c.protocol, alpn)
+			}
+			// 没配 ALPN 时**不许**替用户塞默认值（那会把"用户没配"变成"我们替他配"）。
+			n.TLS.ALPN = nil
+			if _, alpn, _, _, err := c.get(n); err != nil || len(alpn) != 0 {
+				t.Fatalf("%s：没配 ALPN 时应当是空的，实际 %v（err=%v）", c.protocol, alpn, err)
+			}
+		})
+
+		t.Run(c.protocol+"：sni → SNI 字段、uTLS 指纹 → ClientFingerprint（不是证书 pin）", func(t *testing.T) {
+			n := c.node()
+			n.TLS.Enabled = true
+			n.TLS.ServerName = "sni.example.com"
+			n.TLS.Fingerprint = "chrome"
+			skip, _, sni, fp, err := c.get(n)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if sni != "sni.example.com" {
+				t.Fatalf("%s：SNI 没落位（实际 %q）", c.protocol, sni)
+			}
+			if fp != "chrome" {
+				t.Fatalf("%s：uTLS 指纹没落到 ClientFingerprint（实际 %q）—— "+
+					"注意它**不是**证书 pin，别把 `fp=chrome` 映射到 Fingerprint/pin 那个字段", c.protocol, fp)
+			}
+			if skip {
+				t.Fatalf("%s：指纹不该顺带把「跳过校验」打开", c.protocol)
+			}
+		})
+	}
+
+	// 【护栏】vmess 的 uTLS 指纹是这轮一起补的漏传（以前只映射给 vless/trojan）。
+	// 这条用真实构造函数确认"指纹确实进了 mihomo 的选项"，而不是只在我们自己的
+	// 结构体里对得上：构造成功 + 映射结果里的指纹非空。
+	t.Run("vmess：uTLS 指纹必须真进 mihomo 出站选项", func(t *testing.T) {
+		n := vmessNode()
+		n.TLS.Enabled = true
+		n.TLS.Fingerprint = "chrome"
+		o, err := vmessOption(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if o.ClientFingerprint != "chrome" {
+			t.Fatal("vmess 的 uTLS 指纹没落位（带 fp=chrome 的 vmess 链接导入后指纹会退化成 Go 默认 TLS）")
+		}
+		if _, err := buildMihomoOutbound(n, nil); err != nil {
+			t.Fatalf("带 uTLS 指纹的 vmess 出站应当能构造出来，实际 %v", err)
+		}
+	})
+
+	// 【护栏】证书 pin 与 uTLS 指纹是**两个不同的字段**，别混。
+	// 有人把 trojan/vless 的映射改成 `Fingerprint = n.TLS.Fingerprint` 的话，
+	// mihomo 的 pin 校验器会因为 "chrome" 不是 32 字节 hex 而拒绝构造 —— 这条就红。
+	t.Run("trojan/vless：uTLS 指纹不许被当成证书 pin", func(t *testing.T) {
+		tn := trojanNode()
+		tn.TLS.Enabled = true
+		tn.TLS.Fingerprint = "chrome"
+		if _, err := buildMihomoOutbound(tn, nil); err != nil {
+			t.Fatalf("trojan：uTLS 指纹不该进证书 pin 字段，实际报错 %v", err)
+		}
+		vn := vlessNode()
+		vn.TLS.Enabled = true
+		vn.TLS.Fingerprint = "chrome"
+		if _, err := buildMihomoOutbound(vn, nil); err != nil {
+			t.Fatalf("vless：uTLS 指纹不该进证书 pin 字段，实际报错 %v", err)
+		}
+	})
+}

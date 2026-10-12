@@ -373,6 +373,10 @@ func vlessOption(n config.Node) (outbound.VlessOption, error) {
 		UDP:               true,
 		XUDP:              true,
 	}
+	// 【跨协议同类缺口，一次修掉】见 trojanOption 里那段完整说明：
+	// 「跳过校验」与 ALPN 这三个带 TLS 的协议都漏了，症状都是"自签证书节点连不上"。
+	opt.SkipCertVerify = tlsSkipCertVerify(n)
+	opt.ALPN = tlsALPN(n)
 
 	ours := strings.ToLower(strings.TrimSpace(n.Transport.Network))
 	switch ours {
@@ -422,6 +426,51 @@ func vlessOption(n config.Node) (outbound.VlessOption, error) {
 }
 
 // ------------------------------------------------------------------
+// TLS 公共字段映射（三个带 TLS 的协议共用）
+// ------------------------------------------------------------------
+
+// tlsSkipCertVerify 把我们的「跳过证书校验」交给 mihomo。
+//
+// 【为什么单拎出来】这是本轮（真机验证 trojan）抓到的**跨协议同类缺口**：
+// hysteria2 在第 ⑲ 轮补过 `SkipCertVerify`，但 **vless / vmess / trojan 从来没映射过** ——
+// 用户在界面上给这些协议勾了「跳过校验」，等于没勾：自签证书的节点照样在
+// TLS 握手阶段就报 `x509: certificate signed by unknown authority`，
+// 而症状看起来像"节点坏了/网络不通"，实际是少传一个布尔字段。
+//
+// 【为什么三个协议能共用同一段判据】三个结构体里的字段名与语义完全一致
+// （`proxy:"skip-cert-verify,omitempty"`）：`TrojanOption.SkipCertVerify`
+// （trojan.go:53）、`VmessOption.SkipCertVerify`（vmess.go:65）、
+// `VlessOption.SkipCertVerify`（vless.go:84），且各自都被传进了底层 TLS 配置
+// （`InsecureSkipVerify: option.SkipCertVerify`）。所以判据只写一遍，
+// 避免以后又只给其中一个协议补、另外两个继续漏。
+//
+// 【为什么 trojan 是硬要求】trojan 协议自带 TLS、**不可能关**，所以这类节点
+// 只要用自签证书，这个字段就是"能不能连上"的分水岭（vless/vmess 只在开了 TLS 时才相关）。
+func tlsSkipCertVerify(n config.Node) bool { return n.TLS.AllowInsecure }
+
+// tlsALPN 把我们的 ALPN 交给 mihomo。
+//
+// 【为什么也在这里补齐】是同一处漏传：`TLSOptions.ALPN` 本来就有（分享链接的
+// `alpn=h2,http/1.1` 会读进它、导出时也会写回去、单测也覆盖了），但三个协议的
+// mihomo 选项都没往下传。后果比"跳过校验"轻：ALPN 写明 `h2` 的节点可能在
+// 协商阶段不匹配。属于"同类缺口一次修掉"，所以和 SkipCertVerify 一起补。
+//
+// 只做裁剪，不编造默认值：mihomo 侧留空就等于不设置 ALPN（与 sing-box 时代行为一致），
+// 我们自己**不**塞 `h2`/`http/1.1` 这类猜测值 —— 那会让"用户没配"变成"我们替他配"。
+func tlsALPN(n config.Node) []string {
+	out := make([]string, 0, len(n.TLS.ALPN))
+	for _, p := range n.TLS.ALPN {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// ------------------------------------------------------------------
 // 其余四种协议的映射
 //
 // 与 vlessOption 同一套路：**纯函数**，表驱动单测锁死字段落位。
@@ -457,6 +506,13 @@ func vmessOption(n config.Node) (outbound.VmessOption, error) {
 		TLS:        n.TLS.Enabled,
 		ServerName: n.TLS.ServerName,
 	}
+	// 【跨协议同类缺口，一次修掉】见 trojanOption 里那段完整说明。
+	opt.SkipCertVerify = tlsSkipCertVerify(n)
+	opt.ALPN = tlsALPN(n)
+	// 【同一个漏传】vmess 的 ClientFingerprint 以前也是空的 —— 结构体里有这个字段
+	// （`vmess.go:88`），我们却只把它映射给了 vless/trojan。带 uTLS 指纹的 vmess
+	// 链接（`fp=chrome`）导入后这一位会被丢掉，指纹就退化成 Go 默认 TLS。
+	opt.ClientFingerprint = strings.TrimSpace(n.TLS.Fingerprint)
 	path := strings.TrimSpace(n.Transport.Path)
 	host := strings.TrimSpace(n.Transport.Host)
 	if host == "" {
@@ -520,6 +576,11 @@ func trojanOption(n config.Node) (outbound.TrojanOption, error) {
 		UDP:               true,
 		Network:           network,
 	}
+	// 【跨协议同类缺口，一次修掉】这一条是本轮真机验证抓到的：
+	// 「跳过证书校验」（mihomo 的 `skip-cert-verify`）在 vless / vmess / trojan 上
+	// 都漏了（hysteria2 在第 ⑲ 轮补过，这三个没跟着补）。详见下方 tlsSkipCertVerify。
+	opt.SkipCertVerify = tlsSkipCertVerify(n)
+	opt.ALPN = tlsALPN(n)
 	path := strings.TrimSpace(n.Transport.Path)
 	host := strings.TrimSpace(n.Transport.Host)
 	if host == "" {
