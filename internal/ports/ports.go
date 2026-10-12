@@ -84,6 +84,14 @@ type Allocator struct {
 	// MaxRetries 是随机重试上限。
 	MaxRetries int
 
+	// Probe 是"端口是否被本机其它程序占用"的探测实现（true = 被占用），
+	// nil 表示老老实实去 bind 一次（见 systemBusy）。
+	//
+	// 【为什么留这个口子】审查 #28 要断言的是"探测有没有发生在全局锁里"，
+	// 而这件事只有在探测**卡住**的时候才能被确定性地观测到。测试把它换成
+	// 可控实现（见 internal/app/ports_lock_test.go），生产代码永远不设置它。
+	Probe func(host string, port int) bool
+
 	rnd *rand.Rand
 }
 
@@ -191,11 +199,22 @@ func (a *Allocator) Check(port int) Status {
 // Windows 上 Go 不会给监听套接字设置 SO_REUSEADDR
 // （setDefaultListenerSockopts 在 Windows 是空实现），
 // 所以这里的 bind 确实会因端口被占而失败 —— 判断是可靠的。
+//
+// 【这是一次系统调用】调用方要留意它在哪儿被调用：internal/app 里凡是
+// "持着全局锁"的路径都必须在放锁之后才走到这里（审查 #28）。
 func (a *Allocator) systemBusy(port int) bool {
 	host := a.Host
 	if host == "" {
 		host = "127.0.0.1"
 	}
+	if a.Probe != nil {
+		return a.Probe(host, port)
+	}
+	return bindBusy(host, port)
+}
+
+// bindBusy 是默认的探测实现：试着 bind 一次，绑不上就算被占。
+func bindBusy(host string, port int) bool {
 	ln, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {
 		return true

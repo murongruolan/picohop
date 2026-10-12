@@ -1,12 +1,12 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"chainproxy/internal/config"
-	"chainproxy/internal/ports"
 	"chainproxy/internal/proxy"
 )
 
@@ -24,30 +24,49 @@ func (a *App) AddNode(n config.Node) (config.Node, error) {
 	// 只能由写入路径显式做，而且必须在下面按 ID 分配端口之前 ——
 	// 端口分配器的 key 就是节点 ID。
 	a.cfg.NormalizeNode(&n)
-	if n.ListenPort == 0 {
-		// 【审查 #21】分配不到端口时必须在这里停住：allocator.Next() 耗尽时
-		// 返回 ports.NoPort(0)，而 0 在**这个函数里**正好是"待自动分配"的语义，
-		// 放过去就会新增一个监听端口 0 的节点（net.Listen 遇到 0 会随便挑一个
-		// 临时端口，等于配置和实际监听完全对不上），或者写进一个 65536 之类的
-		// 非法端口，让配置校验一直报错。
-		port := a.allocatorLocked(n.ID).Next()
-		if port == ports.NoPort {
-			a.mu.Unlock()
-			return config.Node{}, fmt.Errorf("本机没有可用的本地端口（已扫到 65535），请先释放一个端口再新增")
-		}
-		n.ListenPort = port
-	}
 	if n.CreatedAt.IsZero() {
 		n.CreatedAt = time.Now()
 	}
 	if n.StatsDay == "" {
 		n.StatsDay = config.Today()
 	}
-	if n.Name == "" {
+	// 【审查 #28】名字必须在锁内定：uniqueNameLocked 要读整份节点表。
+	// 而下面自动分配端口时**必须放锁**去探测，所以这里要先把"名字是不是
+	// 自动生成的"记下来 —— 放锁期间别的节点可能抢走同一个默认名字，
+	// 落盘时得在锁内重算一次。
+	autoName := n.Name == ""
+	if autoName {
 		n.Name = a.suggestNameLocked(n.Protocol)
 	}
-	a.cfg.Nodes = append(a.cfg.Nodes, n)
+	needPort := n.ListenPort == 0
+	if !needPort {
+		// 端口是用户填的：不需要任何探测，就在这一把锁里落盘
+		a.cfg.Nodes = append(a.cfg.Nodes, n)
+	}
 	a.mu.Unlock()
+
+	if needPort {
+		// 【审查 #21】分配不到端口时必须在这里停住：allocator.Next() 耗尽时
+		// 返回 ports.NoPort(0)，而 0 在**这个函数里**正好是"待自动分配"的语义，
+		// 放过去就会新增一个监听端口 0 的节点（net.Listen 遇到 0 会随便挑一个
+		// 临时端口，等于配置和实际监听完全对不上），或者写进一个 65536 之类的
+		// 非法端口，让配置校验一直报错。
+		//
+		// 【审查 #28】探测（最多 512 次 net.Listen）在 allocPort 里放到锁外做，
+		// 落盘前它会带着最新的占用表复查一次这个端口还没被别人抢走。
+		if _, err := a.allocPort(n.ID, func(port int) {
+			n.ListenPort = port
+			if autoName {
+				n.Name = a.suggestNameLocked(n.Protocol)
+			}
+			a.cfg.Nodes = append(a.cfg.Nodes, n)
+		}); err != nil {
+			if errors.Is(err, errNoFreePort) {
+				return config.Node{}, fmt.Errorf("本机没有可用的本地端口（已扫到 65535），请先释放一个端口再新增")
+			}
+			return config.Node{}, err
+		}
+	}
 
 	a.Logf("已新增节点「%s」（%s，本地端口 %d）", n.Name, config.ProtocolLabel(n.Protocol), n.ListenPort)
 	a.emit(EventNodes, "")
@@ -105,16 +124,6 @@ func (a *App) CloneNode(id string) (config.Node, error) {
 	src := a.cfg.Nodes[idx]
 	dup := src
 	dup.ID = config.NewID()
-	dup.Name = a.uniqueNameLocked(src.Name + "-副本")
-	// 【审查 #21】克隆也必须先确认真的分到了端口，否则会把 0（=待分配）
-	// 或 65536 这类坏端口写进配置里。dup 还没 append 进 a.cfg.Nodes，
-	// 直接解锁返回即可，配置保持原样。
-	dupPort := a.allocatorLocked("").Next()
-	if dupPort == ports.NoPort {
-		a.mu.Unlock()
-		return config.Node{}, fmt.Errorf("本机没有可用的本地端口（已扫到 65535），请先释放一个端口再克隆")
-	}
-	dup.ListenPort = dupPort
 	dup.Active = false
 	dup.CreatedAt = time.Now()
 	dup.LastUsed = time.Time{}
@@ -125,8 +134,25 @@ func (a *App) CloneNode(id string) (config.Node, error) {
 	dup.LatencyAt, dup.SpeedAt = time.Time{}, time.Time{}
 	dup.LatencyFailed, dup.SpeedFailed = false, false
 	dup.UpBytes, dup.DownBytes, dup.StatsDay = 0, 0, config.Today()
-	a.cfg.Nodes = append(a.cfg.Nodes, dup)
 	a.mu.Unlock()
+
+	// 【审查 #21】克隆也必须先确认真的分到了端口，否则会把 0（=待分配）
+	// 或 65536 这类坏端口写进配置里。dup 还没 append 进 a.cfg.Nodes，
+	// 分配失败时什么都不用回滚，配置保持原样。
+	//
+	// 【审查 #28】端口探测同样放到锁外（见 allocPort），落盘前在锁内复查；
+	// 名字也留到那一步在锁内最终定 —— 放锁期间另一个克隆可能已经拿走了
+	// 「XX-副本」这个名字。
+	if _, err := a.allocPort("", func(port int) {
+		dup.ListenPort = port
+		dup.Name = a.uniqueNameLocked(src.Name + "-副本")
+		a.cfg.Nodes = append(a.cfg.Nodes, dup)
+	}); err != nil {
+		if errors.Is(err, errNoFreePort) {
+			return config.Node{}, fmt.Errorf("本机没有可用的本地端口（已扫到 65535），请先释放一个端口再克隆")
+		}
+		return config.Node{}, err
+	}
 
 	a.Logf("已克隆节点「%s」→「%s」（本地端口 %d）", src.Name, dup.Name, dup.ListenPort)
 	a.emit(EventNodes, "")
@@ -563,25 +589,34 @@ func (a *App) startNode(id string) error {
 
 	// 端口占用检查：端口是"本地代理端口"，被占了必须明确报出来。
 	// 注意排除节点自己 —— 重启时它自己的端口当然算"自己占着"。
-	if st := a.allocatorLocked(id).Check(n.ListenPort); !st.Free {
-		err := fmt.Errorf("%s", st.Message)
-		a.setErrLocked(id, st.Message)
-		a.mu.Unlock()
-		return err
-	}
+	//
+	// 【审查 #28】探测（systemBusy 会真的 bind 一次）放在下面放锁之后做：
+	// al 与 n 是在同一把锁下取的快照，所以"端口非法 / 被本项目别的节点占用"
+	// 这一半仍然是**和配置读取一致**的原子判断（纯内存查表），
+	// 只有"系统占用"那一半是锁外的系统调用。放锁窗口里配置若被改动，
+	// 最终以 srv.Start() 的 bind 为准 —— 那时失败同样会报出来，不会静默生效。
+	al := a.allocatorLocked(id)
 
 	// 空闲超时来自全局设置（界面「网络设置 → 空闲自动断开」默认 300s）。
 	// 【别再退回 node.Timeout()】那是拨号超时（固定 15s），拿它当空闲超时
 	// 会让这个设置彻底失效，并且 15 秒静默就掐断链路。
 	idle := a.cfg.Settings.IdleTimeout()
+	a.mu.Unlock()
+
+	if st := al.Check(n.ListenPort); !st.Free {
+		a.mu.Lock()
+		a.setErrLocked(id, st.Message)
+		a.mu.Unlock()
+		return fmt.Errorf("%s", st.Message)
+	}
 
 	srv, err := proxy.NewServer(n, frontCfg, idle, a.logfFor(n.Name))
 	if err != nil {
+		a.mu.Lock()
 		a.setErrLocked(id, err.Error())
 		a.mu.Unlock()
 		return fmt.Errorf("构造失败: %w", err)
 	}
-	a.mu.Unlock()
 
 	if err := srv.Start(); err != nil {
 		a.mu.Lock()
