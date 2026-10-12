@@ -716,6 +716,68 @@ async function handleDevOpen(name) {
       break
     }
 
+    // 系统代理自测入口：由 scripts/test-sysproxy.ps1 驱动。
+    // 拆成两个独立动作（而不是一个"跑完整流程"），因为**强杀**必须由脚本在进程外做。
+    case 'sysproxyon':
+    case 'sysproxyoff': {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      if (name === 'sysproxyon') {
+        // 开之前先满足前置条件：有全局节点、且它在运行。
+        // 不满足时后端会明确报错（而不是"点了没反应"），这里把错误原样弹出来。
+        const n = (store.nodes || [])[0]
+        if (n && store.settings?.globalNodeId !== n.id) {
+          await actions.setGlobalNode(n)
+          await wait(800)
+        }
+      }
+      try {
+        await api.setSystemProxyMode(name === 'sysproxyon')
+        notify(
+          'success',
+          '系统代理自测',
+          name === 'sysproxyon' ? '已开启（系统代理已指向全局节点）' : '已关闭（已还原）',
+          0,
+        )
+      } catch (e) {
+        notify('error', '系统代理自测', String(e?.message || e), 0)
+      }
+      await wait(800)
+      break
+    }
+
+    // 日志复制自测：点「复制」后读回剪贴板，验证真的复制到了。
+    // 顺便把日志区的 computed user-select 报出来（选不中就是它在作怪）。
+    case 'logcopy': {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      // 先切到别的视图再切回日志：直接设 "logs" 时若本来就在日志视图，
+      // 会走成"点当前视图 = 收起"（老陷阱，别的入口改过、这个漏了）。
+      ui.bottomPanelView = 'traffic'
+      await wait(400)
+      ui.bottomPanelView = 'logs'
+      await wait(2000)
+      const box = document.querySelector('.cp-logs-box')
+      const us = box ? getComputedStyle(box).userSelect : '(no box)'
+      const btn = [...document.querySelectorAll('.cp-logs-bar button')].find((b) =>
+        b.textContent.includes('\u590d\u5236'),
+      )
+      if (!btn) {
+        notify('error', '日志复制自测', `找不到复制按钮（user-select=${us}）`, 0)
+        break
+      }
+      btn.click()
+      await wait(600)
+      const got = String((await api.getClipboard()) || '')
+      notify(
+        got ? 'success' : 'error',
+        '日志复制自测',
+        `user-select=${us}
+剪贴板长度=${got.length}
+前 60 字：${got.slice(0, 60)}`,
+        0,
+      )
+      break
+    }
+
     // 连开两次浮动对话框：第一次是新建（要建 WebView2 + 加载前端），
     // 第二次应该走**复用**（窗口已在、不重新加载）。
     // 这是用户报的“打开还是卡”那条，两边的耗时在 Go 日志里（"~前端就绪 Xms"~

@@ -9,7 +9,7 @@
  * 文案规则（同一份文档）：只放标签与值，解释一律进 tooltip，不写说明句。
  */
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { ArrowDown, ArrowUp, Search, Delete } from '@element-plus/icons-vue'
+import {ArrowDown, ArrowUp, Search, Delete, CopyDocument} from '@element-plus/icons-vue'
 import { useStore } from '../store'
 import { useUi } from '../ui'
 import api, { notify } from '../api'
@@ -220,6 +220,18 @@ function applyFilter() {
   if (logBox.value) logBox.value.scrollTop = logBox.value.scrollHeight
 }
 
+// 复制**当前显示**的那些行（过滤之后的结果）——
+// 用户要的是"把我看到的这段日志发给你"，复制全部反而不是他要的。
+function copyShown() {
+  const lines = filteredLogs.value
+  if (!lines.length) {
+    notify('info', '没有可复制的内容', '')
+    return
+  }
+  api.copyText(lines.join('\n'))
+  notify('success', '已复制', `${lines.length} 行${filter.value.trim() ? '（当前过滤结果）' : ''}`)
+}
+
 function clearCurrent() {
   if (logTab.value === 'user') store.logs = []
   else store.clearNetworkLogs()
@@ -369,6 +381,7 @@ watch(
                 <el-icon class="cp-logs-search" @click="applyFilter"><Search /></el-icon>
               </template>
             </el-input>
+            <el-button size="small" :icon="CopyDocument" @click="copyShown">复制</el-button>
             <el-button size="small" :icon="Delete" @click="clearCurrent">清除本项</el-button>
             <el-tooltip content="自动滚动到末尾" placement="top" :show-after="400">
               <el-switch v-model="autoScroll" size="small" active-text="自动滚动" />

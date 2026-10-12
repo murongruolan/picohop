@@ -829,11 +829,19 @@ body.cp-float-window .el-overlay-dialog {
   min-height: 0;
   overflow: auto;
   padding: 6px 8px;
+  /* 【必须显式声明可选】桌面程序（以及本项目的浮动窗口标题栏）常用
+     user-select: none 让它"像原生界面"，代价就是日志选不中、复制不出来 ——
+     用户实测反馈"我没办法复制日志给你"。这里明确改回可选，并把光标也变成文本光标。 */
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
   background: var(--cp-bg);
   border: 1px solid var(--cp-border);
   border-radius: var(--cp-radius-sm);
 }
 .cp-logs-line {
+  user-select: text;
+  -webkit-user-select: text;
   font-family: var(--cp-mono, ui-monospace, Consolas, monospace);
   font-size: 11.5px;
   line-height: 1.5;
