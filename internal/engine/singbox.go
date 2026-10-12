@@ -27,6 +27,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"regexp"
@@ -90,10 +91,21 @@ type Upstream struct {
 	front config.Front
 	logf  func(string, ...any)
 
-	mu   sync.Mutex
+	// mu 保护 inst/ob 这对"实例 + 节点出口"的启停状态（审查 #26）。
+	//
+	// 必须是读写锁而不是普通互斥锁：拨号时要**在整个建链期间**持读锁
+	// （理由见 Dial），用普通锁会让同一节点上的所有连接互相排队 ——
+	// 一次拨号等到 DialTimeout，后面所有请求都卡住。
+	mu   sync.RWMutex
 	inst *box.Box
 	ob   adapter.Outbound
 }
+
+// errNotStarted 表示出口还没启动，或刚被 Stop 清掉。
+//
+// 它必须是"取用时读到 nil 就报错"：绝不允许在出口已经失效之后还把它交出去用
+// （见 Dial 的说明，审查 #26）。
+var errNotStarted = errors.New("sing-box 出口尚未启动")
 
 var _ proxy.Upstream = (*Upstream)(nil)
 
@@ -167,6 +179,17 @@ func (u *Upstream) Start(ctx context.Context, _ proxy.Front) error {
 }
 
 // Stop 关闭 sing-box 实例。
+//
+// 【为什么先在写锁里清空、再在锁外 Close（审查 #26）】
+// 旧实现是"取出出口指针 → 解锁 → 用它拨号"，而 Stop 在这之间把 inst/ob 清空并
+// Close 掉整个实例 —— 两边没有任何同步，于是拨号可能在一个**正在被拆掉的实例**上
+// 进行（use-after-close）。这里把"失效"放进写锁：写锁必须等到所有在途拨号
+// （它们持读锁，见 Dial）收尾之后才拿得到，所以 Close 绝不可能与使用重叠；
+// 清空之后再进来的拨号只会读到 nil，拿到明确的"尚未启动"错误。
+//
+// Close 放在解锁之后（而不是锁内）：它会回调日志，而上层拿到日志后可能去拿自己的锁，
+// 在自己的锁里调 Stop 的路径又确实存在过（审查 #4）—— 在锁内调用未知代码是死锁的温床，
+// 而这里不需要它：清空字段已经在锁内完成，新拨号已经不可能再拿到旧出口。
 func (u *Upstream) Stop() error {
 	u.mu.Lock()
 	inst := u.inst
@@ -180,12 +203,25 @@ func (u *Upstream) Stop() error {
 }
 
 // Dial 建立到 target（"host:port"）的 TCP 连接。
+//
+// 【为什么读锁要一直持到建链结束（审查 #26）】
+// 旧的 outbound() 只负责"在锁内取出 u.ob 指针"，指针一离开锁，Stop 就能把实例关掉：
+// 拨号与关闭之间是 use-after-close 的赛跑。这不是理论窗口 ——
+// 每个客户端连接都在自己的 goroutine 里拨号（handler.socksConnect），
+// 而"停止/重启节点"随时可能被点（stopNode / restartNode），
+// 于是节点启停瞬间就会出现偶发失败，甚至在带内部状态的出口
+// （hysteria2/QUIC、多路复用的 ws/grpc）上踩到已释放资源。
+//
+// 所以取用与使用必须在同一把读锁里完成：要么拨号先拿到读锁（Stop 的写锁必须等它收尾，
+// 实例在拨号期间不会被关），要么 Stop 先清空（这里读到 nil，明确报错）。
+// **不要把 u.ob 带出这把锁再用** —— 那正是本缺陷的成因。
 func (u *Upstream) Dial(ctx context.Context, _ proxy.Front, target string) (net.Conn, error) {
-	ob, err := u.outbound()
-	if err != nil {
-		return nil, err
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	if u.ob == nil {
+		return nil, errNotStarted
 	}
-	conn, err := ob.DialContext(ctx, N.NetworkTCP, M.ParseSocksaddr(target))
+	conn, err := u.ob.DialContext(ctx, N.NetworkTCP, M.ParseSocksaddr(target))
 	if err != nil {
 		return nil, fmt.Errorf("%s 连接 %s 失败: %w", config.ProtocolLabel(u.node.Protocol), target, err)
 	}
@@ -193,25 +229,23 @@ func (u *Upstream) Dial(ctx context.Context, _ proxy.Front, target string) (net.
 }
 
 // DialUDP 建立 UDP 通道。
+//
+// 与 Dial 同理（审查 #26）：取出口 + 打开通道都在读锁内完成，
+// 不允许出现"指针取出来之后实例才被关掉"的窗口。
+//
+// 这里只保护"打开通道"这一步。通道建成之后，Stop 关实例会不会连带关掉它，
+// 取决于 sing-box 自己怎么收尾（TCP 连接同理）—— 那不属于本次修复的范围。
 func (u *Upstream) DialUDP(ctx context.Context, _ proxy.Front) (proxy.UDPChannel, error) {
-	ob, err := u.outbound()
-	if err != nil {
-		return nil, err
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	if u.ob == nil {
+		return nil, errNotStarted
 	}
-	pc, err := ob.ListenPacket(ctx, M.Socksaddr{})
+	pc, err := u.ob.ListenPacket(ctx, M.Socksaddr{})
 	if err != nil {
 		return nil, fmt.Errorf("%s 打开 UDP 通道失败: %w", config.ProtocolLabel(u.node.Protocol), err)
 	}
 	return newUDPChannel(pc)
-}
-
-func (u *Upstream) outbound() (adapter.Outbound, error) {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	if u.ob == nil {
-		return nil, fmt.Errorf("sing-box 出口尚未启动")
-	}
-	return u.ob, nil
 }
 
 // ------------------------------------------------------------------
