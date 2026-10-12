@@ -71,14 +71,23 @@ func (b *socksBind) endSessionLocked() {
 	}
 }
 
-// sessionDone 返回当前会话的结束信号（必要时新建一个）。
-func (b *socksBind) sessionDone() chan struct{} {
+// sessionChannel 在**同一把锁下**成对取出"当前会话的 UDP 通道 + 结束信号"。
+//
+// 【为什么必须成对取】shutdown() 会在锁内把 b.ch 置 nil、b.done 也置 nil。
+// 收包回调 receive() 若裸读 b.ch（或先取 done 再裸读 ch），有三种坏情况：
+//  1. 读到 nil 的 b.ch -> nil 接口方法调用 -> **panic**（节点启停瞬间进程崩溃）；
+//  2. 读到"已被 close 的 ch" -> 每个数据报都报错；
+//  3. 在 shutdown 之后调用"必要时新建 done"的旧版 sessionDone()，会拿到一个
+//     **永远不会被关闭**的通道 -> 收包循环再也醒不过来。
+//
+// 返回 ok=false 表示已彻底关闭：调用方必须安静退出，不得解引用。
+func (b *socksBind) sessionChannel() (proxy.UDPChannel, chan struct{}, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.done == nil {
-		b.done = make(chan struct{})
+	if b.ch == nil || b.done == nil {
+		return nil, nil, false
 	}
-	return b.done
+	return b.ch, b.done, true
 }
 
 func (b *socksBind) down() bool {
@@ -89,7 +98,12 @@ func (b *socksBind) down() bool {
 
 // receive 是 wireguard-go 的收包回调：取一个数据报填进 bufs。
 func (b *socksBind) receive(bufs [][]byte, sizes []int, eps []conn.Endpoint) (int, error) {
-	done := b.sessionDone()
+	// 成对取出、循环里只用局部变量：shutdown() 并发置空 b.ch 时，
+	// 我们手里的 ch 要么有效、要么这里直接返回，绝不会解引用 nil。
+	ch, done, ok := b.sessionChannel()
+	if !ok {
+		return 0, net.ErrClosed
+	}
 	for {
 		select {
 		case <-done:
@@ -107,7 +121,7 @@ func (b *socksBind) receive(bufs [][]byte, sizes []int, eps []conn.Endpoint) (in
 		// 中途把它换掉会让收到的包无法被正确交给解密队列 ——
 		// 现象是"握手响应明明收到了 92 字节，但握手永远不完成"。
 		// 设备给的缓冲一定够大，直接用即可。
-		n, srcHost, srcPort, err := b.ch.ReceiveFromUDP(done, bufs[0])
+		n, srcHost, srcPort, err := ch.ReceiveFromUDP(done, bufs[0])
 		if err != nil {
 			// 会话被上层结束：安静退出，这是正常收尾路径。
 			// 若在这里继续循环，device.Close() 会一直等下去（死锁）。
