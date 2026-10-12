@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -210,12 +211,49 @@ func (h *Handler) socksConnect(client net.Conn, br *bufio.Reader, host string, p
 	finish(up, down, nil)
 }
 
+// maxUDPSessions 是**进程内**同时存活的 UDP ASSOCIATE 会话数上限。
+//
+// 【为什么必须有上界】每个 UDP ASSOCIATE 会话都要额外占：1 个本地 UDP 中继口、
+// 1 条上游 UDP 通道（socks5 出口是"TCP 控制连接 + UDP socket"两条）、外加 3 个常驻
+// goroutine —— 而这条路径原来**一个上界都没有**：客户端（或一段脚本）可以反复
+// UDP ASSOCIATE 之后把控制连接挂着不放，几秒内就能把进程的句柄/内存吃光，
+// 之后连 TCP 代理都建不起来。所以这里按进程封顶，超了**直接拒绝**（fail-closed），
+// 而不是"先接下来再说"。
+//
+// 【为什么是常量而不是设置项】上界只是为了兜住失控的客户端：256 个会话
+// （≈ 800 个句柄）远超单机代理的正常用量。真要调，改这一处即可，
+// 不必让用户多背一个旋钮。
+const maxUDPSessions = 256
+
+// udpSessionCount 是当前存活的 UDP 会话数（进程级，所有节点共用）。
+var udpSessionCount atomic.Int64
+
+// acquireUDPSession 认领一个 UDP 会话名额；超出上限返回 false 且不占名额。
+func acquireUDPSession() bool {
+	if udpSessionCount.Add(1) > maxUDPSessions {
+		udpSessionCount.Add(-1)
+		return false
+	}
+	return true
+}
+
+// releaseUDPSession 归还名额，必须与成功的 acquireUDPSession 一一配对。
+func releaseUDPSession() { udpSessionCount.Add(-1) }
+
 func (h *Handler) socksUDPAssociate(tcp net.Conn, br *bufio.Reader) {
 	if !h.AllowUDP || !h.Upstream.SupportsUDP() {
 		writeSocksReply(tcp, repCommandNotSupported)
 		h.fail("该链路不支持 UDP 转发")
 		return
 	}
+
+	// 先占名额再动手：名额不够时连本地 UDP 口都不申请、上游也不拨号，直接拒绝。
+	if !acquireUDPSession() {
+		writeSocksReply(tcp, repGeneralFailure)
+		h.fail("UDP 会话数已达上限 %d，拒绝新的 UDP ASSOCIATE", maxUDPSessions)
+		return
+	}
+	defer releaseUDPSession()
 
 	// 在客户端来源 IP 上开一个 UDP 中继口，端口由系统分配。
 	clientIP := hostOf(tcp.RemoteAddr())
@@ -245,37 +283,76 @@ func (h *Handler) socksUDPAssociate(tcp net.Conn, br *bufio.Reader) {
 	if relayIP == nil || relayIP.IsUnspecified() {
 		relayIP = net.ParseIP(hostOf(tcp.LocalAddr()))
 	}
+	relayAddr := describeAddrUDP(relayIP.String(), pc.LocalAddr().(*net.UDPAddr).Port)
 	if err := writeSocksUDPReply(tcp, relayIP.String(), pc.LocalAddr().(*net.UDPAddr).Port); err != nil {
 		return
 	}
-	{
-		dst := describeAddrUDP(relayIP.String(), pc.LocalAddr().(*net.UDPAddr).Port)
-		srcPort := 0
-		src := ""
-		if tcp != nil {
-			src = tcp.RemoteAddr().String()
-			if _, ps, err := net.SplitHostPort(src); err == nil {
-				srcPort, _ = strconv.Atoi(ps)
-			}
-		}
-		// UDP 只进网络日志、不登记为活动连接：它没有 Relay 那样的双向字节统计，
-		// 登记进去就会在连接表里显示假的上下行 —— 宁可不显示。
-		emitConn(ConnEvent{
-			ID: connSeq.Add(1), Phase: ConnPhaseOpen, Node: h.Name,
-			Protocol: "udp", Target: dst, Src: src, SrcPort: srcPort, At: time.Now().UnixMilli(),
-		})
-	}
-	h.logf("UDP ASSOCIATE 已建立，中继 %s", describeAddrUDP(relayIP.String(), pc.LocalAddr().(*net.UDPAddr).Port))
+	h.logf("UDP ASSOCIATE 已建立，中继 %s", relayAddr)
+
+	// 登记进"活动连接表"，并在会话结束时补一条 close 事件。
+	//
+	// 【原来错在哪】这里曾经是手工发一条 open 事件（ID 还是自己 new 出来的）：
+	// 既没有登记 closers，会话结束时也没有 close 事件。后果有两层：
+	//  1. 界面上那一行永远是 active —— 控制连接早断了、UDP 口也关了，连接表里
+	//     却一直挂着一条幽灵记录，越攒越多；
+	//  2. 「关闭全部」只能遍历 activeConns，而这个 ID 从来没进过那张表，
+	//     所以按钮既关不掉这条会话、也清不掉那行幽灵记录。
+	// 现在统一交给 trackConn 登记：tcp 控制连接 / 本地中继口 / 上游 UDP 通道都是
+	// 这条会话的参与者（任一被关都会把会话带走），结束时 finish 上报 close。
+	//
+	// 【为什么现在可以登记字节数】当初"不登记"的理由是 UDP 没有 Relay 那样的
+	// 双向字节统计，登记进去会显示假的上下行。那个理由现在不成立：下面两个中继
+	// 循环按数据报 payload 长度累加 ConnCounter，界面看到的是真实字节数。
+	// 别再改回"只发 open、不登记"。
+	counter, finish := h.trackConn("udp", relayAddr, tcp, tcp, pc, up)
+	defer func() { finish(counter.Up(), counter.Down(), nil) }()
 
 	done := make(chan struct{})
 	var closeOnce sync.Once
 	shutdown := func() { closeOnce.Do(func() { close(done) }) }
+
+	// lastAct 是"最近一次真正转发出去 / 收回来的数据报"的时间（Unix 毫秒），
+	// 空闲回收用它判断。刻意按"成功转发的数据报"算，而不是"收到过任何字节"：
+	// 一直灌垃圾包的客户端不该被算成活跃。
+	var lastAct atomic.Int64
+	lastAct.Store(time.Now().UnixMilli())
 
 	// TCP 控制连接断开 => 结束整个 UDP 会话
 	go func() {
 		_, _ = io.Copy(io.Discard, &bufConn{Conn: tcp, r: br})
 		shutdown()
 	}()
+
+	// 空闲回收：控制连接一直挂着不动的会话（客户端崩了 / NAT 映射没了 / 脚本忘了关）
+	// 原来会永远占着本地 UDP 口和上游通道。这里按 TCP 中继**同一套**「空闲自动断开」
+	// 设置（h.Idle，来源是 Settings.IdleTimeoutSec）回收 —— 用户只需要理解一个旋钮，
+	// 也不必为 UDP 再发明一套默认值。h.Idle <= 0 表示不设空闲超时，与 Relay 一致。
+	if h.Idle > 0 {
+		go func() {
+			// 检查间隔取阈值的 1/4（下限 100ms）：既不会在超时后拖很久才发现，
+			// 也不至于为一条几乎不动的会话每秒醒来几十次。
+			interval := h.Idle / 4
+			if interval < 100*time.Millisecond {
+				interval = 100 * time.Millisecond
+			}
+			tick := time.NewTicker(interval)
+			defer tick.Stop()
+			for {
+				select {
+				case <-done:
+					return
+				case <-tick.C:
+					idleFor := time.Duration(time.Now().UnixMilli()-lastAct.Load()) * time.Millisecond
+					if idleFor >= h.Idle {
+						h.logf("UDP 会话空闲 %v 无数据报（阈值 %v），自动回收",
+							idleFor.Round(time.Millisecond), h.Idle)
+						shutdown()
+						return
+					}
+				}
+			}
+		}()
+	}
 
 	var clientUDP *net.UDPAddr
 	var clientOnce sync.Once
@@ -309,6 +386,11 @@ func (h *Handler) socksUDPAssociate(tcp net.Conn, br *bufio.Reader) {
 					return
 				default:
 				}
+			} else {
+				// 只记**真正转发出去**的 payload 字节（不含 SOCKS5 UDP 头），
+				// 界面上的"上传"才是诚实的。
+				counter.AddUp(int64(len(payload)))
+				lastAct.Store(time.Now().UnixMilli())
 			}
 		}
 	}()
@@ -330,7 +412,11 @@ func (h *Handler) socksUDPAssociate(tcp net.Conn, br *bufio.Reader) {
 			if ferr != nil {
 				continue
 			}
-			_, _ = pc.WriteToUDP(frame, dst)
+			if _, werr := pc.WriteToUDP(frame, dst); werr == nil {
+				// 与上行对称：只记真正写回客户端的 payload 字节。
+				counter.AddDown(int64(n))
+				lastAct.Store(time.Now().UnixMilli())
+			}
 		}
 	}()
 
