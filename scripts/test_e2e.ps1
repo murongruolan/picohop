@@ -1,4 +1,4 @@
-﻿# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # ChainProxy 端到端测试
 #
 #   .\scripts\test_e2e.ps1
@@ -30,7 +30,6 @@ $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
 
 if (-not $Config) { $Config = Join-Path $Root 'data\config.json' }
-$Tags = "with_utls,with_quic"
 
 $script:failed = 0
 function Fail($msg) { Write-Host "  [失败] $msg" -ForegroundColor Red; $script:failed++ }
@@ -60,7 +59,7 @@ Write-Host "========================================"
 # ---------------------------------------------------------------------------
 Write-Host ""
 Write-Host "[1/4] 取全局前置代理出口 IP（基准）"
-$fetchOut = & go run -tags $Tags ./cmd/chainproxy fetch -config $Config -node '' 2>&1 | Out-String
+$fetchOut = & go run ./cmd/chainproxy fetch -config $Config -node '' 2>&1 | Out-String
 Write-Host $fetchOut
 
 $frontIP = ''
@@ -79,7 +78,7 @@ Write-Host ""
 Write-Host "[2/4] 后台启动节点（$HoldSeconds 秒）"
 $runOut = Join-Path $Root '.cache\e2e-run.log'
 $proc = Start-Process -FilePath 'go' `
-    -ArgumentList @('run', '-tags', $Tags, './cmd/chainproxy', 'run', '-config', $Config, '-seconds', "$HoldSeconds") `
+    -ArgumentList @('run', './cmd/chainproxy', 'run', '-config', $Config, '-seconds', "$HoldSeconds") `
     -WorkingDirectory $Root -RedirectStandardOutput $runOut -RedirectStandardError "$runOut.err" -PassThru
 Start-Sleep -Seconds 6
 Write-Host "  已启动（pid=$($proc.Id)），日志：$runOut"
@@ -173,7 +172,7 @@ foreach ($n in $cfg.nodes) {
 # ---------------------------------------------------------------------------
 Write-Host ""
 Write-Host "[4/4] 停止并确认端口已释放"
-& go run -tags $Tags ./cmd/chainproxy validate -config $Config | Out-Null
+& go run ./cmd/chainproxy validate -config $Config | Out-Null
 Get-Process chainproxy -ErrorAction SilentlyContinue | ForEach-Object { $_.Kill() | Out-Null }
 if ($proc -and -not $proc.HasExited) { $proc.Kill() | Out-Null }
 Start-Sleep -Seconds 2

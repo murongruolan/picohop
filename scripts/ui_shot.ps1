@@ -1,4 +1,4 @@
-﻿# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # ChainProxy 界面截图（开发期自测）
 #
 #   .\scripts\ui_shot.ps1                  截主界面
@@ -28,7 +28,6 @@ $ErrorActionPreference = 'Stop'
 
 $Root = Split-Path -Parent $PSScriptRoot
 $Exe  = Join-Path $Root 'desktop\build\bin\ChainProxy.exe'
-$Tag  = "with_utls,with_quic"
 
 if (-not $Out) {
     $name = if ($Open) { $Open } else { 'main' }
@@ -46,9 +45,20 @@ if ($List) {
 # ---------------------------------------------------------------------------
 if (-not $NoBuild -or -not (Test-Path $Exe)) {
     Write-Host "[ui_shot] 构建图形界面 ……"
-    Set-Location (Join-Path $Root 'desktop')
-    & wails build -s -tags $Tag -platform windows/amd64 | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "wails 构建失败" }
+    # 与 scripts\build.ps1 走同一条编译路径：v3 起不用 wails build（那条链是
+    # Taskfile 驱动的，得额外装 task 执行器），直接"前端 npm run build → go build"。
+    # production 标签不能漏，v3 用它区分 production/dev 两套实现文件；
+    # 引擎构建标签（with_utls / with_quic）随 sing-box 一起删了，不用再带。
+    Push-Location $Root
+    & npm --prefix (Join-Path $Root 'desktop\frontend') run build
+    if ($LASTEXITCODE -ne 0) { Pop-Location; throw "前端构建失败" }
+    # Vite 会清空 dist，占位文件要补回来，否则 //go:embed all:frontend/dist 找不到文件
+    New-Item -ItemType File -Force (Join-Path $Root 'desktop\frontend\dist\.keep') | Out-Null
+    New-Item -ItemType Directory -Force -Path (Split-Path $Exe -Parent) | Out-Null
+    & go build -tags "production" -trimpath -buildvcs=false `
+        -ldflags "-s -w -H windowsgui" -o $Exe ./desktop
+    if ($LASTEXITCODE -ne 0) { Pop-Location; throw "图形界面编译失败" }
+    Pop-Location
 }
 
 # ---------------------------------------------------------------------------

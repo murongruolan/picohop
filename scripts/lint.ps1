@@ -1,13 +1,13 @@
-﻿# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # ChainProxy 静态检查
 #
 #   .\scripts\lint.ps1
 #
 # 做四件事：
 #   1. gofmt：所有 Go 代码必须格式化过
-#   2. go vet：带正确的构建标签做静态检查
+#   2. go vet：静态检查
 #   3. 配置校验：用当前配置跑一遍 validate
-#   4. 引擎自检：确认构建标签齐全（缺了 Reality / Hysteria2 会在运行期才炸）
+#   4. 内核自检：确认内嵌 mihomo 真的注册上了（没有第二个内核，也没有构建标签要查）
 #
 # 【关于 -unsafeptr=false】
 # cmd\uishot 里需要用 syscall 把 Windows 传进来的 uintptr 还原成结构体指针
@@ -21,8 +21,9 @@ $ErrorActionPreference = 'Continue'
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
 
-# 与 scripts\build.ps1 保持一致：缺了这两个标签，Reality / Hysteria2 运行时会失败
-$Tags = "with_utls,with_quic"
+# 不带任何引擎构建标签：with_utls / with_quic 是内嵌 sing-box 的，已随它摘除；
+# 现在唯一的内核 mihomo 自带 Reality(uTLS) 与 Hysteria2(QUIC) 能力。
+# 与 scripts\build.ps1、scripts\check.ps1 保持一致。
 
 $failed = 0
 
@@ -38,13 +39,13 @@ if ($unformatted) {
 }
 
 # ---------------------------------------------------------------------------
-Write-Host "[lint] 2/4 go vet（tags=$Tags）……"
-& go vet -tags $Tags -unsafeptr=false ./... 2>&1
+Write-Host "[lint] 2/4 go vet ……"
+& go vet -unsafeptr=false ./... 2>&1
 if ($LASTEXITCODE -ne 0) { $failed++ } else { Write-Host "  OK" }
 
 # ---------------------------------------------------------------------------
 Write-Host "[lint] 3/4 配置校验 ……"
-& go run -tags $Tags ./cmd/chainproxy validate 2>&1
+& go run ./cmd/chainproxy validate 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  配置有问题（见上面的输出）"
     $failed++
@@ -53,8 +54,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # ---------------------------------------------------------------------------
-Write-Host "[lint] 4/4 内嵌引擎构建标签自检 ……"
-& go run -tags $Tags ./cmd/chainproxy engines 2>&1
+Write-Host "[lint] 4/4 内嵌内核自检 ……"
+& go run ./cmd/chainproxy engines 2>&1
 if ($LASTEXITCODE -ne 0) { $failed++ } else { Write-Host "  OK" }
 
 # ---------------------------------------------------------------------------
