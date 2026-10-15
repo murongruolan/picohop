@@ -14,8 +14,8 @@
 
 ```powershell
 $ErrorActionPreference='Continue'
-git clone --depth 1 https://github.com/2dust/主流客户端.git                 F:\chain_proxy\refs\主流客户端
-git clone --depth 1 https://github.com/主流客户端/主流客户端.git F:\chain_proxy\refs\主流客户端
+git clone --depth 1 https://github.com/2dust/主流客户端.git                 .\refs\主流客户端
+git clone --depth 1 https://github.com/主流客户端/主流客户端.git .\refs\主流客户端
 ```
 
 ## 研究结论

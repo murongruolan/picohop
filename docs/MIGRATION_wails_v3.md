@@ -34,14 +34,14 @@
 
 ## 已实测验证的事实
 
-验证方式：在 `F:\chain_proxy\.cache\spike-wails3\spike3`（gitignore 内）用
+验证方式：在 `<仓库根>\.cache\spike-wails3\spike3`（gitignore 内）用
 `wails3 init -t vanilla-js` 生成试点工程，写了一个含"主窗口 + 无边框置顶浮动窗口 +
 托盘 + 全局快捷键 + 系统通知"的 `main.go`，**用裸 `go build` 构建并真实运行**。
 
 实测日志（节选）：
 
 ```
-[spike] WebView2 数据目录 = F:\chain_proxy\.cache\spike-wails3\spike3\data\webview
+[spike] WebView2 数据目录 = <仓库根>\.cache\spike-wails3\spike3\data\webview
 [spike] 主窗口已创建 id=1
 [spike] 浮动窗口已创建 id=2（frameless + alwaysOnTop）
 [spike] 托盘已 Run
@@ -155,7 +155,7 @@ OnWindowEvent(events.Common.WindowClosing, cb)`。
 2. **API 层改服务**（`desktop/api.go` / `api_import.go`）：去掉 `ctx` 字段与 `runtime.*` 调用，
    改成 `App` 对象方法；`Bind` → `Services`。
 3. **前端桥**（`api.js` / `store.js` / `package.json`）：换 `@wailsio/runtime`。
-4. **装 `wails3` CLI 到项目内**：已完成，`F:\chain_proxy\.cache\bin\wails3.exe`（53 MB）。
+4. **装 `wails3` CLI 到项目内**：已完成，`<仓库根>\.cache\bin\wails3.exe`（53 MB）。
 5. **构建脚本**（`scripts/build.ps1`）：`wails build` → `go build -tags production,...`。
 6. **浮动对话框**：`app.Window.NewWithOptions(Frameless + AlwaysOnTop + HiddenOnTaskbar? + URL "/?float=…")`，
    对话框改为在独立窗口里渲染同一份前端（按 URL 参数分流），关窗即返回结果。

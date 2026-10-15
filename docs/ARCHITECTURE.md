@@ -255,7 +255,7 @@ PlanActivation(["C"])  ──►  Order = [A, B, C], Auto = [A, B]
   自己用 flex 列布局就同时拿到了"固定在控制栏下方"和"多条正确堆叠"。
 - **WebView2 的浏览器配置目录被显式指到 `data\webview\`**。
   默认它在 `%APPDATA%\<程序名>`，那是项目目录之外；本项目的规矩是
-  "一切都在 F:\chain_proxy 内"，所以用 `WebviewUserDataPath` 改掉。
+  "一切都在 <仓库根> 内"，所以用 `WebviewUserDataPath` 改掉。
   顺带的好处：清数据只要删 `data\`，不会在用户漫游配置里留残留。
 - **列表是通栏的**（左右不留白），表头支持拖拽调列宽。这里有两个必须知道的坑：
   1. Element Plus 的列宽拖拽手柄**要求 `<el-table>` 上有 `border`**

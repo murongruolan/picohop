@@ -84,7 +84,7 @@ func main() {
 		},
 		Windows: application.WindowsOptions{
 			// WebView2 的浏览器配置目录默认落在 %APPDATA%\<程序名>，那是项目目录之外。
-			// 本项目的规矩是"一切都在 F:\chain_proxy 内"，所以显式指到数据目录下。
+			// 本项目的规矩是"一切都在 <仓库根> 内"，所以显式指到数据目录下。
 			// 顺带的好处：清数据时删掉 data\ 就够了，不会在用户漫游配置里留残留。
 			WebviewUserDataPath: filepath.Join(config.DataDir(), "webview"),
 

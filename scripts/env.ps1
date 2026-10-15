@@ -5,7 +5,7 @@
 #       绝不在 C:\Users\<user>\go、F:\DevCache 等外部目录留下任何东西。
 #
 # 用法（在任意 pwsh 会话中）：
-#   . F:\chain_proxy\scripts\env.ps1
+#   . .\scripts\env.ps1
 #
 # 或者直接使用 scripts\build.ps1 / scripts\test.ps1，它们会自动加载本脚本。
 # ---------------------------------------------------------------------------

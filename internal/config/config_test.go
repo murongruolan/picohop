@@ -426,11 +426,16 @@ func TestFindRepoRoot(t *testing.T) {
 	if root == "" {
 		t.Fatal("应当能从包目录找到仓库根")
 	}
-	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
-		t.Fatalf("找到的 %q 里没有 go.mod", root)
+	// 【为什么不再断言目录名】目录名是每台机器上的本地细节，换个目录名不该让测试变红。
+	// 真正要保证的是"找到的确实是本项目这个仓库根"，而 go.mod 里的 module 路径才是
+	// 这个仓库的身份 —— 它跟着代码走，不跟着目录走。
+	gomod, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		t.Fatalf("读 %s 失败：%v", filepath.Join(root, "go.mod"), err)
 	}
-	if filepath.Base(root) != "chain_proxy" {
-		t.Fatalf("仓库根应当是 chain_proxy，实际 %q", root)
+	first := strings.TrimSpace(strings.SplitN(string(gomod), "\n", 2)[0])
+	if want := "module github.com/murongruolan/picohop"; first != want {
+		t.Fatalf("仓库根的 go.mod 第一行应当是 %q，实际 %q", want, first)
 	}
 	// 从明显不存在 go.mod 的深处往上找也应当能兜住（返回根或空，不能死循环）
 	_ = findRepoRoot(filepath.Join(pkgDir, "a", "b", "c"))

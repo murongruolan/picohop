@@ -419,7 +419,7 @@ go test -tags "with_utls,with_quic" ./...     全绿，22.5 秒
    改成自己实现（`src/notify.js` + `components/Notifications.vue`），
    用 flex 列布局同时拿到"固定位置"与"正确堆叠"。
 2. **WebView2 数据目录越界**：默认落在 `%APPDATA%\PicoHop`，属于项目目录之外，
-   违反本项目"一切都在 F:\chain_proxy 内"的规矩。
+   违反本项目"一切都在 <仓库根> 内"的规矩。
    用 `WebviewUserDataPath` 显式指到 `data\webview\`。
 3. **"仅端口"小窗的端口输入框偏窄**，10810 显示成 "1081"（和添加节点对话框
    当初那个问题一样），统一加宽到 178px。

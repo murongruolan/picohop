@@ -69,6 +69,7 @@
 | 024 | `refactor: 项目改名为 PicoHop（Go module 改为 github.com/murongruolan/picohop）` | 2026-10-13 | 三类大小写敏感替换共 423 处 / 102 文件；module 与 98 处 import 同步改名；历史文档只加横幅、不改写正文；门禁全绿，产物体积与改名前一致 | [详情](#024) |
 | 025 | `fix(test): 真连接延迟改为取样多次取最小值（与主流客户端同口径）` | 2026-10-13 | 同一节点主流客户端100-200ms 而我们 700+ms 的根因：它循环两次取最小值且**复用连接**，我们是单次冷连接；新增 `realTestAttempts`、默认地址改 `google/generate_204`、冷连接样本进日志 | [详情](#025) |
 | 026 | `docs: 增加 GPL-3.0 许可证与依赖许可说明` | 2026-10-13 | 仓库准备公开：没有许可证默认是"保留所有权利"，而本项目静态链接了 GPL-3.0 的 mihomo，属于不合规分发；LICENSE 逐字节取自 mihomo 模块缓存（sha256 一致），README 说明为什么只能是 GPL-3.0 及代价 | [详情](#026) |
+| 027 | `test,docs: 去掉对仓库目录名的耦合（测试断言改为校验 module 路径）` | 2026-10-13 | 改目录真正的技术障碍：测试断言写死目录名 + 21 处 `F:\chain_proxy` 绝对路径；改完只剩"关程序 + Rename-Item"两步 | [详情](#027) |
 
 > **索引缺口（如实记录）**：上表止于 023（2026-10-11），从那里到 024 之间还有 **90 个提交没有登记**
 > —— 包括 sing-box → mihomo 的整轮换装、24 项审计修复、底部栏偏好修复等。那些提交的内容
@@ -2319,3 +2320,52 @@ DOM 浮层做不到 —— 元素只能画在所属窗口的客户区里，到�
 
 - `LICENSE` 与来源逐字节一致（sha256 `3972DC9744F6499F…`，674 行）；
 - 门禁全绿；真实 `data/config.json` 未被触碰。
+
+---
+
+## 027
+
+**commit**: `test,docs: 去掉对仓库目录名的耦合（测试断言改为校验 module 路径）`
+
+**为什么**：换个目录名不该让测试变红，文档里也不该写死某一台机器上的绝对路径。
+这正是 024「已知遗留」里那两条的内容 —— **本轮把它们作废**：清掉耦合之后再改目录，
+就只剩"关掉程序、`Rename-Item`"两步（见本节末尾）。
+
+### 做了什么
+
+1. `internal/config/config_test.go`：`TestFindRepoRoot` 原本断言
+   `filepath.Base(root) != "chain_proxy"` —— 断言的是**目录名**。改为读 `go.mod`、
+   断言第一行是 `module github.com/murongruolan/picohop`：前者是本地细节，
+   后者才是这个仓库的身份（跟着代码走，不跟着目录走），顺带把重复的 `os.Stat` 并掉；
+2. 已跟踪文件里的绝对路径 `F:\chain_proxy` → `<仓库根>`：`desktop/main.go`（注释）、
+   `docs/ARCHITECTURE.md`、`docs/PROJECT_PROGRESS.md`、`docs/MIGRATION_wails_v3.md`（3 处）；
+3. `scripts/env.ps1` 顶部那行示例命令改成**相对路径** `. .\scripts\env.ps1`
+   —— 用占位符对方便复制粘贴没有帮助；
+4. `refs/README.md` 两条 `git clone` 的目标目录由 `F:\chain_proxy\refs\...` 改成
+   `.\refs\...` —— 同理，`<` `>` 在命令行里会被当成重定向。
+
+### 有意没改的
+
+- `docs/COMMIT_HISTORY.md` 与 `docs/bench/AB-*` 里的旧绝对路径**保留**：历史记录与
+  归档实测数据，改了等于伪造（本轮 commit message 里提一句就够）；
+- `docs/RESEARCH_chain_proxy.md` 的**文件名**保留：那里的 `chain_proxy` 指"链式代理"
+  这个研究主题，不是项目旧名。
+
+### 验证
+
+- `git grep 'F:\chain_proxy'` 剩下的命中**只在** COMMIT_HISTORY 与 bench 归档里；
+- 反向验证：把断言里的期望值改成 `module github.com/wrong/wrong`，`TestFindRepoRoot`
+  立刻红（说明这条断言真的在执行、真的能失败），改回来即绿；
+- 门禁全绿；真实 `data/config.json` 未被触碰。
+
+### 现在要改目录名，只剩这两步
+
+```
+1. 关掉 PicoHop（托盘退出），确认没有 go 进程在跑
+2. Rename-Item F:\chain_proxy F:\picohop
+```
+
+**唯一还挡着的**是文件锁：`data\webview\EBWebView`（应用运行时）与
+`.cache` 下正在被写入的文件。`.cache` 里的 Go 缓存记的是绝对路径，
+改名后 Go 会自己重建受影响的部分 —— 不会出错，只是第一次编译慢一点。
+`scripts/*.ps1` 全部用 `$PSScriptRoot` 推导根目录，本来就与目录名无关。
