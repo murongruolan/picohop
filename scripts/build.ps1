@@ -90,7 +90,11 @@ if ($buildGui) {
     }
 
     Write-Host "[PicoHop] 编译图形界面（version=$Version, tags=production）……"
-    $guiLdflags = "-s -w -H windowsgui -X main.Version=$Version"
+    # exe 的文件图标（资源管理器/任务栏/标题栏）来自 desktop\rsrc_windows_amd64.syso ——
+# 那是 .\scripts\gen_icons.ps1 -Syso 从 desktop\build\windows\icon.ico 生成的资源节。
+# Go 链接器按 GOOS/GOARCH 自动挑 .syso，所以下面这条命令不需要额外参数；
+# v3 也没有"运行期设置窗口图标"的 API（WindowsWindow 只有 DisableIcon），只能靠资源节。
+$guiLdflags = "-s -w -H windowsgui -X main.Version=$Version"
     go build -tags "production" -trimpath -buildvcs=false `
         -ldflags $guiLdflags -o (Join-Path $OutDir 'PicoHop.exe') ./desktop
     if ($LASTEXITCODE -ne 0) { throw "图形界面编译失败" }

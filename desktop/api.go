@@ -65,6 +65,11 @@ type API struct {
 	// 写进日志文件并（失败的）补一条界面通知。
 	trayReady    bool
 	trayIconSize int
+	// 托盘句柄与当前图标状态：全局代理模式开/关时要换图标（映射与理由见 tray_state.go）。
+	// 用独立的锁，不跟 a.mu 抢 —— 托盘回调与设置变更可能从不同 goroutine 进来。
+	trayMu       sync.Mutex
+	tray         *application.SystemTray
+	trayMode     trayMode
 	shortcutOK   []string
 	shortcutFail []string
 
@@ -129,6 +134,9 @@ func (a *API) ServiceStartup(ctx context.Context, options application.ServiceOpt
 		_ = inst.SetSettings(s)
 		inst.Logf("启动时把「全局代理模式」置为关闭（系统代理已还原；要重新开启请点一下）")
 	}
+	// 托盘图标的初值也要跟这个开关对齐：托盘是在 app.Run() 之前建起来的，
+	// 那时读不到设置，只能先按"普通"画一个，到这里再纠正。
+	a.refreshTrayMode()
 
 	inst.AutoActivate()
 	return nil
@@ -183,8 +191,11 @@ func (a *API) reportShellStatus(inst *app.App) {
 	if inst == nil {
 		return
 	}
+	a.trayMu.Lock()
+	traySize, trayMode := a.trayIconSize, a.trayMode
+	a.trayMu.Unlock()
 	if a.trayReady {
-		inst.Logf("外壳：托盘已就绪（图标 %d 字节）", a.trayIconSize)
+		inst.Logf("外壳：托盘已就绪（图标 %d 字节，当前状态：%s）", traySize, trayModeName(trayMode))
 	} else {
 		inst.Logf("外壳：⚠️ 托盘未建立")
 	}
@@ -304,6 +315,7 @@ func (a *API) SetSystemProxyMode(on bool) error {
 		s.SystemProxy = false
 		_ = a.app.SetSettings(s)
 		a.app.Logf("已关闭全局代理模式，系统代理已还原")
+		a.setTrayMode(trayModeNormal)
 		a.app.Notify("info", "系统代理已还原", "")
 		return nil
 	}
@@ -336,6 +348,7 @@ func (a *API) SetSystemProxyMode(on bool) error {
 		return err
 	}
 	a.app.Logf("已开启全局代理模式：系统代理 → %s（全局节点「%s」）", addr, a.nodeName(s.GlobalNodeID))
+	a.setTrayMode(trayModeGlobal)
 	a.app.Notify("success", "系统代理已指向全局节点", addr)
 	return nil
 }

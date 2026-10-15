@@ -38,11 +38,10 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-// 托盘图标必须嵌进二进制：托盘是"关窗后仍然活着"的那部分，
-// 如果图标去读磁盘文件，改天文件不在就变成空白托盘，很难查。
-//
-//go:embed build/windows/icon.ico
-var trayIcon []byte
+// 【图标一律嵌进二进制】托盘是"关窗后仍然活着"的那部分，图标要是去读磁盘文件，
+// 改天文件不在就变成空白托盘，很难查。三种底色的托盘图标与窗口图标分别在：
+//   tray_icons_windows.go（ICO：Windows 托盘链路认 ICO）
+//   tray_icons_other.go  （PNG：macOS 菜单栏 / Linux 指示器）
 
 // 主窗口的名字。托盘菜单与全局快捷键都靠它把窗口找回来。
 const mainWindowName = "main"
@@ -114,6 +113,10 @@ func main() {
 			// 不要透明/亚克力：会让 Element Plus 的暗色主题发灰、文字发虚。
 			DisableFramelessWindowDecorations: false,
 		},
+		// Linux 的窗口图标只能这样给（v3 只在 LinuxWindow 上有 Icon 字段）。
+		// Windows 的窗口/任务栏图标来自 exe 的 RT_GROUP_ICON 资源（desktop\rsrc_windows_amd64.syso，
+		// 见 tray_icons_windows.go 的说明）；macOS 的标题栏不放图标，Dock 用 .app 里的 icons.icns。
+		Linux: application.LinuxWindow{Icon: windowIcon},
 	})
 	api.setMainWindow(mainWin)
 
@@ -139,7 +142,9 @@ func main() {
 // 这样不依赖界面是否打开。
 func setupTray(wapp *application.App, api *API) {
 	tray := wapp.SystemTray.New()
-	tray.SetIcon(trayIcon)
+	// 句柄登记到 API：全局代理模式开/关时要换图标（映射见 tray_state.go）。
+	// 此刻后端还没起来、读不到设置，所以先按"普通"画；启动收尾会 refreshTrayMode 纠正。
+	api.setTray(tray, trayModeNormal)
 	tray.SetTooltip("PicoHop · 链式代理")
 
 	menu := application.NewMenu()
@@ -172,7 +177,7 @@ func setupTray(wapp *application.App, api *API) {
 	// Run 返回即表示托盘已经建起来（失败会在这里之前就 panic/报错）。
 	// 记下来是为了能在日志里核实 —— GUI 版没有控制台，不记就等于查不到。
 	api.trayReady = true
-	api.trayIconSize = len(trayIcon)
+	// 图标字节数由 setTray 记在 API 上（托盘图标会随全局代理模式切换，见 tray_state.go）。
 }
 
 // setupGlobalShortcuts 首次按配置注册全局快捷键。

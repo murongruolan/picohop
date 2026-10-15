@@ -52,3 +52,8 @@ desktop.ini
 # 例如 scripts/check_history.ps1 读的就是 docs\COMMIT_HISTORY.md。
 /docs/*
 !/docs/USER_GUIDE.md
+
+# 你（使用者）导出图标的工作副本：放在仓库根方便反复导出重跑
+# .\scripts\gen_icons.ps1；入库的母图是 desktop\build\icon-master.png，
+# 生成出来的各平台图标也都在 desktop\build\ 下。
+/icon.png
