@@ -429,7 +429,7 @@ v3 已经能开多个窗口了，但圈选那一刻需要的是"**全屏置顶�
   hysteria2 另验了自签证书的两条认证路（`allowInsecure` 与 `pinSHA256`，后者用错 pin
   必须失败：`certificate fingerprints do not match`）与**端口跳跃**
   （同一条会话打过 11 个不同目的端口）。
-  服务端配方、DNAT、客户端链接与矩阵脚本见
+  服务端配方、DNAT、客户端链接、矩阵跑法与踩过的坑见
   [`TEST_SERVER_RECIPE.md`](TEST_SERVER_RECIPE.md)。
   仍未覆盖：多目标并发压力、长稳内存；`hysteria2(QUIC)` 的 UDP 已覆盖。
   更早只验到"出站能构造、拨号发得出去"那一层，见
