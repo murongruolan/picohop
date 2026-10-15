@@ -60,23 +60,82 @@ func TCPPing(ctx context.Context, host string, port int, timeout time.Duration) 
 // 真连接延迟
 // ------------------------------------------------------------------
 
-// RealPing 经 dial 走完整链路请求 rawURL，返回"从发起请求到收到响应头"的耗时。
+// RealPing 经 dial 走完整链路请求 rawURL，返回 (最优样本耗时, 全部样本, 错误)。
 //
-// 用 generate_204 这类地址最好：响应体为空，耗时几乎全是链路成本。
-func RealPing(ctx context.Context, dial DialFunc, rawURL string, timeout time.Duration) (time.Duration, error) {
+// 【计时区间】起点在 client.Do 之前，终点在 client.Do 返回时 —— 即"请求发出到
+// 收到响应头"。响应体在计时之外读掉。这一点比主流客户端更严：它的计时含响应体，
+// 对 204 空响应的默认地址没有差别，但地址指向大响应时它的数字会包含下载时间。
+//
+// 【为什么要取样多次并取最小值】这是与主流客户端对齐的关键。它建一个 HttpClient、
+// 循环两次、取成功值里的最小者；因为**客户端只建一次、连接会复用**，第 2 次是在
+// 已经建好的隧道里跑一个 HTTP 往返，所以它的"最小值"天生比单次冷连接小几倍。
+// 只测一次的我们和它不是一个口径：同一个节点我们 1000ms、它 200ms，看着像我们慢。
+//
+// 【samples[0] 是冷连接】含建链（前置 + 节点协议握手）与 TLS，是"第一次点开网页"
+// 的真实代价；取样次数为 1 时就只有它。调用方应当把它单独记进日志，别丢。
+//
+// attempts < 1 时按 1 次处理。全部样本都失败才返回错误；部分成功则用成功的那些。
+func RealPing(ctx context.Context, dial DialFunc, rawURL string, attempts int, timeout time.Duration) (time.Duration, []time.Duration, error) {
 	if timeout <= 0 {
 		timeout = 10 * time.Second
+	}
+	if attempts < 1 {
+		attempts = 1
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	bound, err := targetDial(dial, rawURL)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	client := newHTTPClient(bound, timeout)
 	defer client.CloseIdleConnections()
 
+	samples := make([]time.Duration, 0, attempts)
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			// 样本之间的间隔不计时（主流客户端也是 100ms，同样在计时区间之外）。
+			select {
+			case <-ctx.Done():
+				lastErr = ctx.Err()
+			case <-time.After(sampleGap):
+			}
+			// 【break 必须写在 select 外面】写在 select 里只会跳出那个 select，
+			// for 会继续跑完剩下的取样 —— 同一个坑本项目踩过（见 internal/app/test.go
+			// 里那段 dispatch 注释），这里不重犯。
+			if ctx.Err() != nil {
+				break
+			}
+		}
+		d, err := realPingOnce(ctx, client, rawURL)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		samples = append(samples, d)
+	}
+	if len(samples) == 0 {
+		if lastErr == nil {
+			lastErr = fmt.Errorf("没有取到任何样本")
+		}
+		return 0, nil, lastErr
+	}
+	best := samples[0]
+	for _, d := range samples[1:] {
+		if d < best {
+			best = d
+		}
+	}
+	return best, samples, nil
+}
+
+// sampleGap 是两个取样之间的间隔（不计入耗时），与主流客户端的 100ms 间隔 对齐。
+const sampleGap = 100 * time.Millisecond
+
+// realPingOnce 发一次请求，返回"到收到响应头"的耗时。
+func realPingOnce(ctx context.Context, client *http.Client, rawURL string) (time.Duration, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return 0, fmt.Errorf("测试地址非法: %w", err)
@@ -87,9 +146,12 @@ func RealPing(ctx context.Context, dial DialFunc, rawURL string, timeout time.Du
 		return 0, err
 	}
 	elapsed := time.Since(start)
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	// 读掉响应体是**为了连接能被复用**：Go 的 Transport 要求 body 读完并关闭才把
+	// 连接放回池子，否则每次取样都新建连接，"取最小值"就退化成"取冷连接"，白改。
+	// 上限 64 KiB 是防呆：地址被填成大文件时不能白白下载；超限的连接不会被复用
+	// （后续样本退化成冷连接），但已经测出来的延迟不受影响。
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64*1024))
 	_ = resp.Body.Close()
-
 	if resp.StatusCode >= 400 {
 		return 0, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
@@ -304,7 +366,12 @@ func newHTTPClient(dial DialFunc, timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
-			DisableKeepAlives: true,
+			// 【为什么这里是 false】真连接延迟要**复用连接**取多次样本：第 1 次是冷连接
+			// （建链 + 协议握手 + TLS），第 2 次起在同一个已经建好的隧道里跑，量到的是
+			// "隧道建好之后一次 HTTP 往返"。主流客户端就是这么量的（建一个 HttpClient、
+			// 循环两次取最小值）。关掉复用会让同一个节点比它高出几倍，用户会以为是我们
+			// 慢 —— 所以别把它改回 true。
+			DisableKeepAlives: false,
 			DialContext:       dial,
 			TLSClientConfig:   &tls.Config{MinVersion: tls.VersionTLS12},
 		},

@@ -31,6 +31,27 @@ const CurrentVersion = 2
 // 就会不一致。默认值只在这里定义一次，Default() / normalize() / Settings.IdleTimeout() 共用。
 const DefaultIdleTimeoutSec = 300
 
+// DefaultRealTestURL 是「真连接延迟」的默认测试地址。
+//
+// 【为什么是它】主流客户端的「真连接测试地址」默认也是这个（其 同类实现 里
+// 默认测试地址列表 的首项）。地址不同，量出来的延迟就不是一个口径：204 空响应
+// 既不带响应体、也不额外跳转，最接近"一次纯粹的网络往返"。
+//
+// 【为什么只在这里定义一次】以前 Default() 里写了一个地址、internal/app 的兜底
+// 又写死另一个，于是"设置里显示的默认值"和"空值时真正用的地址"不是同一个东西。
+const DefaultRealTestURL = "https://www.google.com/generate_204"
+
+// DefaultRealTestAttempts 是「真连接延迟」的默认取样次数（结果取最小值）。
+//
+// 【为什么默认 2 次而不是 1 次】为了与主流客户端同口径 —— 它也是循环两次、取成功值
+// 里的最小者。而"最小值"明显更小的真正原因是：第 2 次取样**复用了第 1 次已经建好的
+// 连接**，量到的是"隧道建立之后一次 HTTP 往返"；第 1 次含建链、协议握手、TLS，
+// 是冷连接。只测 1 次的话，同一个节点会比主流客户端高出几倍，用户会以为是我们慢。
+const DefaultRealTestAttempts = 2
+
+// MaxRealTestAttempts 是取样次数上限。再多只是拖长测试时间，最小值也不会更小。
+const MaxRealTestAttempts = 5
+
 // Settings 是全局设置。
 //
 // 刻意保持精简：只保留主流客户端/主流客户端里我们**切实会用到**的项，
@@ -62,6 +83,10 @@ type Settings struct {
 	TestConcurrency int `json:"testConcurrency"`
 	// RealTestURL 是"真连接延迟"要请求的地址，应返回 204/200 且极小的响应体。
 	RealTestURL string `json:"realTestUrl"`
+	// RealTestAttempts 是"真连接延迟"的取样次数，结果取这些样本里的最小值。
+	// 0 表示用默认值（DefaultRealTestAttempts）—— 见该常量的注释：第 2 次起会
+	// 复用连接，所以"最小值"对应的是隧道建立之后的往返，与主流客户端同口径。
+	RealTestAttempts int `json:"realTestAttempts"`
 	// SpeedTestURL 是测速用的下载地址。
 	SpeedTestURL string `json:"speedTestUrl"`
 	// SpeedTestSeconds 是单节点测速的采样时长（秒）。
@@ -169,7 +194,8 @@ func Default() *Config {
 			AutoActivateOnLaunch:   true,
 			TCPTestTimeoutMs:       5000,
 			TestConcurrency:        8,
-			RealTestURL:            "http://cp.cloudflare.com/generate_204",
+			RealTestURL:            DefaultRealTestURL,
+			RealTestAttempts:       DefaultRealTestAttempts,
 			SpeedTestURL:           "https://speed.cloudflare.com/__down?bytes=104857600",
 			SpeedTestSeconds:       8,
 			Theme:                  "system",
@@ -370,6 +396,10 @@ func (c *Config) Validate() []Issue {
 	// ---- 设置 ----
 	if c.Settings.PortStart < 1 || c.Settings.PortStart > 65535 {
 		add("设置", "portStart", "端口起始值 %d 非法（应在 1-65535 之间）", c.Settings.PortStart)
+	}
+	// 0 是"用默认值"（见 mergeWithDefaults），不算错；上限之外才是配置错误。
+	if c.Settings.RealTestAttempts < 0 || c.Settings.RealTestAttempts > MaxRealTestAttempts {
+		add("设置", "realTestAttempts", "真连接延迟的取样次数应在 1-%d 之间", MaxRealTestAttempts)
 	}
 	if c.Settings.TestConcurrency < 1 {
 		add("设置", "testConcurrency", "测试并发数必须大于 0")
@@ -803,6 +833,9 @@ func (c *Config) normalize() {
 	}
 	if s.RealTestURL == "" {
 		s.RealTestURL = d.Settings.RealTestURL
+	}
+	if s.RealTestAttempts <= 0 {
+		s.RealTestAttempts = d.Settings.RealTestAttempts
 	}
 	if s.SpeedTestURL == "" {
 		s.SpeedTestURL = d.Settings.SpeedTestURL

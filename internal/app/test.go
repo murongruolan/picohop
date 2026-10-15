@@ -131,6 +131,15 @@ func (a *App) Testing() bool {
 	return a.testRunning
 }
 
+// formatMsList 把取样列表格式化成 "1090/210/205 ms" 这样一行，供日志使用。
+func formatMsList(ds []time.Duration) string {
+	parts := make([]string, 0, len(ds))
+	for _, d := range ds {
+		parts = append(parts, fmt.Sprintf("%d", d.Milliseconds()))
+	}
+	return strings.Join(parts, "/") + " ms"
+}
+
 func testLabel(kind string) string {
 	switch kind {
 	case TestTCP:
@@ -201,9 +210,21 @@ func (a *App) runOneTest(ctx context.Context, n config.Node, kind string) {
 	case TestReal:
 		url := s.RealTestURL
 		if strings.TrimSpace(url) == "" {
-			url = "http://cp.cloudflare.com/generate_204"
+			url = config.DefaultRealTestURL
 		}
-		d, err := tester.RealPing(ctx, dial, url, 15*time.Second)
+		// 取样次数：0 表示用默认值（老配置没有这个字段）。
+		attempts := s.RealTestAttempts
+		if attempts < 1 {
+			attempts = config.DefaultRealTestAttempts
+		}
+		d, samples, err := tester.RealPing(ctx, dial, url, attempts, 15*time.Second)
+		if err == nil {
+			// 第一个样本是冷连接（含建链与 TLS），是"第一次打开网页"的真实代价；
+			// 结果取全部样本里的最小值（隧道建好之后一次往返），与主流客户端同口径。
+			// 两者差得多时，看这一行就能分清是链路慢还是建链慢。
+			a.Logf("「%s」真连接延迟取样 %s（冷连接 %d ms，取最小 %d ms）",
+				n.Name, formatMsList(samples), samples[0].Milliseconds(), d.Milliseconds())
+		}
 		if err != nil {
 			a.Logf("「%s」真连接延迟测试失败：%v", n.Name, err)
 			// 链路已经建起来了 —— 请求失败说明不了节点无效（可能是目标站点

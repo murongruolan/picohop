@@ -459,6 +459,9 @@ func (a *API) SaveSettings(s config.Settings) error {
 	if s.TestConcurrency < 1 || s.TestConcurrency > 64 {
 		return fmt.Errorf("测试并发数应在 1-64 之间")
 	}
+	if s.RealTestAttempts < 1 || s.RealTestAttempts > config.MaxRealTestAttempts {
+		return fmt.Errorf("真连接延迟的取样次数应在 1-%d 之间", config.MaxRealTestAttempts)
+	}
 	// 存之前归一化，让"空格键"这类写法在配置里就落成规范名字（Space）
 	s.ShortcutToggleWindow = normalizeAccel(s.ShortcutToggleWindow)
 	s.ShortcutToggleAll = normalizeAccel(s.ShortcutToggleAll)

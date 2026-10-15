@@ -139,6 +139,7 @@ function blankSettings() {
     tcpTestTimeoutMs: 5000,
     testConcurrency: 8,
     realTestUrl: '',
+    realTestAttempts: 2,
     speedTestUrl: '',
     speedTestSeconds: 8,
     theme: 'system',
@@ -361,7 +362,11 @@ const meta = computed(() => store.meta || {})
             </el-col>
           </el-row>
           <el-form-item label="真连接地址">
-            <el-input v-model="form.realTestUrl" placeholder="http://cp.cloudflare.com/generate_204" />
+            <el-input v-model="form.realTestUrl" placeholder="https://www.google.com/generate_204" />
+          </el-form-item>
+          <el-form-item label="取样次数">
+            <el-input v-model="form.realTestAttempts" type="number" style="width: 120px" />
+            <el-tooltip content="取多次里的最小值：第 2 次起复用连接，量到的是隧道建好之后的往返；设为 1 只测冷连接" placement="top" :show-after="400"><span class="cp-tip-icon">?</span></el-tooltip>
           </el-form-item>
           <el-form-item label="测速地址">
             <el-input v-model="form.speedTestUrl" placeholder="https://speed.cloudflare.com/__down?bytes=104857600" />
