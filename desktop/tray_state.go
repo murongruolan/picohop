@@ -21,6 +21,17 @@ import (
 // a.setTrayMode(trayModeTun) 即可（关掉时切回 trayModeNormal）。
 type trayMode int
 
+// trayModeUnknown 表示"还没往系统里推过任何图标"。
+//
+// 【它不是可有可无的】托盘图标是"只在变化时推给系统"的，而结构体的零值恰好是
+// trayModeNormal —— 登记托盘时若把当前状态当成"已经是普通"，那么"设成普通"这一步
+// 会被判成"没变化"而**从不调用 SetIcon**，托盘就一直是系统默认图标。
+// 这个 bug 真发生过（见 trayPlan 的注释）。
+//
+// 【为什么单独一个 const 块】它必须与下面三个同处一个 iota 序列里的话，iota 会把
+// trayModeNormal 算成 1（iota 数的是本块内的行号）—— 而"零值 = 普通"这条约定不能破。
+const trayModeUnknown trayMode = -1
+
 const (
 	trayModeNormal trayMode = iota
 	trayModeGlobal
@@ -30,6 +41,8 @@ const (
 // trayModeName 给日志用：排查"图标怎么没变"时，日志里得看得出当时是哪个状态。
 func trayModeName(m trayMode) string {
 	switch m {
+	case trayModeUnknown:
+		return "未设置"
 	case trayModeGlobal:
 		return "全局代理"
 	case trayModeTun:
@@ -37,6 +50,19 @@ func trayModeName(m trayMode) string {
 	default:
 		return "普通"
 	}
+}
+
+// trayPlan 决定"这次要不要真的把图标推给系统"，返回（新的当前状态, 要不要推）。
+//
+// 【为什么要单独抽成纯函数】这里踩过一个真 bug：登记托盘时用"结构体零值"当当前状态，
+// 而零值就是 trayModeNormal，于是"设成普通"被判成没变化 → 从没 SetIcon → 托盘一直
+// 是系统默认图标。当时的单测只检查了状态字段、没检查"到底推没推"，所以没抓到。
+// 现在这条规则本身可单测（见 tray_state_test.go 的 TestTrayPlanFirstPushAlwaysPushes）。
+func trayPlan(cur, want trayMode) (trayMode, bool) {
+	if cur == want {
+		return cur, false
+	}
+	return want, true
 }
 
 // trayIconFor 返回该状态对应的图标字节。
@@ -64,6 +90,9 @@ func (a *API) setTray(tray *application.SystemTray, mode trayMode) {
 	a.trayMu.Lock()
 	a.tray = tray
 	a.trayIconSize = len(trayIconFor(mode))
+	// 【必须先把当前状态标成"未设置"】否则下面这次调用会被 trayPlan 判成"没变化"，
+	// 于是第一次 SetIcon 永远不会发生 —— 托盘就一直是系统默认图标（踩过）。
+	a.trayMode = trayModeUnknown
 	a.trayMu.Unlock()
 	a.setTrayMode(mode)
 }
@@ -75,17 +104,18 @@ func (a *API) setTray(tray *application.SystemTray, mode trayMode) {
 func (a *API) setTrayMode(mode trayMode) {
 	a.trayMu.Lock()
 	tray, cur := a.tray, a.trayMode
-	changed := mode != cur
-	if changed {
-		a.trayMode = mode
-	}
+	next, push := trayPlan(cur, mode)
+	a.trayMode = next
 	a.trayMu.Unlock()
 
-	if tray == nil || !changed {
+	if tray == nil || !push {
 		return
 	}
 	icon := trayIconFor(mode)
 	tray.SetIcon(icon)
+	a.trayMu.Lock()
+	a.trayPushed = true
+	a.trayMu.Unlock()
 	a.logf("外壳：托盘图标已切到「%s」（%d 字节）", trayModeName(mode), len(icon))
 }
 

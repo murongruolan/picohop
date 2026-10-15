@@ -59,20 +59,45 @@ func TestWindowIconEmbedded(t *testing.T) {
 	}
 }
 
+// TestTrayPlanFirstPushAlwaysPushes 守住那个真发生过的 bug：首次设置必须真的推。
+//
+// 【那个 bug 长什么样】登记托盘时若拿"结构体零值"当当前状态，而零值就是 trayModeNormal，
+// 于是"设成普通"被判成没变化 → 永远不调 SetIcon → 托盘一直显示系统默认图标。
+// 所以这里明确断言：从"未设置"到任何状态都必须推。
+func TestTrayPlanFirstPushAlwaysPushes(t *testing.T) {
+	for _, want := range []trayMode{trayModeNormal, trayModeGlobal, trayModeTun} {
+		if _, push := trayPlan(trayModeUnknown, want); !push {
+			t.Fatalf("从未设置切到「%s」必须推图标", trayModeName(want))
+		}
+	}
+	// 同状态重复设置不该重复推（避免每次都打一次进程外的 Shell 调用）
+	if _, push := trayPlan(trayModeNormal, trayModeNormal); push {
+		t.Fatal("同状态重复设置不该重复推")
+	}
+	if _, push := trayPlan(trayModeGlobal, trayModeNormal); !push {
+		t.Fatal("状态变化必须推")
+	}
+	if next, _ := trayPlan(trayModeUnknown, trayModeNormal); next != trayModeNormal {
+		t.Fatalf("推完之后当前状态应当是目标状态，实际 %d", next)
+	}
+}
+
 // TestTrayModeName 日志里要能看出当时是哪个状态（排查"图标怎么没变"全靠它）。
 func TestTrayModeName(t *testing.T) {
 	for m, want := range map[trayMode]string{
-		trayModeNormal: "普通",
-		trayModeGlobal: "全局代理",
-		trayModeTun:    "TUN（预留）",
+		trayModeUnknown: "未设置",
+		trayModeNormal:  "普通",
+		trayModeGlobal:  "全局代理",
+		trayModeTun:     "TUN（预留）",
 	} {
 		if got := trayModeName(m); got != want {
 			t.Fatalf("trayModeName(%d) = %q，期望 %q", m, got, want)
 		}
 	}
-	// 零值必须是"普通"：API 结构体的零值就是它，构造漏设时会落到这一档。
-	if trayMode(0) != trayModeNormal {
-		t.Fatal("trayMode 的零值不是 trayModeNormal")
+	// 【零值是"未设置"而不是"普通"，这是有意的】登记托盘时先把它标成"未设置"，
+	// 第一次设置才会真的推给系统（见 TestTrayPlanFirstPushAlwaysPushes）。
+	if trayMode(0) != trayModeNormal || trayModeUnknown >= 0 {
+		t.Fatal("trayMode 的取值约定变了：未知档必须是负数、0 仍是普通")
 	}
 }
 

@@ -65,6 +65,10 @@ type API struct {
 	// 写进日志文件并（失败的）补一条界面通知。
 	trayReady    bool
 	trayIconSize int
+	// trayPushed 记录"图标到底有没有真的推给系统"。托盘图标只在状态变化时推送，
+	// 而首次推送发生在后端起来之前（那时日志还没有去处）—— 不记这一笔，
+	// "托盘怎么是默认图标"就只能靠猜（踩过：首次推送被去重逻辑吞掉）。
+	trayPushed bool
 	// 托盘句柄与当前图标状态：全局代理模式开/关时要换图标（映射与理由见 tray_state.go）。
 	// 用独立的锁，不跟 a.mu 抢 —— 托盘回调与设置变更可能从不同 goroutine 进来。
 	trayMu       sync.Mutex
@@ -115,6 +119,11 @@ func (a *API) ServiceStartup(ctx context.Context, options application.ServiceOpt
 	})
 
 	inst.Logf("PicoHop %s 已启动，配置文件：%s", Version, config.ConfigPath())
+
+	// 窗口图标：Windows 上 Wails 给窗口用的是系统通用图标，必须我们自己在
+	// WM_SETICON（enclosing 理由见 window_icon_windows.go）。放在这里调用是因为
+	// 此刻窗口肯定已经建好了，findOwnWindow 才找得到。
+	go a.applyWindowIcon()
 
 	// 把外壳（托盘/快捷键）的初始化结果写进日志，并把后端就绪前攒下的告警补投给界面。
 	a.reportShellStatus(inst)
@@ -192,10 +201,15 @@ func (a *API) reportShellStatus(inst *app.App) {
 		return
 	}
 	a.trayMu.Lock()
-	traySize, trayMode := a.trayIconSize, a.trayMode
+	traySize, trayMode, pushed := a.trayIconSize, a.trayMode, a.trayPushed
 	a.trayMu.Unlock()
 	if a.trayReady {
 		inst.Logf("外壳：托盘已就绪（图标 %d 字节，当前状态：%s）", traySize, trayModeName(trayMode))
+		if pushed {
+			inst.Logf("外壳：托盘图标已推送给系统（%s）", trayModeName(trayMode))
+		} else {
+			inst.Logf("外壳：⚠️ 托盘图标没有推送给系统（会显示系统默认图标）")
+		}
 	} else {
 		inst.Logf("外壳：⚠️ 托盘未建立")
 	}
