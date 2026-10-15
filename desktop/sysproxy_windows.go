@@ -16,7 +16,7 @@ import (
 
 // Windows 系统代理（WinINET）的设置位置。
 //
-// 参考了主流客户端的实现（同类实现）：
+// 参考了同类客户端的实现（同一套注册表写法）：
 // 它写的就是这个键 + ProxyEnable/ProxyServer/ProxyOverride/AutoConfigURL，
 // 然后用 InternetSetOption 通知正在运行的程序立刻生效。
 const proxyRegPath = `Software\Microsoft\Windows\CurrentVersion\Internet Settings`

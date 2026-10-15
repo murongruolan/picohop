@@ -31,7 +31,7 @@ func dialFrontIfAvailable(t *testing.T) proxy.Front {
 }
 
 // TestSocksUDPAssociateThroughFront 验证整条 WireGuard 方案的地基：
-// 前置代理（前置代理）必须支持 SOCKS5 UDP ASSOCIATE，
+// 前置代理必须支持 SOCKS5 UDP ASSOCIATE，
 // 否则 WireGuard 的握手包根本发不出去。
 //
 // 这里直接通过 UDP 通道向公网 DNS 发一个查询，能收到应答即证明 UDP 往返正常。

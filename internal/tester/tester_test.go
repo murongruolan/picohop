@@ -82,7 +82,7 @@ func TestSpeedCountingStartsAtFirstByte(t *testing.T) {
 //
 // 【为什么断言的是连接数，而不是只比快慢】本地回环上建一条 TCP 只要几十微秒，
 // 光比时间分辨不出有没有复用。而"复用"正是我们与主流客户端同口径的全部理由：
-// 它建一个 HttpClient、循环两次取最小值，第 2 次是在已经建好的隧道里跑的。
+// 它建一个 HTTP 客户端、循环两次取最小值，第 2 次是在已经建好的隧道里跑的。
 // 一旦有人把 DisableKeepAlives 改回 true，或把读 body 的写法改掉导致连接回不了
 // 连接池，最小值就退化成冷连接，界面数字会比主流客户端高好几倍 —— 这个用例会红。
 func TestRealPingReusesConnectionAndTakesMin(t *testing.T) {

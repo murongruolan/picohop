@@ -21,7 +21,7 @@ import (
 // TestWireGuardThroughFrontOnLAN 是判断"到底是 前置代理的问题，还是那台 WG 服务器的问题"的关键实验。
 //
 // 做法：在本机的**局域网 IP** 上跑一个真正的 WireGuard 服务端，
-// 然后让 PicoHop 的 WireGuard 客户端**经前置代理（前置代理）**去连它。
+// 然后让 PicoHop 的 WireGuard 客户端**经前置代理**去连它。
 //
 //   - 如果握手成功 → 说明 前置代理能正常转发 WireGuard 的 UDP，
 //     那 对端服务器 连不上就是**那台服务器/它的防火墙**的问题；
@@ -97,7 +97,7 @@ func TestWireGuardThroughFrontOnLAN(t *testing.T) {
 
 	t.Logf("本机局域网 WG 服务端 = %s:%d", lanIP, port)
 
-	// ---- 客户端：经前置代理 前置 ----
+	// ---- 客户端：经前置代理 ----
 	front := proxy.NewFront(config.Front{
 		Type: config.FrontTypeSocks5, Host: "127.0.0.1", Port: 10808, TimeoutMs: 8000,
 	})

@@ -66,7 +66,7 @@ func TCPPing(ctx context.Context, host string, port int, timeout time.Duration) 
 // 收到响应头"。响应体在计时之外读掉。这一点比主流客户端更严：它的计时含响应体，
 // 对 204 空响应的默认地址没有差别，但地址指向大响应时它的数字会包含下载时间。
 //
-// 【为什么要取样多次并取最小值】这是与主流客户端对齐的关键。它建一个 HttpClient、
+// 【为什么要取样多次并取最小值】这是与主流客户端对齐的关键。它建一个 HTTP 客户端、
 // 循环两次、取成功值里的最小者；因为**客户端只建一次、连接会复用**，第 2 次是在
 // 已经建好的隧道里跑一个 HTTP 往返，所以它的"最小值"天生比单次冷连接小几倍。
 // 只测一次的我们和它不是一个口径：同一个节点我们 1000ms、它 200ms，看着像我们慢。
@@ -131,7 +131,7 @@ func RealPing(ctx context.Context, dial DialFunc, rawURL string, attempts int, t
 	return best, samples, nil
 }
 
-// sampleGap 是两个取样之间的间隔（不计入耗时），与主流客户端的 100ms 间隔 对齐。
+// sampleGap 是两个取样之间的间隔（不计入耗时），与主流客户端的 100ms 间隔对齐。
 const sampleGap = 100 * time.Millisecond
 
 // realPingOnce 发一次请求，返回"到收到响应头"的耗时。
@@ -165,7 +165,7 @@ func realPingOnce(ctx context.Context, client *http.Client, rawURL string) (time
 // Speed 经 dial 下载 rawURL，最多采样 maxSeconds 秒，返回 (MB/s, 下载字节数)。
 //
 // 单位说明：1 MB = 1024*1024 字节。之所以不用 10^6，是为了和
-// 这类工具（主流客户端/主流客户端）界面上"MB/s"的口径一致。
+// 这类工具界面上"MB/s"的口径一致。
 func Speed(ctx context.Context, dial DialFunc, rawURL string, maxSeconds int, timeout time.Duration) (float64, int64, error) {
 	if maxSeconds <= 0 {
 		maxSeconds = 8
@@ -368,7 +368,7 @@ func newHTTPClient(dial DialFunc, timeout time.Duration) *http.Client {
 		Transport: &http.Transport{
 			// 【为什么这里是 false】真连接延迟要**复用连接**取多次样本：第 1 次是冷连接
 			// （建链 + 协议握手 + TLS），第 2 次起在同一个已经建好的隧道里跑，量到的是
-			// "隧道建好之后一次 HTTP 往返"。主流客户端就是这么量的（建一个 HttpClient、
+			// "隧道建好之后一次 HTTP 往返"。主流客户端就是这么量的（建一个 HTTP 客户端、
 			// 循环两次取最小值）。关掉复用会让同一个节点比它高出几倍，用户会以为是我们
 			// 慢 —— 所以别把它改回 true。
 			DisableKeepAlives: false,

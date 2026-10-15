@@ -27,9 +27,8 @@
 # 所以这里按"任何一层"排除。
 cache.db
 
-# 参考项目本体（体积大，仅在 refs/README.md 中登记来源与 commit）
-/refs/local-refs/
-/refs/local-refs/
+# refs/ 下是本地克隆的参考资料本体（体积大，也不在仓库里登记来源）
+/refs/
 
 # 前端构建产物（Vite 每次都会清空 dist 目录，所以只保留一个占位文件 —— 
 # Go 的 //go:embed all:frontend/dist 要求这个目录至少存在一个文件，

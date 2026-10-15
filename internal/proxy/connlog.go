@@ -11,7 +11,7 @@ import (
 
 // ConnEvent 是一条连接的生命周期事件（建立 / 结束）。
 //
-// 【为什么不用 sing-box 的 内核自带的 RESTful API】我们的 sing-box 只当出口用、**没有 inbound**，
+// 【为什么不用内核自带的那个 RESTful API】我们只把内核当出口用、**没有 inbound**，
 // 而且是直接调 outbound 的 Dial、**绕过了它的路由器** —— 它的连接列表里永远不会有东西
 // （第 3 步在日志上也踩过同一个坑）。真正知道"谁连了哪儿、传了多少"的是我们自己的 handler。
 type ConnEvent struct {

@@ -446,7 +446,7 @@ func TestDecodeRealSamples(t *testing.T) {
 	t.Run("hy2 端口跳跃：':' 分隔的区间要归一成 '-'", func(t *testing.T) {
 		// 【为什么必须归一】有的客户端把端口区间写成 "1000:2000"，而
 		// **mihomo 只按 '-' 识别区间**；主流客户端在导出时也做了同样的替换
-		// （同类实现）。不归一的话，这种链接导进来
+		// 不归一的话，这种链接导进来
 		// 不会当场报错，而是等到"构造出站"那一步才炸，报的还是 mihomo 内部的一句解析错误。
 		for _, raw := range []string{"1000%3A2000", "1000-2000"} {
 			n := mustDecode(t, "hysteria2://pw@hy2.example.com:443?mport="+raw+"#x")
