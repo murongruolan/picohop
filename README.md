@@ -240,3 +240,30 @@ picohop wgkey               # 生成 WireGuard 密钥对
 | [docs/MIGRATION_wails_v3.md](docs/MIGRATION_wails_v3.md) | 迁移到 Wails v3 的技术验证 |
 | [docs/NAMING_DECISION.md](docs/NAMING_DECISION.md) | 项目为什么叫 PicoHop，以及被否掉的候选与重名数据 |
 | [refs/README.md](refs/README.md) | 参考项目的来源与 commit 登记 |
+
+---
+
+## 许可证
+
+**GPL-3.0** —— [LICENSE](LICENSE) 是许可证全文。Copyright (C) 2026 murongruolan。
+
+**为什么是 GPL-3.0 而不是 MIT**：出口由**内嵌的 mihomo** 承担
+（`github.com/metacubex/mihomo`，GPL-3.0），它是被静态链接进这个二进制的。
+把 GPL 代码链进自己的程序再分发，整个作品就受 GPL 约束 —— 所以这不是"挑一个更喜欢的
+许可证"，而是唯一的合规选项。想换成宽松许可，就得换掉整个引擎，不现实。
+
+代价说清楚：GPL 允许任何人 fork、修改、**甚至拿去卖**，只要他们也按 GPL 开源。
+不希望这样的话，唯一的办法是不公开发布。
+
+其余直接依赖都是宽松许可，不要求你开源任何东西：
+
+| 依赖 | 许可证 |
+|---|---|
+| `github.com/wailsapp/wails/v3` | MIT |
+| `golang.zx2c4.com/wireguard` | MIT |
+| `github.com/makiuchi-d/gozxing` | MIT |
+| `github.com/skip2/go-qrcode` | MIT |
+| `golang.org/x/*` | BSD-3-Clause |
+
+**对应源码哪里拿**：全部依赖的版本都钉在 `go.mod` / `go.sum` 里，按上面
+[构建](#构建) 一节跑 `.\scripts\build.ps1`，就能从源码重建出与发布产物一致的二进制。
