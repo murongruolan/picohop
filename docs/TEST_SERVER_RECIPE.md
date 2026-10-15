@@ -17,6 +17,34 @@
 - 客户端就是本仓库的 `dist\picohop-cli.exe`（Windows 侧）；
 - 两台机器要有**出站**网络（用来装内核、以及当出口访问目标站点）。
 
+### 为什么服务端用 sing-box，而不是 mihomo
+
+**本项目全线只有 mihomo 一个内核** —— `go.mod` / `go.sum` 里没有任何 sing-box 条目，
+代码里出现的 "sing-box" 全是历史注释（例如
+`internal/engine/register.go` 写着"回退随 sing-box 一起删掉了"）。
+sing-box 只出现在下面这两台临时服务器上，当**对端实现**用。
+
+选它的**必要**原因：**mihomo 当服务端接不了 vless 的 h2 与 httpupgrade。**
+它的 vless 入站只暴露三档传输（`listener/inbound/vless.go:12-30`）：
+
+```
+WsPath          `inbound:"ws-path,omitempty"`
+GrpcServiceName `inbound:"grpc-service-name,omitempty"`
+XHTTPConfig     `inbound:"xhttp-config,omitempty"`
+```
+
+h2 没有对应字段；`V2rayHttpUpgrade` 只出现在 **vmess** 入站的传输层里
+（`listener/inbound/vmess_test.go:418`）。而 h2 与 httpupgrade 正是要验的四种传输里的两种,
+所以这两档**必须**换第三方实现当服务端（sing-box 或 Xray）—— 不是随手换了个内核。
+
+反过来说：**tcp / ws / grpc / xhttp（以及 vmess 的 httpupgrade）本来可以用 mihomo 当服务端**,
+那样还能多验一条"对端也是我们依赖的那个内核"的组合。下次有条件时应按
+「**一台 mihomo + 一台 sing-box/Xray**」来搭，互补覆盖。
+
+> 顺带澄清一句容易误解的：用第三方实现当服务端**不是为了**"靠它才能抓 bug"。
+> 036 轮抓到的 `httpupgrade` bug 是**我们自己的映射错**（我们发的是裸连接），
+> 任何真正实现了 httpupgrade 的服务端都会拒绝它 —— 包括 mihomo 的 vmess 入站。
+
 **角色分工**（正因为要验"链式"，两台必须真的互为两端）：
 
 | 角色 | 装什么 | 承担 |

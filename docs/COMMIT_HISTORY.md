@@ -91,6 +91,7 @@
 | 035 | `test(tools): UDP 端到端探针收进 cmd/udpprobe` | 2026-10-16 | 034 用来做真机验证的探针不能只活在 .cache 里（下一轮测服务器还要用）；顺带把 MIHOMO_MIGRATION 里"WireGuard 经 mihomo 的 UDP"标为不适用（那条路径不存在） | [详情](#035) |
 | 036 | `fix(engine): httpupgrade 映射错（真机抓包抓出来的）+ vmess 空 security 兜底` | 2026-10-16 | 用两台真实服务器跑通全矩阵时，只有 vless+httpupgrade 失败；抓包发现我们把 `httpupgrade` 直接塞进 mihomo 的 Network（它没有这一档）→ 裸协议头发出去。正确表达是 `ws` + `V2rayHttpUpgrade`。另修 vmess 空 `security` 会报 `unsupported security type` | [详情](#036) |
 | 037 | `docs: 测试服配方（逐传输 / UDP / 链式 / 端口跳跃的真机验证流程）` | 2026-10-16 | 036 那轮用的东西不该只活在会话里：服务端脚本、DNAT、客户端链接、矩阵跑法、取证命令与 8 个踩过的坑，都落进 docs/TEST_SERVER_RECIPE.md，换内核版本后照着复现 | [详情](#037) |
+| 038 | `docs: 配方里写清"为什么服务端用 sing-box"（mihomo 当服务端接不了 vless 的 h2/httpupgrade）` | 2026-10-16 | 用户问"我们不是全面用 mihomo 吗，你下 sing-box 干啥"——问题正当：配方没交代清楚。补上证据（mihomo 的 vless 入站只有 ws/grpc/xhttp 三档），并记下"下次应一台 mihomo 一台第三方，互补覆盖" | [详情](#038) |
 
 > **索引缺口（023a–023f，028 已补齐）**：023 到 024 之间原本积了 **99 个提交没有登记**
 > （早期误记为 90 —— 那次用日期过滤数的，漏掉了 023 当天之后的 10 条）。现在按主题合并成
@@ -3032,3 +3033,29 @@ TCP（经代理取出口 IP）与 UDP（经代理做 DNS 往返、同会话两�
 
 顺便把 `ARCHITECTURE` 里指向它的那句话改准确。
 （README 的文档索引表没动 —— 那里有用户尚未提交的改动，等他自己提。）
+
+---
+
+## 038
+
+**commit**: `docs: 配方里写清"为什么服务端用 sing-box"（mihomo 当服务端接不了 vless 的 h2/httpupgrade）`
+
+用户看完 036 的执行过程问了一句：「我们不是全面用 mihomo 吗，你下载 sing-box 干啥？」
+**这个问题正当** —— 配方文档只写了"装 sing-box"，没写它为什么是它。补上：
+
+1. **产品侧没有任何 sing-box**：`go.mod` / `go.sum` 里零条，代码里的命中全是历史注释
+   （`internal/engine/register.go` 那句"回退随 sing-box 一起删掉了"）。它只当**对端实现**用。
+2. **mihomo 当服务端接不了 vless 的 h2 与 httpupgrade**：它的 vless 入站只暴露
+   `ws-path` / `grpc-service-name` / `xhttp-config` 三档传输
+   （`listener/inbound/vless.go:12-30`，v1.19.32），h2 没有对应字段，
+   `V2rayHttpUpgrade` 只在 **vmess** 入站的传输层里（`listener/inbound/vmess_test.go:418`）。
+   而这两档正是要验的四种传输里的两种 —— 所以是**必须**换第三方实现，不是随手挑的。
+3. **下次怎么搭更好**：tcp / ws / grpc / xhttp（以及 vmess 的 httpupgrade）本来可以用 mihomo
+   当服务端，那样能多验一条"对端也是我们依赖的那个内核"的组合。所以应当
+   **一台 mihomo + 一台 sing-box/Xray**，互补覆盖。
+4. **澄清一处我先前表述不准的地方**：用第三方实现当服务端**不是为了**"靠它才抓得到 bug"。
+   036 轮那个 `httpupgrade` bug 是**我们自己的映射错**（我们发的是裸连接），
+   任何真正实现了 httpupgrade 的服务端都会拒绝它 —— 包括 mihomo 的 vmess 入站。
+   报告里若给人"靠 sing-box 才抓到"的印象，那是我说得不对。
+
+（两台服务器此时已销毁，无法补跑"mihomo 当服务端"那一轮；有条件时按第 3 点补。）
