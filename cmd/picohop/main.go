@@ -20,7 +20,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -53,6 +55,15 @@ func main() {
 		cmd = "ls"
 	}
 
+	// 【为什么必须在动配置之前拦掉】splitCommand 把以 "-" 开头的参数一律当成子命令参数，
+	// 于是 `picohop -h` 会变成 cmd=""（落到 ls）+ args=["-h"] —— 结果是**打开配置去列节点**
+	// 而不是打印帮助（更早的版本里 `run -h` 甚至会真的启动节点、激活并保存配置）。
+	// 帮助是只读请求，必须在 newApp() 之前结束。
+	if helpRequested(os.Args[1:]) {
+		usage()
+		return
+	}
+
 	switch cmd {
 	case "ls", "list":
 		runList(args)
@@ -71,7 +82,7 @@ func main() {
 	case "wgkey":
 		runWGKey(args)
 	case "engines":
-		runEngines()
+		runEngines(args)
 	case "version", "-v", "--version":
 		fmt.Printf("PicoHop %s (%s/%s, %s)\n", Version, runtime.GOOS, runtime.GOARCH, runtime.Version())
 	case "help", "-h", "--help":
@@ -98,12 +109,93 @@ func usage() {
   picohop wgkey             生成 WireGuard 密钥对
   picohop version           打印版本
 
-通用参数:
+通用参数（写在子命令前面或后面都可以）:
   -config <路径>   指定配置文件（默认 <数据目录>/config.json）
-  -node <节点>     指定节点，可以是 ID、别名或别名的一部分（可用逗号分隔多个）
-  -seconds <秒>    run 子命令运行多久后自动退出（默认一直运行）
+  -h, -help        打印帮助；写在子命令后面则打印该子命令的参数
+
+子命令参数:
+  run      -node <节点>  -seconds <秒>
+  test     -node <节点>  -kind tcp|real|speed|exit  -timeout <秒>
+  fetch    -node <节点>
+  import   -port <端口>  -front <前置>  -activate
+  wgkey    -private <私钥>  -psk
+
+节点参数可以是 ID、别名或别名的一部分（可用逗号分隔多个）。
 
 本程序不会注册任何开机自启动项。`)
+}
+
+// parseFlags 解析子命令参数并把输出接过来。返回值：
+//   - nil            → 解析成功，继续执行
+//   - flag.ErrHelp   → 已把用法打到 stdout（显式请求帮助，不是错误）
+//   - 其他错误        → 已把错误与用法打到 stderr
+//
+// 【为什么必须处理返回值】九处以前都写成 `_ = fs.Parse(args)`，把返回值丢掉了。
+// flag.ContinueOnError 下 `-h` 会让 Parse 返回 flag.ErrHelp，丢掉它就等于**把帮助请求
+// 当成没看见、继续往下执行**：
+//   - `picohop run -h` 会真的去启动节点（激活 + 保存配置）—— 用户以为在看帮助，实际改了配置；
+//   - `picohop -h` 更隐蔽：splitCommand 把 `-h` 当成子命令参数、cmd 空串落到 "ls"，
+//     于是它打开配置去列节点（见 main 里的 helpRequested）。
+//
+// 这里刻意**不** os.Exit：退出码那件事交给 mustFlags，这样这个函数可以被单测直接调用。
+func parseFlags(fs *flag.FlagSet, args []string) error {
+	var buf bytes.Buffer
+	fs.SetOutput(&buf) // 自己接管输出，免得一半走 stdout、一半走 stderr
+	err := fs.Parse(args)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, flag.ErrHelp):
+		fmt.Print(buf.String())
+		return flag.ErrHelp
+	default:
+		fmt.Fprint(os.Stderr, buf.String())
+		fmt.Fprintf(os.Stderr, "参数有误：%v\n", err)
+		return err
+	}
+}
+
+// mustFlags 是子命令里的统一入口：解析成功返回 true；否则按约定结束进程。
+//
+// 【为什么帮助与参数有误要分开】显式请求帮助是**正常**行为（退出码 0）；
+// 参数写错是错误（退出码 2）。以前两者都被忽略，于是 `picohop ls -nope` 打完错误信息
+// 仍然退出 0 —— 脚本会把一个拼错的命令当成成功。
+func mustFlags(fs *flag.FlagSet, args []string) bool {
+	err := parseFlags(fs, args)
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, flag.ErrHelp) {
+		return false // 帮助已打印，退出码 0
+	}
+	os.Exit(2)
+	return false // 不可达
+}
+
+// subUsage 给子命令装一个说人话的用法头（默认那句 "Usage of run:" 既生硬、
+// 也不说明这个子命令是干什么的）。
+func subUsage(fs *flag.FlagSet, desc string) {
+	fs.Usage = func() {
+		fmt.Fprintf(fs.Output(), "%s\n\n用法: picohop %s [参数]\n\n参数:\n", desc, fs.Name())
+		fs.PrintDefaults()
+	}
+}
+
+// helpRequested 判断"没有给子命令、只给了帮助开关"（`picohop -h` / `--help`）。
+//
+// 有子命令时不在这里处理 —— 那种 `-h` 属于子命令自己，由 parseFlags 负责
+// （`picohop run -h` 打印 run 的参数，而不是全局帮助）。
+func helpRequested(args []string) bool {
+	if cmd, _ := splitCommand(args); cmd != "" {
+		return false
+	}
+	for _, a := range args {
+		switch a {
+		case "-h", "-help", "--help":
+			return true
+		}
+	}
+	return false
 }
 
 // splitCommand 从命令行里挑出子命令，并返回子命令自己的参数。
@@ -161,6 +253,14 @@ func newApp() *app.App {
 // ------------------------------------------------------------------
 
 func runList(args []string) {
+	// 【为什么"没有参数"的子命令也要建 FlagSet】一是让 `-h` 能打印它自己的用法，
+	// 二是让拼错的参数报错，而不是像以前那样把 args 整个丢掉、静默忽略。
+	fs := flag.NewFlagSet("ls", flag.ContinueOnError)
+	subUsage(fs, "列出节点与运行状态")
+	if !mustFlags(fs, args) {
+		return
+	}
+
 	a := newApp()
 	defer a.Close()
 
@@ -203,9 +303,12 @@ func stateText(v app.NodeView) string {
 
 func runService(args []string) {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	subUsage(fs, "启动节点并前台运行（Ctrl+C 退出）")
 	only := fs.String("node", "", "只启动指定节点（ID/别名，可用逗号分隔）")
 	seconds := fs.Int("seconds", 0, "运行多少秒后自动退出（0 表示一直运行）")
-	_ = fs.Parse(args)
+	if !mustFlags(fs, args) {
+		return
+	}
 
 	a := newApp()
 	defer a.Close()
@@ -271,10 +374,13 @@ func printStatus(a *app.App) {
 
 func runTest(args []string) {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	subUsage(fs, "跑测试：tcp / real / speed / exit")
 	only := fs.String("node", "", "只测试指定节点（ID/别名，可用逗号分隔）")
 	kind := fs.String("kind", app.TestReal, "测试类型：tcp / real / speed / exit")
 	timeout := fs.Int("timeout", 120, "整体超时（秒）")
-	_ = fs.Parse(args)
+	if !mustFlags(fs, args) {
+		return
+	}
 
 	a := newApp()
 	defer a.Close()
@@ -341,6 +447,12 @@ func runTest(args []string) {
 // ------------------------------------------------------------------
 
 func runValidate(args []string) {
+	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
+	subUsage(fs, "只校验配置，不启动任何服务、不改动配置")
+	if !mustFlags(fs, args) {
+		return
+	}
+
 	a := newApp()
 	defer a.Close()
 
@@ -363,8 +475,11 @@ func runValidate(args []string) {
 
 func runFetch(args []string) {
 	fs := flag.NewFlagSet("fetch", flag.ContinueOnError)
+	subUsage(fs, "探测各节点（以及全局前置）的出口 IP")
 	only := fs.String("node", "", "只测指定节点（ID/别名，可用逗号分隔）")
-	_ = fs.Parse(args)
+	if !mustFlags(fs, args) {
+		return
+	}
 
 	a := newApp()
 	defer a.Close()
@@ -461,10 +576,13 @@ func batchPorts(start, count int, free func(int) bool) []int {
 
 func runImport(args []string) {
 	fs := flag.NewFlagSet("import", flag.ContinueOnError)
+	subUsage(fs, "从分享链接导入节点")
 	port := fs.Int("port", 0, "指定本地端口（默认自动分配；一条文本里有多条链接时是起始端口）")
 	front := fs.String("front", "", "前置：留空=直连，global=全局前置，或另一个节点的 ID")
 	activate := fs.Bool("activate", false, "导入后立即激活")
-	_ = fs.Parse(args)
+	if !mustFlags(fs, args) {
+		return
+	}
 
 	if fs.NArg() == 0 {
 		fatal("请给出分享链接（vless:// vmess:// ss:// trojan:// hysteria2://）")
@@ -525,7 +643,10 @@ func runImport(args []string) {
 
 func runExpress(args []string) {
 	fs := flag.NewFlagSet("express", flag.ContinueOnError)
-	_ = fs.Parse(args)
+	subUsage(fs, "导出节点的分享链接")
+	if !mustFlags(fs, args) {
+		return
+	}
 
 	if fs.NArg() == 0 {
 		fatal("请给出节点（ID 或别名）")
@@ -555,7 +676,13 @@ func runExpress(args []string) {
 // engines / wgkey
 // ------------------------------------------------------------------
 
-func runEngines() {
+func runEngines(args []string) {
+	fs := flag.NewFlagSet("engines", flag.ContinueOnError)
+	subUsage(fs, "自检内嵌内核（mihomo）是否注册可用")
+	if !mustFlags(fs, args) {
+		return
+	}
+
 	fmt.Printf("Go 版本：%s\n", runtime.Version())
 	// 【这个自检现在检查什么】以前它检查的是 sing-box 的构建标签（with_utls /
 	// with_quic）—— 那两个标签随 sing-box 一起删掉了，mihomo 不需要它们。
@@ -581,9 +708,12 @@ func runEngines() {
 // 本程序已经把 Curve25519 打进来了，顺手提供，用户就不用再装东西。
 func runWGKey(args []string) {
 	fs := flag.NewFlagSet("wgkey", flag.ContinueOnError)
+	subUsage(fs, "生成 WireGuard 密钥对")
 	privIn := fs.String("private", "", "已有一个私钥时，只推导它的公钥（base64 或 hex）")
 	psk := fs.Bool("psk", false, "顺带生成一个预共享密钥")
-	_ = fs.Parse(args)
+	if !mustFlags(fs, args) {
+		return
+	}
 
 	if *privIn != "" {
 		pub, err := wgproxy.PublicKeyFromPrivate(*privIn)

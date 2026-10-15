@@ -273,6 +273,9 @@ picohop wgkey --psk           # 生成 WireGuard 密钥对
 常用参数：`-config <路径>`（默认自动定位到项目里的 `data\config.json`）、
 `-node <ID或别名>`。
 
+`-h` 看帮助（`picohop -h` 看全部子命令，`picohop test -h` 看该子命令的参数），
+它只打印用法、**不碰配置**。退出码：0 成功、1 出错、2 参数写错。
+
 ---
 
 ## 9. 故障排查
