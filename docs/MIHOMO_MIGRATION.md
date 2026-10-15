@@ -418,8 +418,11 @@ ReceiveFromUDP 先用轮询版（升级路径：每 conn 一个读协程 + 共�
 > 空闲 60 秒回收，并用真实节点实测通过（含一个会话内多目标）。
 
 **未覆盖**：hysteria2(QUIC) 的 UDP、WireGuard 经 mihomo 的 UDP、多目标并发压力。
-> **多目标已覆盖**（034 用真实节点实测：一个会话内同时发往 3 个 DNS 服务器，三个都拿到了应答）；
-> hysteria2(QUIC) 的 UDP 与 WireGuard 经 mihomo 的 UDP 仍未覆盖。
+> **多目标已覆盖**（034 用真实节点实测：一个会话内同时发往 3 个 DNS 服务器，三个都拿到了应答）。
+> 仍未覆盖：hysteria2(QUIC) 的 UDP。
+> ~~WireGuard 经 mihomo 的 UDP~~ **不适用**：`buildMihomoOutbound` 根本没有 wireguard 分支
+> （vless / vmess / trojan / shadowsocks / hysteria2 五种），WireGuard 走的是我们自研的
+> `internal/wgproxy`，不经 mihomo。
 
 ### 第 ⑫/⑬ 轮：换装开关的机制（第 ⑤ 步前半）
 

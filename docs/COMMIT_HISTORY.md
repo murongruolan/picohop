@@ -88,6 +88,7 @@
 | 032 | `feat(cli): -h / -help 真正打印用法（以前会真的去执行子命令）` | 2026-10-16 | CLI 把 `-h` 当普通参数：`run -h` 会真的启动节点并写配置（历史上污染过一次真实配置）；顶层 `-h` 被 splitCommand 当成子命令参数而落到 `ls`。根因是九处 `_ = fs.Parse(args)` 丢掉 `flag.ErrHelp`；顺带把坏参数的退出码从 0 改成 2 | [详情](#032) | | 2026-10-15 | 030 的暂存清单里混进了 go.sum：`go list -m all` 在可写模式下补了 219 行图哈希，而 `go mod tidy -diff` 证明全是噪音 → 退回 + 改用 `go list -deps` + 锁 `-mod=readonly`；另修 NOTICE 哈希表顺序导致的重生成差异 | [详情](#031) |
 | 033 | `feat(hysteria2): 端口跳跃（Ports / HopInterval）全链路打通` | 2026-10-16 | 对齐 mihomo /主流客户端：配置两格 + 写法校验（28 段上限、区间方向）+ 引擎透传 + 分享链接 `mport`/`hop-interval` 往返（`:` 归一成 `-`）+ 前端表单；顺带把 mihomo.go 里 DialUDP 那段过时注释改对 | [详情](#033) |
 | 034 | `perf(engine): UDP 通道改成每目标常驻读协程 + 修 3 个真 bug` | 2026-10-16 | 旧实现单协程轮询（延迟 ∝ 目标序号、前面饿死后面、每目标一个 parked 协程）；改成每目标一个读协程 + fan-in 队列 + 空闲回收，并修掉"已取消的 ctx / 持锁建连 / 每包 DNS"三个 bug。8 条假 PacketConn 测试 + `-race` + **变异验证**，真实节点实测多目标会话 | [详情](#034) |
+| 035 | `test(tools): UDP 端到端探针收进 cmd/udpprobe` | 2026-10-16 | 034 用来做真机验证的探针不能只活在 .cache 里（下一轮测服务器还要用）；顺带把 MIHOMO_MIGRATION 里"WireGuard 经 mihomo 的 UDP"标为不适用（那条路径不存在） | [详情](#035) |
 
 > **索引缺口（023a–023f，028 已补齐）**：023 到 024 之间原本积了 **99 个提交没有登记**
 > （早期误记为 90 —— 那次用日期过滤数的，漏掉了 023 当天之后的 10 条）。现在按主题合并成
@@ -2886,3 +2887,34 @@ mihomo 的 deadline 包装层在"已有阻塞读在飞"时被别的协程调它�
 
 hysteria2(QUIC) 的 UDP、WireGuard 经 mihomo 的 UDP、多目标**并发压力**与长稳内存仍未测 ——
 需要对应的服务端（这也是用户在问"要准备几台服务器"的原因）。
+
+---
+
+## 035
+
+**commit**: `test(tools): UDP 端到端探针收进 cmd/udpprobe`
+
+034 做真机 UDP 验证时手写了一个 SOCKS5 UDP ASSOCIATE 探针，它当时只在 `.cache/` 里
+（gitignore，等于一次性）。下一轮要拿用户提供的服务器逐个协议/传输验 UDP，这个工具还得用，
+所以收进仓库成为正式工具：
+
+- `cmd/udpprobe/main.go`：`go run ./cmd/udpprobe <socks地址> <DNS目标[,更多目标]> [超时秒]`；
+- 只用标准库（本项目依赖里没有 SOCKS5 UDP 客户端，`x/net/proxy` 也不导出 UDP 那部分）；
+- 传多个目标时它们在**同一个会话**里发出去 —— 正是旧轮询实现最容易露馅的场景；
+- 退出码：0 = 所有目标都拿到应答、1 = 失败（原因打到 stdout）、2 = 用法错误。
+
+**顺带修正两处文档**：
+
+1. `MIHOMO_MIGRATION` 的遗留清单里列着"WireGuard 经 mihomo 的 UDP 仍未覆盖" ——
+   这条**不适用**：`buildMihomoOutbound` 只有 vless / vmess / trojan / shadowsocks / hysteria2
+   五个分支，**没有 wireguard**（WireGuard 走我们自研的 `internal/wgproxy`，不经 mihomo）。
+   留着它会让后来的人去找一条根本不存在的路径。
+2. `USER_GUIDE` 的 UDP 排查一节补上"怎么验某个节点的本地端口能不能真的跑 UDP"
+   （起节点 + 打探针的两行命令）。
+
+### 验证
+
+- `go vet ./cmd/udpprobe` 干净；`go build` 通过；
+- 对着一个不存在的端口跑：`UDP FAIL: 连 SOCKS5 控制连接失败: … actively refused`，退出码 1；
+- 不带参数跑：打印用法，退出码 2；
+- （真正的 UDP 功能验证在 034 那一条里：真实节点、单目标与同会话多目标都拿到了应答。）
