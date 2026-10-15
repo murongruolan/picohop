@@ -414,7 +414,12 @@ mihomo 侧（`constant.PacketConn`，v1.19.32 模块缓存里的源码）：
 设计：按目标建通道（map["host:port"]C.PacketConn，首次发送时 ListenPacketContext + ResolveUDP）；
 DialUDP 用 SupportUDP() 尽早失败；C.ErrNotSupport 原样透传；
 ReceiveFromUDP 先用轮询版（升级路径：每 conn 一个读协程 + 共享 chan）。
+> **已在 034 升级完成**：现在是"每个目标一个常驻读协程 + 一条 fan-in 队列"，
+> 空闲 60 秒回收，并用真实节点实测通过（含一个会话内多目标）。
+
 **未覆盖**：hysteria2(QUIC) 的 UDP、WireGuard 经 mihomo 的 UDP、多目标并发压力。
+> **多目标已覆盖**（034 用真实节点实测：一个会话内同时发往 3 个 DNS 服务器，三个都拿到了应答）；
+> hysteria2(QUIC) 的 UDP 与 WireGuard 经 mihomo 的 UDP 仍未覆盖。
 
 ### 第 ⑫/⑬ 轮：换装开关的机制（第 ⑤ 步前半）
 
@@ -778,8 +783,10 @@ picohop-cli.exe test --kind real --node probe-node
 ### 遗留清单（交给后续的人）
 
   - `ws/grpc/http/h2/httpupgrade` + `trojan/shadowsocks/hysteria2` 的真实链路验证；
-  - UDP 的 `ReceiveFromUDP` 目前是**轮询版**（活跃目标会拖慢其它目标）；升级路径：
-    每 conn 一个读协程 + 共享 chan（第 11 节记了理由与做法）；
+  - ~~UDP 的 `ReceiveFromUDP` 目前是**轮询版**（活跃目标会拖慢其它目标）~~ →
+    **034 已升级**：每目标一个常驻读协程 + fan-in 队列，空闲 60 秒回收；
+  - **`node.Security` 为空时构造 vmess 出站会失败**（mihomo 报 `unsupported security type:`）。
+    UI 与分享链接都会填 `auto`，只有手写配置会踩到 —— 034 的探针就是这么撞出来的（未修）；
   - ~~界面开关**改完要重启程序**才生效（tooltip 已写明）~~ → 开关本身已删除（第 ⑱ 轮）；
   - ~~翻默认时 `TestEngineModeJSON` 的断言要跟着改（第 10-B 节写明了怎么改）~~ →
     `Settings.EngineMode` 与那条测试都已删除；
@@ -873,7 +880,7 @@ mihomo 成为唯一内核，开关与 `Settings.EngineMode` 一起删除。
     见第 13 节；
   - **UDP 经前置**只到拨号器层证据（UDP ASSOCIATE + 数据报 + 回包），没有真的 QUIC 服务端；
   - **真实节点上"出口 IP 变成前置身后的出口"**没实测（需要一条真节点 + 真前置）；
-  - UDP 的 `ReceiveFromUDP` 仍是轮询版（见上一条遗留清单）。
+  - ~~UDP 的 `ReceiveFromUDP` 仍是轮询版~~ → **034 已解决**，并在真实节点上验过（含多目标）。
 
 ---
 
