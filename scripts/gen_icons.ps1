@@ -11,6 +11,11 @@
 #   desktop\build\windows\icon.ico                16…256  exe / 窗口 / 任务栏（多尺寸）
 #   desktop\build\darwin\icons.icns               16…1024 macOS 应用图标（Wails 认的文件名）
 #   desktop\build\linux\appicon.png               512²    Linux 图标源
+#
+# 【配色规则（使用者定）】除托盘之外的地方**一律用白底那一版**（窗口图标、任务栏、
+# exe、macOS/Linux 打包图标）；托盘是唯一会随模式换底色的地方：白底（平时）、
+# #3E1F08（全局代理模式）、#240046（预留 TUN）。白底那一版带一条极细灰边
+# （#C9CDD4，宽度随尺寸等比），否则它在浅色任务栏上会与背景融在一起。
 #   desktop\build\linux\icons\hicolor\<N>x<N>\apps\com.murongruolan.picohop.png
 #   desktop\build\icons\tray\tray-<state>-<N>.png normal|global|tun × 16/22/32/44/64
 #   desktop\build\icons\tray\tray-<state>.ico     同上，Windows 托盘用（多尺寸）
@@ -124,26 +129,25 @@ function Get-PngBytes([System.Drawing.Bitmap]$bmp) {
     , $bytes
 }
 
-# 「应用图标」：把标记按比例放进正方形画布，四周留白（标记是横向的，上下自然空一些）
+# 「应用图标」（窗口 / 任务栏 / exe / macOS / Linux 打包）：
+# **一律用白底那一版** —— 使用者明确要求除托盘之外的地方只出现白底，所以这里与
+# tray-normal 同一套外观（白底圆角 + 极细灰边），只是标记占比更小、留白更多。
+# 托盘是唯一会随模式换底色的地方（见 tray_state.go 的说明）。
 function New-AppIcon([System.Drawing.Bitmap]$art, [System.Drawing.Rectangle]$bounds, [int]$size) {
-    $c = New-Canvas $size $size
-    $g = $c.Graphics
-    $pad = [Math]::Round($size * 0.07)
-    $boxW = $size - 2 * $pad
-    $boxH = $size - 2 * $pad
-    $scale = [Math]::Min($boxW / $bounds.Width, $boxH / $bounds.Height)
-    $w = [Math]::Max(1, [Math]::Round($bounds.Width * $scale))
-    $h = [Math]::Max(1, [Math]::Round($bounds.Height * $scale))
-    $x = [Math]::Round(($size - $w) / 2)
-    $y = [Math]::Round(($size - $h) / 2)
-    $dest = New-Object System.Drawing.Rectangle $x, $y, $w, $h
-    $g.DrawImage($art, $dest, $bounds, [System.Drawing.GraphicsUnit]::Pixel)
-    $g.Dispose()
-    $c.Bitmap
+    New-TileIcon $art $bounds $size (New-Argb '#FFFFFF') 0.72 (New-Argb $BORDER) (Get-BorderWidth $size)
 }
 
-# 「托盘图标」：圆角底色块 + 居中的标记。小尺寸时标记放大一点，否则 16px 下糊成一团。
-function New-TrayIcon([System.Drawing.Bitmap]$art, [System.Drawing.Rectangle]$bounds, [int]$size, [System.Drawing.Color]$bg) {
+# 描边的灰与宽度。
+# 【为什么宽度要随尺寸等比】它是一条"极细边"：在托盘 16 px 上是 1 px 实线，在 1024 px 的
+# 应用图标上按同一比例放大（16 px）——这样把大图缩到 16 px 看时，边的粗细和托盘那份一致。
+$BORDER = '#C9CDD4'
+function Get-BorderWidth([int]$size) { [Math]::Max(1, [Math]::Round($size * 0.016)) }
+
+# 圆角底块图标：底色块（可选极细描边）+ 居中的标记。
+# 应用图标与三种托盘底色都走它，区别只有底色、标记占比、要不要描边。
+function New-TileIcon([System.Drawing.Bitmap]$art, [System.Drawing.Rectangle]$bounds, [int]$size,
+    [System.Drawing.Color]$bg, [double]$artScale,
+    [System.Drawing.Color]$border = [System.Drawing.Color]::Empty, [int]$borderWidth = 0) {
     $c = New-Canvas $size $size
     $g = $c.Graphics
     $r = [Math]::Max(2, [Math]::Round($size * 0.22))
@@ -158,15 +162,42 @@ function New-TrayIcon([System.Drawing.Bitmap]$art, [System.Drawing.Rectangle]$bo
     $g.FillPath($brush, $path)
     $brush.Dispose(); $path.Dispose()
 
-    $artScale = if ($size -le 22) { 0.90 } else { 0.76 }
+    if ($borderWidth -gt 0) {
+        # 描边画在**内缩**一圈的路径上，这样 1 px 的边也完整落在图标内、不会被裁掉半条
+        $inset = $borderWidth / 2.0
+        $s2 = $size - $borderWidth
+        $r2 = [Math]::Max(1.0, $r - $inset)
+        $d2 = $r2 * 2
+        $bp = New-Object System.Drawing.Drawing2D.GraphicsPath
+        $bp.AddArc($inset, $inset, $d2, $d2, 180, 90)
+        $bp.AddArc($inset + $s2 - $d2, $inset, $d2, $d2, 270, 90)
+        $bp.AddArc($inset + $s2 - $d2, $inset + $s2 - $d2, $d2, $d2, 0, 90)
+        $bp.AddArc($inset, $inset + $s2 - $d2, $d2, $d2, 90, 90)
+        $bp.CloseFigure()
+        $pen = New-Object System.Drawing.Pen $border, $borderWidth
+        $g.DrawPath($pen, $bp)
+        $pen.Dispose(); $bp.Dispose()
+    }
+
     $w = [Math]::Max(1, [Math]::Round($size * $artScale))
     $h = [Math]::Max(1, [Math]::Round($w * $bounds.Height / $bounds.Width))
-    $x = [Math]::Round(($size - $w) / 2)
-    $y = [Math]::Round(($size - $h) / 2)
+    $x = [Math]::Round(($size - $w) / 2.0)
+    $y = [Math]::Round(($size - $h) / 2.0)
     $dest = New-Object System.Drawing.Rectangle $x, $y, $w, $h
     $g.DrawImage($art, $dest, $bounds, [System.Drawing.GraphicsUnit]::Pixel)
     $g.Dispose()
     $c.Bitmap
+}
+
+# 「托盘图标」：三种底色。**只有白底加那条极细灰边** —— 深棕/深紫底在深浅任务栏上
+# 都看得见，白底在浅色任务栏上会和背景融掉（预览图里能看出来），所以描一条边把它框出来。
+function New-TrayIcon([System.Drawing.Bitmap]$art, [System.Drawing.Rectangle]$bounds, [int]$size, [System.Drawing.Color]$bg) {
+    $artScale = if ($size -le 22) { 0.90 } else { 0.76 }
+    $isWhite = ($bg.R -eq 255 -and $bg.G -eq 255 -and $bg.B -eq 255)
+    if ($isWhite) {
+        return New-TileIcon $art $bounds $size $bg $artScale (New-Argb $BORDER) (Get-BorderWidth $size)
+    }
+    New-TileIcon $art $bounds $size $bg $artScale
 }
 
 # 多尺寸 .ico：自己拼容器（System.Drawing 的 Icon.Save 只能存单一尺寸）
