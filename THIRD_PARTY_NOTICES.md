@@ -2855,6 +2855,12 @@ express Statement of Purpose.
 带 NOTICE 的组件（按 Apache-2.0 与 MPL-2.0 的要求必须一并复现）：
 
 ```text
+wazero
+Copyright 2020-2023 wazero authors
+
+```
+
+```text
 This project contains a clean Go translation of portions of the ZeroTierOne
 network virtualization engine.
 
@@ -2863,12 +2869,6 @@ Reference source: https://github.com/zerotier/ZeroTierOne
 
 Translated files retain the Mozilla Public License 2.0 notices required by the
 upstream project. See LICENSE for the applicable license.
-
-```
-
-```text
-wazero
-Copyright 2020-2023 wazero authors
 
 ```
 

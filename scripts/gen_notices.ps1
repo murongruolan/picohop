@@ -6,13 +6,16 @@
 # 【为什么要有个脚本，而不是手写一份声明】这份文件必须反映**真实的依赖集合**：
 # 加一个依赖、换一个版本，声明就可能过期。手写的清单迟早与现实分叉。
 #
-# 【两个关键实现细节，改之前先读】
+# 【三个关键实现细节，改之前先读】
 #   1. 模块集合用 `go list -deps ./desktop ./cmd/picohop` —— 即**真正链进二进制**的模块，
 #      不是 `go mod graph` 那种全量依赖图（那里面有一大堆只用于构建/测试、根本不进产物的
 #      模块，把它们写进声明是噪音）。
 #   2. 许可证分类**必须大小写敏感**（-cmatch）。GPLv3 正文第 13 节提到
 #      "GNU Affero General Public License"（混合大小写），用默认的大小写不敏感匹配会把
 #      **所有 GPLv3 误判成 AGPL** —— 这个 bug 真发生过，连本项目自己的 LICENSE 都被误判。
+#   3. 跑之前锁 `GOFLAGS=-mod=readonly`（脚本里已设）：不锁的话 `go list` 会"顺手"把**全量
+#      模块图**的哈希补进 go.sum —— 真发生过（一次生成多了 219 行，而 `go mod tidy -diff`
+#      证明它们全是 tidy 会删掉的噪音）。生成声明文件不该改动构建清单。
 #
 # 【去重只影响"贴几份正文"，不影响贴出来的内容】同一许可证各家版权行不同、标题写法
 # （"MIT License" / "The MIT License (MIT)" / 无标题）与折行也不同。所以：
@@ -131,13 +134,20 @@ function Get-ModInfo([string]$dir) {
 }
 
 # ---------------------------------------------------------------- 收集
-$linkedPaths = @(& go list -deps -f '{{if .Module}}{{.Module.Path}}{{end}}' ./desktop ./cmd/picohop 2>$null |
-    Where-Object { $_ } | Sort-Object -Unique)
+# 【为什么锁 -mod=readonly】不锁的话，`go list` 在可写模式下会"顺手"把**全量模块图**的哈希
+# 补进 go.sum。2026-10-15 真发生过：一次生成让 go.sum 多了 219 行纯新增，而
+# `go mod tidy -diff` 证明它们全是 tidy 会删掉的噪音（都是只有 /go.mod 的条目）。
+# 生成一份声明文件不该改动构建清单 —— 这里从根上锁死。
+$env:GOFLAGS = '-mod=readonly'
+$linkedPaths = @()
 $modTable = @{}
-foreach ($line in (& go list -m -f '{{.Path}}|{{.Version}}|{{.Dir}}' all 2>$null)) {
+foreach ($line in (& go list -deps -f '{{if .Module}}{{.Module.Path}}|{{.Module.Version}}|{{.Module.Dir}}{{end}}' ./desktop ./cmd/picohop 2>$null)) {
     $p = $line -split '\|', 3
-    if ($p.Count -ge 3) { $modTable[$p[0]] = @{ Version = $p[1]; Dir = $p[2] } }
+    if ($p.Count -lt 3) { continue }
+    $linkedPaths += $p[0]
+    $modTable[$p[0]] = @{ Version = $p[1]; Dir = $p[2] }
 }
+$linkedPaths = @($linkedPaths | Sort-Object -Unique)
 
 $rows = @(); $kindCount = @{}; $variantText = @{}; $allNotices = @{}
 foreach ($path in $linkedPaths) {
@@ -151,7 +161,10 @@ foreach ($path in $linkedPaths) {
         if (-not $variantText.ContainsKey($k)) { $variantText[$k] = @{} }
         foreach ($kv in $mi.Texts[$k].GetEnumerator()) { $variantText[$k][$kv.Key] = $kv.Value }
     }
-    foreach ($n in $mi.Notices) { $allNotices[$n] = $true }
+    # 【为什么要带上模块路径】NOTICE 存在哈希表里，而哈希表的键顺序在 PowerShell 里不稳定
+    # —— 2026-10-15 真踩过：同一份输入重生成，两个 NOTICE 块的顺序会互换，于是"生成的产物"
+    # 每次都不一样。生成物必须幂等，所以记下首个出现它的模块，输出时按模块路径排序。
+    foreach ($n in $mi.Notices) { if (-not $allNotices.ContainsKey($n)) { $allNotices[$n] = $path } }
     $rows += [pscustomobject]@{ Path = $path; Kind = $kindsTxt
         Remark = $(if ($mi.Copy.Count) { $mi.Copy -join '；' } else { '' })
         Sort = (($mi.Kinds | ForEach-Object { $rank[$_] }) + 99 | Measure-Object -Minimum).Minimum }
@@ -221,9 +234,9 @@ $L.Add('## 三、NOTICE 原文')
 $L.Add('')
 $L.Add('带 NOTICE 的组件（按 Apache-2.0 与 MPL-2.0 的要求必须一并复现）：')
 $L.Add('')
-foreach ($n in $allNotices.Keys) {
+foreach ($kv in ($allNotices.GetEnumerator() | Sort-Object { $_.Value })) {
     $L.Add('```text')
-    foreach ($ln in ($n -split "`r?`n")) { $L.Add($ln.TrimEnd()) }
+    foreach ($ln in ($kv.Key -split "`r?`n")) { $L.Add($ln.TrimEnd()) }
     $L.Add('```')
     $L.Add('')
 }
