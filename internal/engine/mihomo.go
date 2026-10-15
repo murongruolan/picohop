@@ -319,14 +319,45 @@ func buildMihomoOutbound(n config.Node, dialer C.Dialer) (C.ProxyAdapter, error)
 	}
 }
 
-// mihomoTransports 是 mihomo 认的传输名（与我们 config 里的 network 基本同名，
-// 但 h2 在 mihomo 里要写成 http）。
+// vmessSecurity 给 vmess 的加密方式兜一个默认值。
+//
+// 空值会让 mihomo 在构造出站时直接报 `unsupported security type:`；
+// 官方默认值就是 auto（自动协商），与分享链接解码端的行为保持一致。
+func vmessSecurity(s string) string {
+	if v := strings.TrimSpace(s); v != "" {
+		return v
+	}
+	return "auto"
+}
+
+// mihomoTransport 把我们的传输名翻成 mihomo 认的网络名。**两处必须翻译**：
+//
+//   - h2：mihomo 写成 http；
+//   - httpupgrade：必须翻成 **"ws"**，见下。
+//
+// 【httpupgrade 为什么不能直接塞进去 —— 这是 036 轮在真服务器上抓包抓出来的 bug】
+// mihomo 的 vless / vmess / trojan 网络分支里**没有 "httpupgrade" 这一档**
+// （`adapter/outbound/vless.go` 与 `vmess.go` 的 switch 只有 tcp/ws/http/h2/grpc/xhttp）。
+// httpupgrade 是用 **`Network: "ws"` + `WSOpts.V2rayHttpUpgrade = true`** 表达的：
+// 那个布尔决定 ws 握手走"标准 WebSocket"还是"httpupgrade 升级请求"
+// （`transport/vmess/websocket.go:414` 与 `:471`）。
+//
+// 塞错名字时的症状**完全不指向"传输映射错了"**，所以才值得把证据写在这里：
+// mihomo 把它当成"没有传输"，不发升级请求，直接把裸 VLESS 头写出去。真机抓包原文是
+//
+//	....""33DDUUUUUU...P.
+//	ip-api.comGET /json HTTP/1.1
+//
+// 服务端（sing-box）回 `400 Bad Request`，客户端又把 400 的响应体当成 VLESS 响应头去读，
+// 最后报出来的是一句 `unexpected response version`（`transport/vless/conn.go:131`）。
 func mihomoTransport(network string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(network)) {
 	case "", "tcp":
 		return "", nil // 默认传输，不写字段
-	case "ws", "grpc", "httpupgrade", "xhttp":
+	case "ws", "grpc", "xhttp":
 		return strings.ToLower(strings.TrimSpace(network)), nil
+	case "httpupgrade":
+		return "ws", nil // httpupgrade = ws + V2rayHttpUpgrade，见上面那段
 	case "http", "h2":
 		return "http", nil
 	default:
@@ -496,12 +527,15 @@ func vmessOption(n config.Node) (outbound.VmessOption, error) {
 		return opt, err
 	}
 	opt = outbound.VmessOption{
-		Name:       n.Name,
-		Server:     n.Server,
-		Port:       n.Port,
-		UUID:       n.UUID,
-		AlterID:    n.AlterID,
-		Cipher:     n.Security,
+		Name:    n.Name,
+		Server:  n.Server,
+		Port:    n.Port,
+		UUID:    n.UUID,
+		AlterID: n.AlterID,
+		// 【空值兜底成 auto】mihomo 收到空字符串会直接报 `unsupported security type:` ——
+		// 一句看不出是哪个字段的错。界面上默认是 auto、分享链接解码时也兜了 auto，
+		// 只有**手写配置**会踩到（036 轮的探针就撞上了）。
+		Cipher:     vmessSecurity(n.Security),
 		UDP:        true,
 		Network:    network,
 		TLS:        n.TLS.Enabled,

@@ -89,6 +89,7 @@
 | 033 | `feat(hysteria2): 端口跳跃（Ports / HopInterval）全链路打通` | 2026-10-16 | 对齐 mihomo /主流客户端：配置两格 + 写法校验（28 段上限、区间方向）+ 引擎透传 + 分享链接 `mport`/`hop-interval` 往返（`:` 归一成 `-`）+ 前端表单；顺带把 mihomo.go 里 DialUDP 那段过时注释改对 | [详情](#033) |
 | 034 | `perf(engine): UDP 通道改成每目标常驻读协程 + 修 3 个真 bug` | 2026-10-16 | 旧实现单协程轮询（延迟 ∝ 目标序号、前面饿死后面、每目标一个 parked 协程）；改成每目标一个读协程 + fan-in 队列 + 空闲回收，并修掉"已取消的 ctx / 持锁建连 / 每包 DNS"三个 bug。8 条假 PacketConn 测试 + `-race` + **变异验证**，真实节点实测多目标会话 | [详情](#034) |
 | 035 | `test(tools): UDP 端到端探针收进 cmd/udpprobe` | 2026-10-16 | 034 用来做真机验证的探针不能只活在 .cache 里（下一轮测服务器还要用）；顺带把 MIHOMO_MIGRATION 里"WireGuard 经 mihomo 的 UDP"标为不适用（那条路径不存在） | [详情](#035) |
+| 036 | `fix(engine): httpupgrade 映射错（真机抓包抓出来的）+ vmess 空 security 兜底` | 2026-10-16 | 用两台真实服务器跑通全矩阵时，只有 vless+httpupgrade 失败；抓包发现我们把 `httpupgrade` 直接塞进 mihomo 的 Network（它没有这一档）→ 裸协议头发出去。正确表达是 `ws` + `V2rayHttpUpgrade`。另修 vmess 空 `security` 会报 `unsupported security type` | [详情](#036) |
 
 > **索引缺口（023a–023f，028 已补齐）**：023 到 024 之间原本积了 **99 个提交没有登记**
 > （早期误记为 90 —— 那次用日期过滤数的，漏掉了 023 当天之后的 10 条）。现在按主题合并成
@@ -2918,3 +2919,90 @@ hysteria2(QUIC) 的 UDP、WireGuard 经 mihomo 的 UDP、多目标**并发压力
 - 对着一个不存在的端口跑：`UDP FAIL: 连 SOCKS5 控制连接失败: … actively refused`，退出码 1；
 - 不带参数跑：打印用法，退出码 2；
 - （真正的 UDP 功能验证在 034 那一条里：真实节点、单目标与同会话多目标都拿到了应答。）
+
+---
+
+## 036
+
+**commit**: `fix(engine): httpupgrade 映射错（真机抓包抓出来的）+ vmess 空 security 兜底`
+
+用户给了两台按小时计费的临时服务器（都是中国电信出口、全端口放开、无 root 但 sudo 可用），
+要求我自己配好并测试。这一轮把**逐传输的真实链路矩阵**跑完了，也抓出了一个真 bug。
+
+### 服务器怎么用的
+
+- 两台都装 **sing-box 1.14.3**（systemd 托管；GitHub 直连在其中一台上不通，走 `ghfast.top` 镜像）；
+- **前置/传输机**：vless 的 tcp(10005) / ws(10001) / grpc(10002) / h2+TLS(10003) /
+  httpupgrade(10004) + vmess 的 ws(10006) / grpc(10007)；
+- **UDP 机**：hysteria2(UDP 443) / shadowsocks(TCP+UDP 8388) / trojan(8443) / vmess(8080)，
+  外加 **iptables REDIRECT 把 UDP 20000-20099 整段转到 443**（端口跳跃的服务端侧要件）；
+- 客户端节点**用我们自己的 `import` + 分享链接**创建（顺带又验了一遍链接解析），
+  全程用 `PICOHOP_DATA_DIR` 指到隔离目录，**没碰过真实的 `data/config.json`**。
+- 配方落进了 [`TEST_SERVER_RECIPE.md`](TEST_SERVER_RECIPE.md)（037），下一个人照着就能复现。
+
+### 矩阵结果（12 个节点，TCP 与 UDP 各 12 项）
+
+TCP（经代理取出口 IP）与 UDP（经代理做 DNS 往返、同会话两个目标）**全部通过**：
+
+| 节点 | TCP | UDP |
+|---|---|---|
+| vless+tcp / +ws / +grpc / +h2(TLS) / +httpupgrade | ✅ | ✅ |
+| vmess+ws / +grpc | ✅ | ✅ |
+| hysteria2（含端口跳跃） | ✅ | ✅ |
+| shadowsocks / trojan / vmess | ✅ | ✅ |
+| **链式**（前置=传输机的 vless+tcp → 出口=UDP 机的 ss） | ✅ | ✅ |
+
+### 抓出来的 bug：`httpupgrade` 的映射写错了
+
+**症状**：只有 vless+httpupgrade 这一个节点失败，而且报的是一句
+`读取上游应答失败: unexpected response version`。
+
+**定位过程**（值得记，因为它一点也不指向"传输映射错了"）：
+1. 这个字符串出自 **mihomo 的 VLESS 传输层**（`transport/vless/conn.go:131`），
+   也就是"客户端在等 VLESS 的响应头，却读到了别的东西"；
+2. 在服务器上抓包，看到客户端**根本没发 HTTP 升级请求**，直接发了裸 VLESS 头：
+   `....""33DDUUUUUU...P.` + `ip-api.comGET /json HTTP/1.1`；服务器回 `400 Bad Request`，
+   客户端又把 400 的响应体当成 VLESS 响应头去读 —— 于是报出那句看不懂的错；
+3. 根因：mihomo 的 vless/vmess/trojan 网络分支里**没有 `httpupgrade` 这一档**
+   （只有 tcp/ws/http/h2/grpc/xhttp）。httpupgrade 是用
+   **`Network: "ws"` + `WSOpts.V2rayHttpUpgrade = true`** 表达的
+   （`transport/vmess/websocket.go:414/471` 按这个布尔决定走标准 WebSocket 还是升级请求）。
+   我们把这个网络名原样透传了，mihomo 就当成"没有传输"处理。
+
+**修法**：`mihomoTransport` 里把 `httpupgrade` 翻成 `ws`（与 `h2 → http` 同一类翻译，
+注释里写清了为什么不能直接透传）。修完**同一个节点在真机上立刻通过**（TCP + UDP）。
+
+**为什么以前没发现 —— 老测试把 bug 当成了期望值**：
+`TestVlessOptionMapping/httpupgrade` 那条断言写的是 `o.Network != "httpupgrade"`，
+也就是测试与实现来自**同一个错误假设**，所以它永远抓不到这个问题。现在断言改成 `ws`，
+并在注释里注明"这条以前记的是 bug"。
+
+### 顺带修：vmess 的 `security` 为空
+
+探查脚本撞出来的：`security` 为空时 mihomo 直接报 `unsupported security type:`——
+一句看不出是哪个字段的错。界面默认是 auto、分享链接解码端也兜了 auto，
+只有**手写配置**会踩到。改成在映射处兜 `auto`，并补了回归测试。
+
+### 另外两条真机证据
+
+1. **端口跳跃**：客户端设 `mport=20000-20099&hop-interval=5`，在服务器上抓包，
+   **同一条 QUIC 会话的同一个源端口（10128）先后打往 11 个不同目的端口**
+   （20007/20013/20014/20015/20024/20026/20030/20037/20058/20094/20097）——
+   既有"首次拨号随机选端口"，也有"建连后按间隔换端口"。
+2. **链式的网络层证据**：同时跑"直连出口机"与"经前置到出口机"两条下载，
+   在出口机上看到 ss(8388) 的两个对端分别是 `27.129.153.239`（本机家宽）
+   与 `119.45.225.253`（**前置机**）；前置机上 10005 的对端是本机。
+   数据路径 = 本机 → 前置机 → 出口机 → 目标，确认无误。
+3. **hy2 证书的两条认证路都对**：`allowInsecure` 与 `pinSHA256` 都能连通；
+   把 pin 故意写错必须失败 —— 实测报
+   `CRYPTO_ERROR 0x12a (local): certificate fingerprints do not match`（走的是 502）。
+
+### 验证
+
+- 12 × TCP + 12 × UDP 全绿；修 httpupgrade 前后各跑一次（前者只有那一个红）；
+- 全部包 `go test ./...` 通过（含两条新回归测试）；
+- 真实 `data/config.json` 全程未被触碰（sha256 与 mtime 不变）。
+
+### 仍未覆盖
+
+多目标并发压力与长稳内存（这两项要专门压测，与功能正确性无关）。

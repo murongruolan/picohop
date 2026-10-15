@@ -748,7 +748,7 @@ picohop-cli.exe test --kind real --node probe-node
 | ② 引依赖 + 探针验证编译与体积增量 | ✅ | 第 2 节：`mihomo v1.19.32`、无依赖冲突、净增量 **+7.36 MB**（实测） |
 | ③ 新写 mihomo 适配层（`proxy.Upstream`，每节点一实例、不经 hub/inbound） | ✅ | `internal/engine/mihomo.go` + `mihomo_udp.go`；`Start/Stop/Dial/DialUDP/Describe/DialTimeout/SupportsUDP` 全实现 |
 | ④ 选项与传输映射（tcp/ws/grpc/http/h2/httpupgrade/xhttp + TLS/Reality/uTLS） | ✅ | 五种协议 + 六种传输；**17+ 个子测试**锁死映射 |
-| ④′ **每个传输至少一条真实节点连通验证** | ⚠️ **部分** | **3 条**：vless+xhttp、vmess+tcp、vmess+UDP(DNS)；其余**无真实节点可验**（见下） |
+| ④′ **每个传输至少一条真实节点连通验证** | ✅ | **036 轮全覆盖**：vless 的 tcp/ws/grpc/h2/httpupgrade、vmess 的 ws/grpc、hysteria2/ss/trojan，每种都验了 TCP 出口 IP + UDP；链式与端口跳跃另验（见 COMMIT_HISTORY 036） |
 | ⑤ 切换默认引擎并保留 sing-box 回退开关 | ✅ | 工厂注册 + 模式选择 + **失败回退**；`Settings.EngineMode`；界面开关；**端到端 + 回退路径均已实测**；默认仍是 sing-box（未翻） |
 | ⑥ 清理依赖与构建标记 / 更新文档 / 重测实际打包体积 | ⚠️ **部分** | 文档 ✅；**实测体积 58.46 MB** ✅；**"清理依赖与构建标记"与 ⑤ 的"保留回退"互斥**（见下） |
 
@@ -785,7 +785,8 @@ picohop-cli.exe test --kind real --node probe-node
 
 ### 遗留清单（交给后续的人）
 
-  - `ws/grpc/http/h2/httpupgrade` + `trojan/shadowsocks/hysteria2` 的真实链路验证；
+  - ~~`ws/grpc/http/h2/httpupgrade` + `trojan/shadowsocks/hysteria2` 的真实链路验证~~ →
+    **036 轮已全部覆盖**（含 UDP 与链式）；顺带抓出并修掉了 `httpupgrade` 的映射 bug；
   - ~~UDP 的 `ReceiveFromUDP` 目前是**轮询版**（活跃目标会拖慢其它目标）~~ →
     **034 已升级**：每目标一个常驻读协程 + fan-in 队列，空闲 60 秒回收；
   - **`node.Security` 为空时构造 vmess 出站会失败**（mihomo 报 `unsupported security type:`）。
@@ -793,7 +794,8 @@ picohop-cli.exe test --kind real --node probe-node
   - ~~界面开关**改完要重启程序**才生效（tooltip 已写明）~~ → 开关本身已删除（第 ⑱ 轮）；
   - ~~翻默认时 `TestEngineModeJSON` 的断言要跟着改（第 10-B 节写明了怎么改）~~ →
     `Settings.EngineMode` 与那条测试都已删除；
-  - 未测：hysteria2(QUIC) 的 UDP、WireGuard 经 mihomo 的 UDP、多目标并发压力、长稳内存。
+  - ~~hysteria2(QUIC) 的 UDP~~ → **036 轮已测**（hy2 的 TCP 与 UDP 都通，含端口跳跃与证书 pin）；
+  - 未测：多目标并发压力、长稳内存（要专门压测，与功能正确性无关）。
 
 ---
 

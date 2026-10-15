@@ -237,7 +237,7 @@ func TestVlessOptionMapping(t *testing.T) {
 		}
 	})
 
-	t.Run("httpupgrade 复用 WSOpts", func(t *testing.T) {
+	t.Run("httpupgrade 复用 WSOpts（网络名必须是 ws）", func(t *testing.T) {
 		n := base()
 		n.Transport.Network = "httpupgrade"
 		n.Transport.Path = "/u"
@@ -246,8 +246,12 @@ func TestVlessOptionMapping(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if o.Network != "httpupgrade" || o.WSOpts.Path != "/u" || !o.WSOpts.V2rayHttpUpgrade {
-			t.Fatalf("httpupgrade 映射错误：net=%q path=%q flag=%v",
+		// 【这条断言以前写的是 "httpupgrade" —— 把 bug 当成了期望值】
+		// mihomo 的网络分支里没有这一档，写它等于"没有传输"：不发升级请求、直接把裸协议头
+		// 发出去（036 轮在真服务器上抓包抓到的就是这个）。正确表达是 ws + V2rayHttpUpgrade。
+		// 当初测试与实现来自同一个错误假设，所以它**从来没抓到过**这个问题。
+		if o.Network != "ws" || o.WSOpts.Path != "/u" || !o.WSOpts.V2rayHttpUpgrade {
+			t.Fatalf("httpupgrade 映射错误：net=%q path=%q flag=%v（网络名必须是 ws）",
 				o.Network, o.WSOpts.Path, o.WSOpts.V2rayHttpUpgrade)
 		}
 	})
@@ -315,6 +319,79 @@ func TestVlessOptionMapping(t *testing.T) {
 			t.Fatal("未知传输应报错")
 		}
 	})
+}
+
+// TestHTTPUpgradeMapsToWSWithFlag 是 036 轮真机测试抓出来的 bug 的回归测试。
+//
+// 【为什么值得单独一条】httpupgrade 在 mihomo 里不是"网络名"，而是"ws + 一个布尔"。
+// 我们以前把 `Network` 直接写成了 `httpupgrade`，于是 mihomo 当成无传输处理、
+// 直接把裸协议头发出去（真机抓包看到了），最后报的是一句
+// `unexpected response version` —— 从错误信息完全看不出是传输映射错了。
+//
+// 这条测试同时钉住三件事：网络名必须是 ws、那个布尔必须为真、路径要传下去。
+func TestHTTPUpgradeMapsToWSWithFlag(t *testing.T) {
+	const uuid = "11111111-2222-3333-4444-555555555555"
+	n := config.Node{
+		ID: "hup", Name: "hup", Protocol: config.ProtocolVLESS,
+		Server: "1.2.3.4", Port: 443, UUID: uuid,
+		Transport: config.TransportOptions{Network: "httpupgrade", Path: "/hup", Host: "h.example.com"},
+	}
+
+	vo, err := vlessOption(n)
+	if err != nil {
+		t.Fatalf("vless+httpupgrade 选项映射失败：%v", err)
+	}
+	if vo.Network != "ws" {
+		t.Fatalf("httpupgrade 的网络名必须是 ws（mihomo 没有 httpupgrade 这一档），实际 %q", vo.Network)
+	}
+	if !vo.WSOpts.V2rayHttpUpgrade {
+		t.Fatal("httpupgrade 必须打开 WSOpts.V2rayHttpUpgrade，否则 mihomo 会按标准 WebSocket 握手")
+	}
+	if vo.WSOpts.Path != "/hup" {
+		t.Fatalf("路径没传下去：%q", vo.WSOpts.Path)
+	}
+
+	// vmess 走同一个翻译函数，也要钉住
+	mn := n
+	mn.Protocol = config.ProtocolVMess
+	mn.Security = "auto"
+	mo, err := vmessOption(mn)
+	if err != nil {
+		t.Fatalf("vmess+httpupgrade 选项映射失败：%v", err)
+	}
+	if mo.Network != "ws" || !mo.WSOpts.V2rayHttpUpgrade {
+		t.Fatalf("vmess+httpupgrade 同样必须是 ws + 标志，实际 network=%q flag=%v",
+			mo.Network, mo.WSOpts.V2rayHttpUpgrade)
+	}
+
+	// 最后真的构造一遍：映射对了但不符 mihomo 的约束也会在这里炸出来
+	for _, node := range []config.Node{n, mn} {
+		if _, err := buildMihomoOutbound(node, nil); err != nil {
+			t.Fatalf("%s+httpupgrade 出站应当能构造出来，实际 %v", node.Protocol, err)
+		}
+	}
+}
+
+// TestVmessSecurityFallsBackToAuto vmess 的加密方式为空时要兜成 auto。
+//
+// 【为什么】空值会让 mihomo 构造出站时报 `unsupported security type:` —— 一句看不出
+// 是哪个字段的错。界面与分享链接解码端都兜了 auto，只有手写配置会踩到（036 轮的探针撞上了）。
+func TestVmessSecurityFallsBackToAuto(t *testing.T) {
+	n := config.Node{
+		ID: "v", Name: "v", Protocol: config.ProtocolVMess,
+		Server: "1.2.3.4", Port: 443, UUID: "11111111-2222-3333-4444-555555555555",
+		// Security 故意留空
+	}
+	o, err := vmessOption(n)
+	if err != nil {
+		t.Fatalf("选项映射失败：%v", err)
+	}
+	if o.Cipher != "auto" {
+		t.Fatalf("空的加密方式应当兜成 auto，实际 %q", o.Cipher)
+	}
+	if _, err := buildMihomoOutbound(n, nil); err != nil {
+		t.Fatalf("Security 为空时也应当能构造出站，实际 %v", err)
+	}
 }
 
 // TestMihomoSupportsIsHonest 守住那条规则："只声明已经实现的东西"。

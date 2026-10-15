@@ -421,8 +421,16 @@ v3 已经能开多个窗口了，但圈选那一刻需要的是"**全屏置顶�
 - **托盘图标在 Windows 11 上默认落在折叠区**：新注册的托盘图标会被系统放进
   `^` 折叠区，需要用户自己拖出来固定。功能不受影响，但"怎么没看到图标"多半是这个原因。
 - **无障碍未适配**：界面是自用的桌面工具，没有做完整的键盘导航与读屏支持。
-- **端到端验证的边界**：本机对"真实 Reality / Hysteria2 服务器"只验证到
-  「出站能构造、拨号能发得出去、前置那一跳确实经前置」这一层；
-  真链式端到端是用**自研 SOCKS5 出口**打通的（前置 203.0.113.10 →
-  住宅 203.0.113.11 / 203.0.113.12）。
-  mihomo 侧的逐传输真实验证与端到端证据见 [`MIHOMO_MIGRATION.md`](MIHOMO_MIGRATION.md) 第 ⑰ 轮。
+- **端到端验证的边界**：这条到 036 轮（2026-10-16，用两台按小时计费的临时真实服务器）
+  **已经跑通整个矩阵**：vless 的 tcp / ws / grpc / h2 / httpupgrade、vmess 的 ws / grpc、
+  hysteria2 / shadowsocks / trojan —— 每一种都验了 **TCP 出口 IP** 与 **UDP（DNS 往返）**；
+  链式（前置 → 出口两台）也在**网络层**确认过：出口机上看到的对端是前置机的 IP，
+  而不是本机（`27.129.153.239` vs `119.45.225.253`）。
+  hysteria2 另验了自签证书的两条认证路（`allowInsecure` 与 `pinSHA256`，后者用错 pin
+  必须失败：`certificate fingerprints do not match`）与**端口跳跃**
+  （同一条会话打过 11 个不同目的端口）。
+  服务端配方、DNAT、客户端链接与矩阵脚本见
+  [`TEST_SERVER_RECIPE.md`](TEST_SERVER_RECIPE.md)。
+  仍未覆盖：多目标并发压力、长稳内存；`hysteria2(QUIC)` 的 UDP 已覆盖。
+  更早只验到"出站能构造、拨号发得出去"那一层，见
+  [`MIHOMO_MIGRATION.md`](MIHOMO_MIGRATION.md) 第 ⑰ 轮。
