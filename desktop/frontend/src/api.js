@@ -119,7 +119,7 @@ export const api = {
   getConnections: () => call('GetConnections'),
   // 全局节点（整个列表只能有一个）：后端第 1 步已经实现
   setGlobalNode: (id) => call('SetGlobalNode', id),
-  // 开/关"全局代理模式"（=改 Windows 系统代理）。后端内核已在 21dd7ef 就位。
+  // 开/关"全局代理模式"（=改 Windows 系统代理）。后端内核已在 02a56b1 就位。
   setSystemProxyMode: (on) => call('SetSystemProxyMode', on),
   closeAllConnections: () => call('CloseAllConnections'),
   resetSettings: () => call('ResetSettings'),
