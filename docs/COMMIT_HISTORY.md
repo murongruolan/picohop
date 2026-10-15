@@ -86,6 +86,7 @@
 | 030 | `docs(license): 补齐第三方声明（THIRD_PARTY_NOTICES）+ 许可说明 + 生成脚本` | 2026-10-13 | 026 只加了 LICENSE，但 MIT/BSD/Apache/ISC 也要求"随分发物提供声明"；审计 100 个链入模块后生成 147 KB 声明（表格 + 许可全文 + 2 份 NOTICE + 两处如实说明）；生成器进 scripts/ 且幂等 | [详情](#030) |
 | 031 | `fix(scripts): 生成器不再翻动 go.sum，并修掉 NOTICE 顺序的非确定性`
 | 032 | `feat(cli): -h / -help 真正打印用法（以前会真的去执行子命令）` | 2026-10-16 | CLI 把 `-h` 当普通参数：`run -h` 会真的启动节点并写配置（历史上污染过一次真实配置）；顶层 `-h` 被 splitCommand 当成子命令参数而落到 `ls`。根因是九处 `_ = fs.Parse(args)` 丢掉 `flag.ErrHelp`；顺带把坏参数的退出码从 0 改成 2 | [详情](#032) | | 2026-10-15 | 030 的暂存清单里混进了 go.sum：`go list -m all` 在可写模式下补了 219 行图哈希，而 `go mod tidy -diff` 证明全是噪音 → 退回 + 改用 `go list -deps` + 锁 `-mod=readonly`；另修 NOTICE 哈希表顺序导致的重生成差异 | [详情](#031) |
+| 033 | `feat(hysteria2): 端口跳跃（Ports / HopInterval）全链路打通` | 2026-10-16 | 对齐 mihomo /主流客户端：配置两格 + 写法校验（28 段上限、区间方向）+ 引擎透传 + 分享链接 `mport`/`hop-interval` 往返（`:` 归一成 `-`）+ 前端表单；顺带把 mihomo.go 里 DialUDP 那段过时注释改对 | [详情](#033) |
 
 > **索引缺口（023a–023f，028 已补齐）**：023 到 024 之间原本积了 **99 个提交没有登记**
 > （早期误记为 90 —— 那次用日期过滤数的，漏掉了 023 当天之后的 10 条）。现在按主题合并成
@@ -2714,3 +2715,70 @@ NOTICE 存在 PowerShell 哈希表里，而**哈希表的键顺序不稳定**。
 第一次测 `ls -nope` 的退出码得到 0，差点以为没修好。实际是**测量方法错了**：
 `... | Select-Object -First 2` 会提前掐断管道，`$LASTEXITCODE` 就不再是子进程的真实退出码。
 改成 `| Out-String` 整段读完再取行，`exit=2` 正确。这个坑本项目文档里早就记过（`check.ps1` 注释）。
+
+---
+
+## 033
+
+**commit**: `feat(hysteria2): 端口跳跃（Ports / HopInterval）全链路打通`
+
+**起因**：用户问"hysteria2 的端口跳跃，主流客户端或主流客户端支持了吗"，查清之后要求把这个功能做出来。
+
+### 先把三家的支持程度查实（这是决定怎么做的依据）
+
+| | 支持程度 | 依据 |
+|---|---|---|
+| **主流客户端** | **完整支持** | `ProtocolExtraItem.Ports` / `HopInterval`（UI 有 `txtPorts7` / `txtHopInt7`），默认间隔 30 秒；分享链接字段是 `mport`，**导出时把 `:` 换成 `-`** |
+| **主流客户端** | **只透传一半** | 类型声明里有 `ports?: string` 与 `'hop-interval'?: number`，但 `hop-interval` **全仓只有类型声明、没有任何代码赋值**（实际吃 mihomo 的默认 30 秒）；`mport` 原样存进 `ports`，**不做 `:`→`-` 归一** |
+| **mihomo** | **完整支持** | `Hysteria2Option.Ports string` + `HopInterval string`：`ports` 是区间列表（`,` 与 `/` 等价、`-` 表区间、**最多 28 段**、会被展开成 `[]uint16`）；`hop-interval` 只能写**一个**区间（`15` 或 `5-10`，每轮在区间内随机取值），空/`0`→30 秒、`<5` 钳到 5 |
+
+**真正选端口、按间隔切换的既不在主流客户端也不在 mihomo，而在依赖 `sing-quic/hysteria2`**：
+首次拨号从 `serverPorts` 里随机挑一个，建连后 `hopLoop` 每个间隔 `SetRemoteAddr` 换一个
+（`sing-quic@…/hysteria2/client.go:171-203, 299-302`）。mihomo 只做"字符串 → 选项"的转换。
+
+### 做了什么
+
+1. **配置模型**：`Node.Ports`（端口集合）+ `Node.HopInterval`（间隔），JSON 名 `ports` / `hopInterval`，
+   写法与 mihomo、主流客户端**逐字对齐**（不做"我们的方言"）。
+2. **配置校验**（`internal/config/config.go`）：段数 ≤28（mihomo 的硬限制）、每段是
+   `端口` 或 `起-止`、都在 1-65535 内、起止不许写反；间隔只允许一个值或一个区间、不许有逗号。
+   **提前拦住的理由**：这些规则原本只在"构造出站"那一步才会由 mihomo 以内部报错冒出来，
+   界面上指不到是哪个字段。
+3. **引擎**：`hysteria2Option` 把两个字符串原样透传（不在这一层重复校验，免得两处规则漂移）。
+   注释里写明 `Port` 仍然必填（mihomo 有 `Port == 0 && len(serverPorts) == 0 → invalid port`，
+   而且 `Base.Addr` 是拿它拼的）。
+4. **分享链接**：导出写 `mport` 与 `hop-interval`；导入解析它们。`:` 一律归一成 `-`
+   （**mihomo 只按 `-` 识别区间**，主流客户端导出时也这么做）。解析刻意只在 `decodeHysteria2`
+   里做，不放进共用的 `applyParams` —— 免得别的协议链接里的同名参数跑进节点。
+5. **前端**：节点对话框 Hysteria2 区加「端口跳跃」「跳跃间隔」两格，说明放 tooltip
+   （`form` 是整对象往返，所以只需在 `blankForm()` 里补两个默认值）。
+
+### 顺带查到的两个上游 bug（不是我们的问题，但值得记）
+
+1. **主流客户端生成 sing-box 配置时把 `parts[0]` 解析了两次**（第二个本该是 `parts[1]`），
+   于是 `hop_interval` 的**区间写法被静默忽略**、永远等于下界
+   （`同类实现/Services/CoreConfig/Singbox/SingboxOutboundService.cs`）。
+2. **主流客户端不做 `:`→`-` 归一**，而 mihomo 只认 `-`：带 `:` 的 `mport`
+   （如 `mport=1000%3A2000`）到了 mihomo 会解析失败。
+
+### 测试
+
+- `internal/share/link_test.go`：样本链接加 `mport` + `hop-interval`，`sameNode` 的字段清单
+  跟着补上（**不然往返测试根本不会比这两个字段**）；新增一条专门测 `:` 归一；
+  "全字段"往返用例也带上端口跳跃（走"从节点生成链接"那条路）。
+- `internal/engine/mihomo_test.go`：新增一条"透传 + **真的能构造出站**"——
+  `buildMihomoOutbound` 会把这两个字符串交给 mihomo 自己的解析器，写法不对当场报错，
+  所以这条比只比对字段值强。
+- `internal/config/config_test.go`：5 条反例（段数超限、起止写反、端口越界、间隔带逗号、
+  间隔起止写反）+ 1 条正例表（真实客户端导出的形态 `1000-2000,3000`、`200/204/401-429/501-503`
+  都要放行，防住"校验写得太严把正常配置拦下来"）。
+
+### 验证边界（诚实说明）
+
+本机**没有 hysteria2 节点**，所以端口跳跃的真链路（真的在端口区间里跳）**要等用户的测试服务器**。
+目前验证到的是：写法校验、分享链接往返、以及"这两个字段交给 mihomo 后能构造出站"。
+
+### 顺带修的一处过时注释
+
+`internal/engine/mihomo.go` 的 `DialUDP` 注释还写着"【未接入】…这里明确报错，不假装成功"，
+而代码早就接上了（第 ⑪ 轮）。注释改成如实描述"这里只建空壳、真正建连延后到第一次发送"。

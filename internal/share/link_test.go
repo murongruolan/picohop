@@ -47,7 +47,8 @@ const (
 
 	sampleHysteria2URL = "hysteria2://letmein%40hy2@hy2.example.com:443" +
 		"?obfs=salamander&obfs-password=obfspwd&sni=hy2.example.com&insecure=1" +
-		"&up=120&down=380&pinSHA256=aB3%2B%2FxY%3Dz&alpn=h3#HY2%20%E7%A4%BA%E4%BE%8B"
+		"&up=120&down=380&pinSHA256=aB3%2B%2FxY%3Dz&alpn=h3" +
+		"&mport=1000-2000,3000&hop-interval=5-10#HY2%20%E7%A4%BA%E4%BE%8B"
 
 	sampleHy2AliasURL = "hy2://pwd123@h2.example.com:8443#%E7%9F%AD%E5%88%AB%E5%90%8D"
 )
@@ -115,6 +116,8 @@ func sameNode(t *testing.T, got, want config.Node) {
 		{"Obfs", got.Obfs, want.Obfs},
 		{"ObfsPassword", got.ObfsPassword, want.ObfsPassword},
 		{"PinSHA256", got.PinSHA256, want.PinSHA256},
+		{"Ports", got.Ports, want.Ports},
+		{"HopInterval", got.HopInterval, want.HopInterval},
 	}
 	for _, f := range fields {
 		if !reflect.DeepEqual(f.got, f.want) {
@@ -250,6 +253,7 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 				UpMbps: 120, DownMbps: 380,
 				Obfs: "salamander", ObfsPassword: "obfspwd",
 				PinSHA256: "aB3+/xY=z9Kq",
+				Ports:     "1000-2000,3000", HopInterval: "5-10",
 				TLS: config.TLSOptions{
 					Enabled: true, ServerName: "hy2.example.com", AllowInsecure: true,
 					ALPN: []string{"h3"}, Fingerprint: "chrome",
@@ -416,6 +420,7 @@ func TestDecodeRealSamples(t *testing.T) {
 			UpMbps: 120, DownMbps: 380,
 			Obfs: "salamander", ObfsPassword: "obfspwd",
 			PinSHA256: "aB3+/xY=z",
+			Ports:     "1000-2000,3000", HopInterval: "5-10",
 			TLS: config.TLSOptions{
 				Enabled: true, ServerName: "hy2.example.com",
 				ALPN: []string{"h3"}, AllowInsecure: true,
@@ -435,6 +440,19 @@ func TestDecodeRealSamples(t *testing.T) {
 		// hysteria2 一定跑在 QUIC + TLS 上，链接里不写 security 也必须启用 TLS。
 		if !n.TLS.Enabled {
 			t.Error("hysteria2 必须启用 TLS")
+		}
+	})
+
+	t.Run("hy2 端口跳跃：':' 分隔的区间要归一成 '-'", func(t *testing.T) {
+		// 【为什么必须归一】有的客户端把端口区间写成 "1000:2000"，而
+		// **mihomo 只按 '-' 识别区间**；主流客户端在导出时也做了同样的替换
+		// （同类实现）。不归一的话，这种链接导进来
+		// 不会当场报错，而是等到"构造出站"那一步才炸，报的还是 mihomo 内部的一句解析错误。
+		for _, raw := range []string{"1000%3A2000", "1000-2000"} {
+			n := mustDecode(t, "hysteria2://pw@hy2.example.com:443?mport="+raw+"#x")
+			if n.Ports != "1000-2000" {
+				t.Fatalf("mport=%s 应当归一成 1000-2000，实际 %q", raw, n.Ports)
+			}
 		}
 	})
 

@@ -192,6 +192,17 @@ type Node struct {
 	Obfs         string `json:"obfs,omitempty"` // "" 或 "salamander"
 	ObfsPassword string `json:"obfsPassword,omitempty"`
 	PinSHA256    string `json:"pinSHA256,omitempty"`
+	// Ports 是**端口跳跃**用的端口集合，写法与 mihomo /主流客户端完全一致：
+	// "1000-2000,3000"（逗号与 / 等价、- 表区间、最多 28 段）。
+	//
+	// 【语义】填了它之后，实际连的端口是**从这个集合里随机挑的**，上面那个 Port
+	// 只剩"标识 + 建连校验"的作用（mihomo 与 sing-box 都是这个语义）。
+	// 留空 = 只用 Port 那一个端口。
+	Ports string `json:"ports,omitempty"`
+	// HopInterval 是端口跳跃的切换间隔（秒），写法同样对齐 mihomo：
+	// "15"（固定）或 "5-10"（每轮在该区间内随机取值，注意**只能一个区间、不能有逗号**）。
+	// 留空 = 用 mihomo 的默认值 30 秒（低于 5 秒会被它钳到 5）。
+	HopInterval string `json:"hopInterval,omitempty"`
 
 	// ---- 传输层 / TLS（vmess / vless / trojan / hysteria2） ----
 	Transport TransportOptions `json:"transport"`

@@ -387,6 +387,12 @@ func (c *Config) Validate() []Issue {
 			if strings.TrimSpace(n.Obfs) != "" && n.ObfsPassword == "" {
 				add(scope, "obfsPassword", "启用了混淆就必须填写混淆密码")
 			}
+			if err := validatePortRanges(n.Ports); err != nil {
+				add(scope, "ports", "端口跳跃写法有误：%v", err)
+			}
+			if err := validateHopInterval(n.HopInterval); err != nil {
+				add(scope, "hopInterval", "跳跃间隔写法有误：%v", err)
+			}
 		}
 	}
 
@@ -1058,4 +1064,100 @@ func NewID() string {
 // SortNodesByCreated 按创建时间排序（仅供测试与导出使用）。
 func SortNodesByCreated(list []Node) {
 	sort.SliceStable(list, func(i, j int) bool { return list[i].CreatedAt.Before(list[j].CreatedAt) })
+}
+
+// maxPortRangeSegments 是端口跳跃集合的段数上限。
+//
+// 【为什么是 28】这是 mihomo 自己的限制：它解析 "1000-2000,3000" 这类写法时
+// （`common/utils/ranges.go`），超过 28 段直接报 "maximum support 28 ranges"。
+// 我们提前拦住，让错误出现在"配置校验"这一步（界面上能直接指到那一格），
+// 而不是延迟到构造出站时以一句 mihomo 内部报错冒出来。
+const maxPortRangeSegments = 28
+
+// validatePortRanges 校验端口跳跃的端口集合写法（例如 "1000-2000,3000"）。
+//
+// 空串合法 —— 表示不做端口跳跃。逗号与 / 等价（mihomo 会把 ',' 当成 '/'）。
+func validatePortRanges(s string) error {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	segs := strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == '/' })
+	if len(segs) == 0 {
+		return errors.New("没有解析出任何端口段")
+	}
+	if len(segs) > maxPortRangeSegments {
+		return fmt.Errorf("段数 %d 超过上限 %d", len(segs), maxPortRangeSegments)
+	}
+	for _, seg := range segs {
+		lo, hi, ok := cutRange(seg)
+		if !ok {
+			return fmt.Errorf("%q 不是合法的端口或区间", seg)
+		}
+		start, err := strconv.Atoi(lo)
+		if err != nil || start < 1 || start > 65535 {
+			return fmt.Errorf("%q 的起始端口不是 1-65535 之间的整数", seg)
+		}
+		if hi == "" {
+			continue
+		}
+		end, err := strconv.Atoi(hi)
+		if err != nil || end < 1 || end > 65535 {
+			return fmt.Errorf("%q 的结束端口不是 1-65535 之间的整数", seg)
+		}
+		if end < start {
+			return fmt.Errorf("%q 的起止写反了（应当小在前）", seg)
+		}
+	}
+	return nil
+}
+
+// cutRange 把 "1000" / "1000-2000" 切成起止两段（单端口时第二段为空）。
+func cutRange(seg string) (lo, hi string, ok bool) {
+	head, tail, found := strings.Cut(strings.TrimSpace(seg), "-")
+	head = strings.TrimSpace(head)
+	if head == "" {
+		return "", "", false
+	}
+	if !found {
+		return head, "", true
+	}
+	tail = strings.TrimSpace(tail)
+	if tail == "" {
+		return "", "", false
+	}
+	return head, tail, true
+}
+
+// validateHopInterval 校验端口跳跃间隔（"15" 或 "5-10"）。
+//
+// 【为什么不允许逗号】mihomo 只按 '-' 把它切成 1~2 段（`common/utils/range.go`），
+// 写成 "5,10" 会被它当成一个数去解析而报错；这里提前给出人话。
+func validateHopInterval(s string) error {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	if strings.ContainsAny(s, ",/") {
+		return errors.New("只能写一个值或一个区间（例如 15 或 5-10），不能有逗号")
+	}
+	lo, hi, ok := cutRange(s)
+	if !ok {
+		return fmt.Errorf("%q 不是合法的秒数或区间", s)
+	}
+	start, err := strconv.Atoi(lo)
+	if err != nil || start < 1 {
+		return fmt.Errorf("%q 不是正整数秒", s)
+	}
+	if hi == "" {
+		return nil
+	}
+	end, err := strconv.Atoi(hi)
+	if err != nil || end < 1 {
+		return fmt.Errorf("%q 不是正整数秒区间", s)
+	}
+	if end < start {
+		return fmt.Errorf("%q 的起止写反了（应当小在前）", s)
+	}
+	return nil
 }

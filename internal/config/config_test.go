@@ -104,6 +104,27 @@ func TestValidateSingleNodeFrontOK(t *testing.T) {
 	}
 }
 
+// TestValidateHysteria2PortRangeForms 端口跳跃的写法要能接受真实客户端导出的形态。
+//
+// 逗号与 / 等价（mihomo 把 ',' 当成 '/' 处理），所以 "1000-2000,3000" 与
+// "1000-2000/3000" 都得放行；间隔 "15" 与 "5-10" 也都得放行。
+// 这条同时防住"校验写得太严，把正常配置拦下来"。
+func TestValidateHysteria2PortRangeForms(t *testing.T) {
+	for _, ports := range []string{"", "443", "1000-2000", "1000-2000,3000", "1000-2000/3000", "200/204/401-429/501-503"} {
+		for _, hop := range []string{"", "15", "5-10"} {
+			cfg := Default()
+			cfg.Nodes = []Node{{
+				ID: "id", Name: "n", ListenPort: 10810,
+				Protocol: ProtocolHysteria2, Server: "h", Port: 443, Password: "p",
+				TLS: TLSOptions{Enabled: true}, Ports: ports, HopInterval: hop,
+			}}
+			if issues := cfg.Validate(); len(issues) > 0 {
+				t.Fatalf("ports=%q hop=%q 应当通过校验，实际 %v", ports, hop, issues)
+			}
+		}
+	}
+}
+
 // TestValidateMissingFrontNode 引用了不存在的节点应当报错。
 func TestValidateMissingFrontNode(t *testing.T) {
 	cfg := Default()
@@ -133,6 +154,17 @@ func TestValidateProtocolRequiredFields(t *testing.T) {
 		{"hysteria2 缺 tls", Node{Protocol: ProtocolHysteria2, Server: "h", Port: 1, Password: "p"}, "tls"},
 		{"hysteria2 有混淆缺混淆密码", Node{Protocol: ProtocolHysteria2, Server: "h", Port: 1, Password: "p",
 			Obfs: "salamander", TLS: TLSOptions{Enabled: true}}, "obfsPassword"},
+		{"hysteria2 端口跳跃段数超上限", Node{Protocol: ProtocolHysteria2, Server: "h", Port: 1, Password: "p",
+			TLS:   TLSOptions{Enabled: true},
+			Ports: "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29"}, "ports"},
+		{"hysteria2 端口跳跃起止写反", Node{Protocol: ProtocolHysteria2, Server: "h", Port: 1, Password: "p",
+			TLS: TLSOptions{Enabled: true}, Ports: "3000-1000"}, "ports"},
+		{"hysteria2 端口跳跃端口越界", Node{Protocol: ProtocolHysteria2, Server: "h", Port: 1, Password: "p",
+			TLS: TLSOptions{Enabled: true}, Ports: "1000-70000"}, "ports"},
+		{"hysteria2 跳跃间隔不能有逗号", Node{Protocol: ProtocolHysteria2, Server: "h", Port: 1, Password: "p",
+			TLS: TLSOptions{Enabled: true}, HopInterval: "5,10"}, "hopInterval"},
+		{"hysteria2 跳跃间隔起止写反", Node{Protocol: ProtocolHysteria2, Server: "h", Port: 1, Password: "p",
+			TLS: TLSOptions{Enabled: true}, HopInterval: "30-10"}, "hopInterval"},
 		{"wireguard 缺配置", Node{Protocol: ProtocolWireGuard, Server: "h", Port: 1}, "wireguard"},
 		{"服务器地址为空", Node{Protocol: ProtocolSOCKS5, Port: 1}, "server"},
 		{"端口非法", Node{Protocol: ProtocolSOCKS5, Server: "h", Port: 70000}, "port"},

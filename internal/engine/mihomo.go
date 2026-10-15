@@ -230,9 +230,10 @@ func (u *MihomoUpstream) Dial(ctx context.Context, _ proxy.Front, target string)
 
 // DialUDP 建立 UDP 通道。
 //
-// 【未接入】mihomo 的 UDP 走 ListenPacketContext（返回 C.PacketConn），
-// 要把它包成 proxy.UDPChannel（SendToUDP / ReceiveFromUDP + quit 语义）才算完成，
-// 见迁移契约第 ④ 步。这里明确报错，不假装成功。
+// 【这里只建"空壳"】mihomo 的 UDP 走 ListenPacketContext（返回 C.PacketConn），
+// 由 mihomo_udp.go 包成 proxy.UDPChannel（SendToUDP / ReceiveFromUDP + quit 语义）。
+// 我们的目标按数据报给，所以真正的建连延后到第一次发送（见 mihomo_udp.go 的 targetFor）。
+// 这段注释以前写的是"未接入、明确报错"—— 代码早就接上了，只是注释没跟着改。
 func (u *MihomoUpstream) DialUDP(ctx context.Context, _ proxy.Front) (proxy.UDPChannel, error) {
 	out, err := u.outbound()
 	if err != nil {
@@ -664,5 +665,17 @@ func hysteria2Option(n config.Node) (outbound.Hysteria2Option, error) {
 	if n.DownMbps > 0 {
 		opt.Down = fmt.Sprintf("%d Mbps", n.DownMbps)
 	}
+	// 【端口跳跃：两个字符串原样交给 mihomo 解析】它自己会把 `Ports` 展开成
+	// []uint16（`,` 与 `/` 等价、最多 28 段），把 `HopInterval` 解析成一个区间，
+	// 再交给 sing-quic 的 hysteria2 客户端：**首次拨号从集合里随机挑一个端口**，
+	// 建连后每个间隔再换一个（`sing-quic/hysteria2/client.go` 的 hopLoop）。
+	//
+	// 【不要在这里"帮忙"校验或格式化】规则已经在 `internal/config` 的校验里拦过一遍，
+	// 这里再做一次只会让两边的规则慢慢漂移。
+	//
+	// 【Port 仍然必填】mihomo 有 `if option.Port == 0 && len(serverPorts) == 0 { invalid port }`，
+	// 而且 Base.Addr 也是拿它拼的；填了 Ports 之后，实际连的端口来自集合，Port 变成标识。
+	opt.Ports = strings.TrimSpace(n.Ports)
+	opt.HopInterval = strings.TrimSpace(n.HopInterval)
 	return opt, nil
 }

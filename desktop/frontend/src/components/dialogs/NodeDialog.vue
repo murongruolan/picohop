@@ -54,6 +54,8 @@ function blankForm() {
     obfs: '',
     obfsPassword: '',
     pinSHA256: '',
+    ports: '',
+    hopInterval: '',
     transport: { network: 'tcp', path: '', host: '', serviceName: '', headerType: '' },
     tls: {
       enabled: false,
@@ -659,6 +661,38 @@ const flowOptions = [
           <el-col :span="12">
             <el-form-item label="PinSHA256">
               <el-input v-model="form.pinSHA256" placeholder="证书公钥固定（可选）" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-row :gutter="14">
+          <el-col :span="16">
+            <el-form-item>
+              <template #label>
+                端口跳跃
+                <el-tooltip
+                  content="服务器监听的端口集合，例如 1000-2000,3000。填了它之后实际连的端口从这里随机挑，上面的远程端口只用于标识；留空 = 只用远程端口"
+                  placement="top"
+                  :show-after="400"
+                >
+                  <span class="cp-tip-icon">?</span>
+                </el-tooltip>
+              </template>
+              <el-input v-model="form.ports" placeholder="1000-2000,3000" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item>
+              <template #label>
+                跳跃间隔
+                <el-tooltip
+                  content="多少秒换一个端口，例如 15 或 5-10（区间表示每轮在区间内随机取一个值）。留空 = 30 秒"
+                  placement="top"
+                  :show-after="400"
+                >
+                  <span class="cp-tip-icon">?</span>
+                </el-tooltip>
+              </template>
+              <el-input v-model="form.hopInterval" placeholder="默认 30 秒" />
             </el-form-item>
           </el-col>
         </el-row>

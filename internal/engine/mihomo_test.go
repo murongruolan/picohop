@@ -410,6 +410,29 @@ func TestOtherProtocolOptions(t *testing.T) {
 		}
 	})
 
+	t.Run("hysteria2：端口跳跃（Ports / HopInterval）透传且真的能构造出站", func(t *testing.T) {
+		n := config.Node{
+			ID: "h", Name: "h", Protocol: config.ProtocolHysteria2,
+			Server: "h.example.com", Port: 443, Password: "pw",
+			Ports: "1000-2000,3000", HopInterval: "5-10",
+		}
+		n.TLS.Enabled = true
+		o, err := hysteria2Option(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if o.Ports != "1000-2000,3000" || o.HopInterval != "5-10" {
+			t.Fatalf("端口跳跃没透传：ports=%q hop=%q", o.Ports, o.HopInterval)
+		}
+		// 【为什么要连出站一起构造】"字段填上了"不等于"能跑"：这两个字符串是
+		// **mihomo 自己解析**的（`utils.NewUnsignedRanges` / `utils.NewRange`），
+		// 写法不对它会当场报错。这一句把"我们写的 DSL"与"它的解析器"绑在一起验证，
+		// 比只比对字段值强得多 —— 上面 config 包的校验规则也是照它的限制抄的。
+		if _, err := buildMihomoOutbound(n, nil); err != nil {
+			t.Fatalf("带端口跳跃的 hysteria2 出站应当能构造出来，实际 %v", err)
+		}
+	})
+
 	t.Run("hysteria2：PinSHA256 → 证书 pin（Fingerprint），不是 uTLS 指纹", func(t *testing.T) {
 		// 【测试夹具一律用假值】真实节点的 pin 与凭据绝不进仓库（那是"哪个节点"的指纹）。
 		// 这里只要是 32 字节 hex 就够 —— mihomo 的 pin 校验器只认这个形状。

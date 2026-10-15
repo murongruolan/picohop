@@ -854,6 +854,15 @@ func encodeHysteria2(n config.Node) (string, error) {
 	if n.PinSHA256 != "" {
 		q.Set("pinSHA256", n.PinSHA256)
 	}
+	// 端口跳跃：字段名对齐主流客户端/ mihomo（mport = 端口集合，hop-interval = 间隔）。
+	// ':' 一律换成 '-' —— 有的客户端把区间写成 "1000:2000"，而 **mihomo 只认 '-'**；
+	//主流客户端导出时也是这么归一的（同类实现）。
+	if v := strings.TrimSpace(n.Ports); v != "" {
+		q.Set("mport", strings.ReplaceAll(v, ":", "-"))
+	}
+	if v := strings.TrimSpace(n.HopInterval); v != "" {
+		q.Set("hop-interval", v)
+	}
 	appendTLSParam(q, n.TLS)
 	return buildLink("hysteria2", escapeUserinfo(n.Password), n, q), nil
 }
@@ -1031,6 +1040,15 @@ func decodeHysteria2(p uriParts) (config.Node, error) {
 	}
 	// hysteria2 跑在 QUIC 上，TLS 是协议的一部分，不可能关掉。
 	applyParams(&n, p.query, true)
+	// 端口跳跃：刻意**不放进 applyParams**（那个函数是所有协议共用的），
+	// 免得别的协议链接里出现的同名参数跑进节点。
+	if v := firstParam(p.query, "mport", "ports"); v != "" {
+		// ':' → '-' 归一，理由见 encodeHysteria2。
+		n.Ports = strings.ReplaceAll(v, ":", "-")
+	}
+	if v := firstParam(p.query, "hop-interval", "hopinterval"); v != "" {
+		n.HopInterval = v
+	}
 	n.TLS.Enabled = true
 	return finalize(n)
 }
