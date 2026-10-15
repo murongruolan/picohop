@@ -1,0 +1,122 @@
+# 构建与发布。
+#
+# 【一个工作流两用】
+#   - 推到 main：只构建 —— 验证这个提交确实能编出 Windows 产物，不产出任何附件
+#   - 推 v* 标签：构建 + 建 GitHub Release，把两个 exe 作为附件挂上去
+#   - 也可以手动触发（Actions 页面上的 Run workflow），用来在打标签之前先试一遍
+#
+# 【存储纪律（这份工作流是照着"额度紧张"写的）】
+#   - **不上传 artifact**：Actions 的存储额度算的就是 artifact 与 package，而 artifact
+#     默认保留 90 天。这里一个都不传。
+#   - **不缓存 Go 模块与前端依赖**：模块缓存动辄几百 MB。省下的几分钟对公开仓库不划算
+#     （公开仓库的 Actions 分钟数免费），而存储额度是有限的。
+#   - 二进制只作为 **Release 附件**：Release 属于仓库内容，不占 Actions 存储。
+#   - 所以：一次标签构建往 Actions 存储里写的东西是 0。
+#
+# 【为什么用 windows-latest 而不是 ubuntu 交叉编译】
+#   本项目的构建脚本是 PowerShell、产物是 Windows exe、exe 图标靠 .syso 资源节
+#   （Go 链接器按 GOOS/GOARCH 自动拾取）。在 Windows runner 上就是"本机构建"，
+#   少一层交叉编译的意外。
+#
+# 【为什么不加 paths-ignore】
+#   想法是"纯文档改动就别构建了"，但路径过滤对**标签**推送的行为容易踩坑
+#   （标签推送没有"改动的文件"可比）。发版是低频动作，宁可多跑一次，也不要
+#   标签推送被过滤掉、结果发不出包。
+name: 构建与发布
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+# 只有建 Release 需要写权限，其余步骤都按只读对待
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: 取代码（要完整历史：发布说明要用 git log/describe）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 装 Go（版本取自 go.mod）
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false          # 见文件头：不往 Actions 存储里塞模块缓存
+
+      - name: 装 Node（前端 vite 构建用）
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 定版本号
+        id: ver
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $v = $env:GITHUB_REF.Substring('refs/tags/v'.Length)
+            "is_release=true" >> $env:GITHUB_OUTPUT
+          } else {
+            # 非标签构建：给一个可追溯、但不冒充正式版的版本号
+            $v = "0.0.0-dev.$($env:GITHUB_SHA.Substring(0,7))"
+            "is_release=false" >> $env:GITHUB_OUTPUT
+          }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "版本号：$v"
+
+      - name: 构建（调用仓库里的构建脚本，与本地同一条路径）
+        shell: pwsh
+        run: ./scripts/build.ps1 -Version "${{ steps.ver.outputs.version }}"
+
+      - name: 校验产物（含 exe 图标是否还是我们那份）
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          foreach ($f in @('dist/PicoHop.exe', 'dist/picohop-cli.exe')) {
+            if (-not (Test-Path $f)) { throw "缺少产物：$f" }
+            $mb = [math]::Round((Get-Item $f).Length / 1MB, 1)
+            if ($mb -lt 10) { throw "$f 只有 $mb MB，不正常" }
+            Write-Host "$f  $mb MB"
+          }
+          $exeIcon = [System.Drawing.Icon]::ExtractAssociatedIcon((Resolve-Path 'dist/PicoHop.exe').Path)
+          $refIcon = New-Object System.Drawing.Icon ((Resolve-Path 'desktop/build/windows/icon.ico').Path), 32, 32
+          $a = $exeIcon.ToBitmap(); $b = $refIcon.ToBitmap()
+          $diff = 0
+          for ($y = 0; $y -lt 32; $y++) {
+            for ($x = 0; $x -lt 32; $x++) {
+              if ($a.GetPixel($x, $y).ToArgb() -ne $b.GetPixel($x, $y).ToArgb()) { $diff++ }
+            }
+          }
+          Write-Host "exe 图标与仓库里的 icon.ico 比对：$diff/1024 像素不同"
+          if ($diff -gt 40) { throw "exe 里不是我们的图标（$diff/1024 像素不同），.syso 没生效？" }
+
+      - name: 发布 Release（仅 v* 标签）
+        if: steps.ver.outputs.is_release == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF.Substring('refs/tags/'.Length)
+          $head = "PicoHop $tag`n`n下载 ``PicoHop.exe`` 直接运行；命令行版是 ``picohop-cli.exe``。"
+          $prev = (git describe --tags --abbrev=0 "$tag^" 2>$null)
+          if ($LASTEXITCODE -eq 0 -and $prev) {
+            $lines = @(git log --no-merges --pretty='- %s' "$prev..$tag")
+            $body = "$head`n`n<details><summary>自 $prev 以来的变更（$($lines.Count) 条）</summary>`n`n" +
+                    ($lines -join "`n") + "`n`n</details>"
+          } else {
+            $body = "$head`n`n（首个发布）"
+          }
+          $body | Set-Content release-notes.md -Encoding utf8
+          gh release create $tag --title "PicoHop $tag" --notes-file release-notes.md `
+            dist/PicoHop.exe dist/picohop-cli.exe
+          Write-Host "已发布：$tag"
