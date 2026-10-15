@@ -3,15 +3,7 @@
 > 本文件由 `.\scripts\gen_notices.ps1` **生成**，不要手改 —— 加了依赖或换了版本之后重跑它。
 
 本项目的**自有代码**以 [GPL-3.0](LICENSE) 发布（原因见 [README 的「许可证」一节](README.md#许可证)）。
-它静态链接了下列第三方组件 —— 这份文件就是为了满足它们的许可要求而存在：
-
-- **MIT / BSD / ISC**：必须在分发物里复现版权声明与许可全文 → 表格里的版权行 + 下文的许可全文；
-- **Apache-2.0**：同上；若组件带 NOTICE 文件，NOTICE 也必须一并复现 → 见「NOTICE 原文」；
-- **GPL 家族**：整个作品受其约束（所以本项目是 GPL-3.0），并须提供对应源码 → 见文末；
-- **LGPL-3.0 / MPL-2.0**：只约束该组件自身，不要求整个作品同许可 → 见文末说明。
-
-模块清单由 `go list -deps ./desktop ./cmd/picohop` 生成 —— 即**真正链进二进制**的那些，
-不是 `go.mod` 里的全量依赖图。精确版本钉在 `go.mod` / `go.sum` 里，此处不重复列出。
+它静态链接了下列第三方组件 —— 这份文件就是为了满足它们的许可要求而存在
 
 ## 一、组件清单
 
@@ -117,22 +109,6 @@
 | `golang.zx2c4.com/wintun` | MIT | Copyright (C) 2017-2021 WireGuard LLC. All Rights Reserved. |
 | `golang.zx2c4.com/wireguard` | MIT | Copyright (C) 2017-2025 WireGuard LLC. All Rights Reserved. |
 | `github.com/Yawning/aez` | CC0-1.0 | To the extent possible under law, Yawning Angel has waived all copyright |
-
-按类别统计（同时带多种许可的组件在各类里各计一次，所以合计大于组件数）：
-
-| 许可证 | 组件数 |
-|---|---|
-| NO-LICENSE-FILE | 1 |
-| GPL-3.0-or-later | 7 |
-| GPL-3.0 | 6 |
-| GPL-2.0 | 1 |
-| LGPL-3.0 | 1 |
-| MPL-2.0 | 3 |
-| Apache-2.0 | 6 |
-| BSD-3-Clause | 35 |
-| BSD-2-Clause | 4 |
-| MIT | 36 |
-| CC0-1.0 | 1 |
 
 ## 二、许可全文
 
@@ -2872,28 +2848,7 @@ upstream project. See LICENSE for the applicable license.
 
 ```
 
-## 四、需要如实说明的两处
-
-1. **`github.com/rasky/go-lzo`（GPL-2.0）措辞含糊。** 它的 `LICENSE.gpl` 是 GPLv2 全文，
-   README 只写 "shares the same license (GPLv2)"，**没有"or later"字样**。严格按文本读是
-   GPL-2.0-only，而 GPL-2.0-only 与 GPL-3.0 不兼容。但同一份 README 说明它是 LZO1X
-   **原版源码**的直译、与原版同许可，而原版是 2.0-or-later —— 因此实际意图是
-   2.0-or-later，与本项目兼容。这个模糊点是从 mihomo 继承来的，不是本项目引入的。
-2. **`github.com/metacubex/chacha` 没有任何许可证文件**（其模块根目录只有 `.gitignore` /
-   `chacha.go` / `go.mod` / `go.sum`）。严格说这意味着没有授予再分发权利。它是 mihomo 的
-   依赖、随 mihomo 一起以 GPL 发布，实际风险很低，但如实记录在此。
-
-## 五、LGPL-3.0 与 MPL-2.0 的处理（为什么它们不改变本项目的许可）
-
-- **LGPL-3.0**（`easytier-go`）：LGPL 只要求**对该库自身的修改**继续以 LGPL 提供，并不要求
-  整个作品换许可。它的静态链接义务是"让接收者能够用修改过的版本重新链接"——本项目
-  提供全部源码与构建脚本，任何人都可以替换该依赖后重新构建，因此满足；
-  本项目**没有修改**该库的任何文件。
-- **MPL-2.0**（`mipstack` / `yamux` / `zerotier-go`）：MPL 是**文件级** copyleft，只约束那些
-  文件本身。本项目**没有修改**这些文件，因此只需保留其声明（本节与上表）。
-  另：MPL-2.0 与 GPL-3.0 兼容（其第 3.3 节的 Secondary License 机制）。
-
-## 六、对应源码与分发要求
+## 四、对应源码与分发要求
 
 本项目及其全部依赖的源码都可得：本项目源码在仓库根目录；依赖的**精确版本**钉在
 `go.mod` / `go.sum`，按 [README 的构建一节](README.md#构建) 可重建出与发布产物一致的二进制。
