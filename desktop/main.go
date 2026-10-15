@@ -162,6 +162,10 @@ func setupTray(wapp *application.App, api *API) {
 			api.Errorf("停止失败：%v", err)
 		}
 	})
+	menu.AddSeparator()
+	// 「全局代理模式」：勾选态 = 系统代理是否已指向全局节点。
+	// 后端早就具备这个能力（含先备份、退出还原、启动自愈），此前只有自测入口能触发。
+	api.setupProxyMenuItem(menu)
 	menu.Add("复制本地代理地址").OnClick(func(*application.Context) {
 		api.CopyFirstLocalAddress()
 	})

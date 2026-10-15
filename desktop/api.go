@@ -71,9 +71,13 @@ type API struct {
 	trayPushed bool
 	// 托盘句柄与当前图标状态：全局代理模式开/关时要换图标（映射与理由见 tray_state.go）。
 	// 用独立的锁，不跟 a.mu 抢 —— 托盘回调与设置变更可能从不同 goroutine 进来。
-	trayMu       sync.Mutex
-	tray         *application.SystemTray
-	trayMode     trayMode
+	trayMu   sync.Mutex
+	tray     *application.SystemTray
+	trayMode trayMode
+	// 托盘菜单里「全局代理模式」那一项的句柄与它所属的菜单：留着是为了能把勾选态
+	// 同步成现实（见 tray_menu.go 的 syncProxyMenuItem）。
+	proxyItem    *application.MenuItem
+	trayMenu     *application.Menu
 	shortcutOK   []string
 	shortcutFail []string
 
@@ -143,9 +147,9 @@ func (a *API) ServiceStartup(ctx context.Context, options application.ServiceOpt
 		_ = inst.SetSettings(s)
 		inst.Logf("启动时把「全局代理模式」置为关闭（系统代理已还原；要重新开启请点一下）")
 	}
-	// 托盘图标的初值也要跟这个开关对齐：托盘是在 app.Run() 之前建起来的，
-	// 那时读不到设置，只能先按"普通"画一个，到这里再纠正。
-	a.refreshTrayMode()
+	// 外壳（托盘图标底色 + 菜单勾选态）的初值也要跟这个开关对齐：它们都是在
+	// app.Run() 之前建起来的，那时读不到设置，只能先按"关"画，到这里再纠正。
+	a.syncProxyUi()
 
 	inst.AutoActivate()
 	return nil
@@ -203,6 +207,15 @@ func (a *API) reportShellStatus(inst *app.App) {
 	a.trayMu.Lock()
 	traySize, trayMode, pushed := a.trayIconSize, a.trayMode, a.trayPushed
 	a.trayMu.Unlock()
+	a.trayMu.Lock()
+	menuItem := a.proxyItem
+	a.trayMu.Unlock()
+	if menuItem != nil {
+		inst.Logf("外壳：托盘菜单含「%s」勾选项（当前：%s）", menuItem.Label(),
+			map[bool]string{true: "已勾选", false: "未勾选"}[menuItem.Checked()])
+	} else {
+		inst.Logf("外壳：⚠️ 托盘菜单里没有「全局代理模式」勾选项")
+	}
 	if a.trayReady {
 		inst.Logf("外壳：托盘已就绪（图标 %d 字节，当前状态：%s）", traySize, trayModeName(trayMode))
 		if pushed {
@@ -329,7 +342,7 @@ func (a *API) SetSystemProxyMode(on bool) error {
 		s.SystemProxy = false
 		_ = a.app.SetSettings(s)
 		a.app.Logf("已关闭全局代理模式，系统代理已还原")
-		a.setTrayMode(trayModeNormal)
+		a.syncProxyUi()
 		a.app.Notify("info", "系统代理已还原", "")
 		return nil
 	}
@@ -362,7 +375,7 @@ func (a *API) SetSystemProxyMode(on bool) error {
 		return err
 	}
 	a.app.Logf("已开启全局代理模式：系统代理 → %s（全局节点「%s」）", addr, a.nodeName(s.GlobalNodeID))
-	a.setTrayMode(trayModeGlobal)
+	a.syncProxyUi()
 	a.app.Notify("success", "系统代理已指向全局节点", addr)
 	return nil
 }
