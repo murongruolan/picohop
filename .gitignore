@@ -46,3 +46,10 @@ cache.db
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# docs/ 只发布 USER_GUIDE.md，其余文档作为"本地资料"保留在磁盘上、不进仓库。
+# 写法与上面 desktop/frontend/dist 那两条同构：先排除目录内所有条目，再把要留的那个捞回来。
+# 【注意】这些文件**仍然在磁盘上**（git rm --cached 只是取消跟踪），本地脚本照样读得到 ——
+# 例如 scripts/check_history.ps1 读的就是 docs\COMMIT_HISTORY.md。
+/docs/*
+!/docs/USER_GUIDE.md
