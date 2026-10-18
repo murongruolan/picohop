@@ -10,12 +10,26 @@
  *
  * 没使用表格自带的勾选列：每行前面多一个复选框，和"简洁"的目标冲突。
  * 选中态改用行底色表示，多选一样支持。
+ *
+ * ------------------------------------------------------------------
+ * 分组（方案 A）
+ * ------------------------------------------------------------------
+ * 列表里插入"组行"：手动节点一组、每条订阅各一组，节点行紧跟在所属组行下面。
+ *
+ * 【为什么用 el-table 的树形行，而不是另搭一个列表】
+ *   1. 列拖拽、填充列、每列渲染这些都已经被这张表吃透了，换列表等于全部重写；
+ *   2. **关键**：树形模式只在"展开"时把子行放进 DOM。所以默认全折叠时，
+ *      哪怕一份订阅有 1559 个节点，页面上也只有十来个组行 —— 长列表不卡靠的是它，
+ *      不是靠分页装出来的。
+ *
+ * 组行整行横跨所有列（span-method），所以组头长什么样与用户怎么排列表格列无关。
  */
-import { computed, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useStore } from '../store'
 import { useUi } from '../ui'
 import { useActions } from '../actions'
-import { ALL_COLUMNS, MIN_COL_WIDTH, MAX_COL_WIDTH } from '../columns'
+import { ALL_COLUMNS, MIN_COL_WIDTH, MAX_COL_WIDTH, formatBytes, formatWhen } from '../columns'
+import { Refresh, Top } from '@element-plus/icons-vue'
 import NodeCell from './NodeCell.vue'
 
 const store = useStore()
@@ -23,6 +37,9 @@ const ui = useUi()
 const actions = useActions()
 
 const tableRef = ref(null)
+const wrapRef = ref(null)
+/** 滚动时"组头已经滑出视野"的那个组：侧边浮动按钮针对它操作。 */
+const stickyGroup = ref(null)
 
 /** 当前应该渲染的列，顺序按 ALL_COLUMNS 固定，不随勾选顺序乱跳。 */
 const cols = computed(() => ALL_COLUMNS.filter((c) => store.visibleColumns.includes(c.key)))
@@ -92,16 +109,39 @@ function onHeaderDragEnd(newWidth, oldWidth, column) {
 }
 
 function rowClass({ row }) {
+  if (row.__group) return 'cp-group-row'
   return store.selectedIds.includes(row.id) ? 'cp-row-selected' : ''
 }
 
+/**
+ * 组行横跨所有列。
+ *
+ * 这样组头（名字、节点数、流量/到期、更新按钮）就与用户怎么排列表格列无关；
+ * 不这么做的话，组头会被塞进"当前第一列"，用户一拖列宽就散了。
+ */
+function spanMethod({ row, columnIndex }) {
+  if (row.__group) {
+    return columnIndex === 0 ? [1, cols.value.length] : [0, 0]
+  }
+  return [1, 1]
+}
+
 function onRowClick(row, column, ev) {
+  if (row.__group) {
+    store.toggleGroup(row.group.id)
+    return
+  }
   ui.closeContextMenu()
   store.selectRow(row, ev)
 }
 
 function onRowContextMenu(row, column, ev) {
   ev.preventDefault()
+  if (row.__group) {
+    // 组头的订阅菜单由 ContextMenu 处理（见 ui.openGroupContextMenu）。
+    ui.openGroupContextMenu(ev.clientX, ev.clientY, row.group)
+    return
+  }
   store.selectForContext(row)
   // 菜单贴着鼠标位置，但要防止贴边溢出
   const menuW = 216
@@ -112,18 +152,142 @@ function onRowContextMenu(row, column, ev) {
 }
 
 function onRowDblClick(row) {
+  if (row.__group) return
   actions.editNode(row)
 }
+
+// ------------------------------------------------------------------
+// 组头显示的信息
+// ------------------------------------------------------------------
+
+/** 流量文案：机场没给 total 就退回"已用"，什么都没给就显示 —。 */
+function groupTrafficText(g) {
+  const info = g.sub?.subscription?.userInfo || {}
+  const used = (info.upload || 0) + (info.download || 0)
+  const parts = []
+  if (info.total > 0) parts.push(`剩余 ${formatBytes(Math.max(0, info.total - used))}`)
+  else if (used > 0) parts.push(`已用 ${formatBytes(used)}`)
+  if (info.expire > 0) parts.push(`到期 ${formatWhen(new Date(info.expire * 1000))}`)
+  return parts.length ? parts.join(' · ') : '—'
+}
+
+/** 悬停看明细：已用/总量/到期/上次更新/失败原因。 */
+function groupTrafficTip(g) {
+  const s = g.sub?.subscription || {}
+  const info = s.userInfo || {}
+  const lines = []
+  if (info.upload || info.download) {
+    lines.push(`已用 ${formatBytes((info.upload || 0) + (info.download || 0))}`)
+  }
+  if (info.total > 0) lines.push(`总量 ${formatBytes(info.total)}`)
+  lines.push(info.expire > 0 ? `到期 ${formatWhen(new Date(info.expire * 1000))}` : '到期时间：机场未提供')
+  if (s.lastUpdate) lines.push(`上次更新 ${formatWhen(s.lastUpdate)}`)
+  if (s.lastError) lines.push(`上次失败：${s.lastError}`)
+  lines.push(s.userAgent ? `User-Agent：${s.userAgent}` : 'User-Agent：用设置里的默认值')
+  return lines.join('\n')
+}
+
+// ------------------------------------------------------------------
+// 滚动：记住位置 + 组头滑出时给出浮动按钮
+// ------------------------------------------------------------------
+
+/** 表体真正的滚动容器（Element Plus 用 el-scrollbar 包住表体）。 */
+function scroller() {
+  const root = wrapRef.value
+  if (!root) return null
+  return root.querySelector('.el-scrollbar__wrap') || root.querySelector('.el-table__body-wrapper')
+}
+
+/** 取某个 tr 对应的行对象（Element Plus 没有暴露，只能从组件实例上拿）。 */
+function rowOf(tr) {
+  return tr.__vueParentComponent?.props?.row || null
+}
+
+let scrollRaf = 0
+
+function onScroll() {
+  const el = scroller()
+  if (!el) return
+  // 位置记忆：store 里做了节流 + 去抖（滚动事件一秒能来上百次）
+  store.onListScroll(el.scrollTop)
+  if (scrollRaf) return
+  scrollRaf = requestAnimationFrame(() => {
+    scrollRaf = 0
+    updateSticky(el)
+  })
+}
+
+/**
+ * 找出"组头已经滑到视野之上"的那个组。
+ *
+ * 逐个体检组行的位置：最后一个 top 已越过容器顶边的组，就是当前看不见组头的组。
+ * 只查 DOM 里真实存在的组行 —— 折叠的组也有组行，所以这个判定始终准确。
+ */
+function updateSticky(el) {
+  const rows = el.querySelectorAll('tr.cp-group-row')
+  if (!rows.length) {
+    stickyGroup.value = null
+    return
+  }
+  const top = el.getBoundingClientRect().top
+  let found = null
+  for (const tr of rows) {
+    if (tr.getBoundingClientRect().top - top <= 1) {
+      found = rowOf(tr)?.group || found
+    } else {
+      break
+    }
+  }
+  stickyGroup.value = found
+}
+
+/** 把某个组的组头滚回视野顶部。 */
+function scrollToGroup(id) {
+  const el = scroller()
+  if (!el) return
+  const top = el.getBoundingClientRect().top
+  for (const tr of el.querySelectorAll('tr.cp-group-row')) {
+    if (rowOf(tr)?.group?.id === id) {
+      el.scrollTop += tr.getBoundingClientRect().top - top
+      store.onListScroll(el.scrollTop)
+      return
+    }
+  }
+}
+
+onMounted(async () => {
+  await nextTick()
+  const el = scroller()
+  if (!el) return
+  el.addEventListener('scroll', onScroll, { passive: true })
+  // 恢复上次的滚动位置：等表格把行铺完（它是异步渲染的），否则会被重置到 0。
+  const saved = store.savedScrollTop()
+  if (saved > 0) {
+    setTimeout(() => {
+      el.scrollTop = saved
+      updateSticky(el)
+    }, 60)
+  }
+})
+
+onBeforeUnmount(() => {
+  const el = scroller()
+  if (el) el.removeEventListener('scroll', onScroll)
+  if (scrollRaf) cancelAnimationFrame(scrollRaf)
+})
 </script>
 
 <template>
-  <div class="cp-table-wrap">
+  <div ref="wrapRef" class="cp-table-wrap">
     <el-table
       ref="tableRef"
-      :data="store.visibleNodes"
+      :data="store.tableRows"
       height="100%"
       row-key="id"
+      :tree-props="{ children: 'children' }"
+      :expand-row-keys="store.openGroups.map((g) => 'g:' + g)"
       :row-class-name="rowClass"
+      :span-method="spanMethod"
       @row-click="onRowClick"
       @row-contextmenu="onRowContextMenu"
       @row-dblclick="onRowDblClick"
@@ -142,7 +306,63 @@ function onRowDblClick(row) {
         :header-align="c.align || 'left'"
       >
         <template #default="{ row }">
-          <NodeCell :row="row" :col="c.key" />
+          <!-- 组行：整行横跨，画成组头 -->
+          <div v-if="row.__group" class="cp-group" @click.stop="store.toggleGroup(row.group.id)">
+            <span class="cp-group-chevron" :class="{ 'is-open': store.isGroupOpen(row.group.id) }">
+              <el-icon><Top /></el-icon>
+            </span>
+            <span class="cp-group-name" :title="row.group.name">{{ row.group.name }}</span>
+            <span class="cp-group-count">{{ row.group.nodes.length }} 个节点</span>
+
+            <template v-if="!row.group.isManual">
+              <span class="cp-group-meta" :title="groupTrafficTip(row.group)">
+                {{ groupTrafficText(row.group) }}
+              </span>
+              <span v-if="row.group.sub?.missing" class="cp-tag is-warn">
+                {{ row.group.sub.missing }} 个已下架
+              </span>
+              <span v-if="row.group.sub?.pending" class="cp-group-count">
+                {{ row.group.sub.pending }} 个未启用
+              </span>
+            </template>
+
+            <span class="cp-group-spacer" />
+
+            <!-- 长列表的"按需展开"：默认每组只渲染前 200 个 -->
+            <span
+              v-if="row.hiddenCount > 0"
+              class="cp-group-more"
+              @click.stop="store.toggleGroupShowAll(row.group.id)"
+            >
+              显示全部 {{ row.group.nodes.length }} 个
+            </span>
+
+            <el-tooltip
+              v-if="!row.group.isManual"
+              content="更新这条订阅"
+              placement="top"
+              :show-after="400"
+            >
+              <span class="cp-group-action" @click.stop="store.refreshSubscription(row.group.id)">
+                <el-icon :class="{ 'cp-spin': store.refreshingSubs.includes(row.group.id) }">
+                  <Refresh />
+                </el-icon>
+              </span>
+            </el-tooltip>
+          </div>
+
+          <!--
+            节点行：还是原来的单元格渲染。
+
+            订阅节点在「别名」列上加一点缩进，让"组 → 组里的节点"读起来有层次。
+            缩进只加在别名列：类型列是最窄的一列，往里塞缩进会把协议标签挤断。
+          -->
+          <span
+            v-else
+            :class="{ 'cp-node-indent': row.subId && c.key === 'name' }"
+          >
+            <NodeCell :row="row" :col="c.key" />
+          </span>
         </template>
       </el-table-column>
 
@@ -166,6 +386,26 @@ function onRowDblClick(row) {
         </div>
       </template>
     </el-table>
+
+    <!--
+      组头滑出视野后的浮动按钮。
+
+      【为什么要它】一份订阅可能有上千个节点，展开后往下翻很久，想"回到这组开头"
+      或者"把这组收起来"就得一路滚回去 —— 那很烦。有这一对按钮，任何时候都能
+      就地回到组头或收起本组。
+    -->
+    <transition name="cp-fade">
+      <div v-if="stickyGroup" class="cp-sticky-group">
+        <div class="cp-sticky-name" :title="stickyGroup.name">{{ stickyGroup.name }}</div>
+        <button class="cp-sticky-btn" @click="scrollToGroup(stickyGroup.id)">
+          <el-icon><Top /></el-icon>
+          <span>组头</span>
+        </button>
+        <button class="cp-sticky-btn" @click="store.toggleGroup(stickyGroup.id)">
+          <span>收起</span>
+        </button>
+      </div>
+    </transition>
   </div>
 </template>
 
@@ -179,5 +419,134 @@ function onRowDblClick(row) {
   font-size: 14px;
   color: var(--cp-text-2);
   font-weight: 600;
+}
+
+/* ------------------------------------------------------------------
+   组头：稍深的底 + 加粗名字，节点行保持原样，层次一眼可辨
+   ------------------------------------------------------------------ */
+.cp-table-wrap .el-table__body tr.cp-group-row > td.el-table__cell {
+  background: var(--cp-group-bg);
+  border-bottom: 1px solid var(--cp-border);
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+.cp-table-wrap .el-table__body tr.cp-group-row:hover > td.el-table__cell {
+  background: var(--cp-group-bg-hover);
+}
+.cp-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+  cursor: pointer;
+  min-width: 0;
+}
+.cp-group-chevron {
+  display: inline-flex;
+  color: var(--cp-text-3);
+  transition: transform 0.15s ease;
+}
+.cp-group-chevron.is-open {
+  transform: rotate(180deg);
+}
+.cp-group-name {
+  font-weight: 600;
+  color: var(--cp-text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
+}
+.cp-group-count,
+.cp-group-meta {
+  font-size: 12px;
+  color: var(--cp-text-3);
+  white-space: nowrap;
+}
+.cp-group-spacer {
+  flex: 1 1 auto;
+}
+/* 组内节点的第一列缩进：只挪第一列，别动用户在列宽上排好的对齐 */
+.cp-node-indent {
+  padding-left: 18px;
+}
+.cp-group-more {
+  font-size: 12px;
+  color: var(--cp-brand);
+  border-bottom: 1px dashed var(--cp-brand);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.cp-group-more:hover {
+  opacity: 0.8;
+}
+.cp-group-action {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: var(--cp-text-2);
+  cursor: pointer;
+}
+.cp-group-action:hover {
+  background: var(--cp-brand-soft);
+  color: var(--cp-brand);
+}
+.cp-tag.is-warn {
+  color: var(--cp-warning);
+  border-color: var(--cp-warning);
+}
+
+/* ------------------------------------------------------------------
+   组头滑出后的浮动按钮（贴右边缘，竖向两个）
+   ------------------------------------------------------------------ */
+.cp-sticky-group {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 6px;
+  border-radius: 10px;
+  background: var(--cp-panel);
+  border: 1px solid var(--cp-border);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
+  max-width: 132px;
+}
+.cp-sticky-name {
+  font-size: 11px;
+  color: var(--cp-text-3);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cp-sticky-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--cp-text-2);
+  background: transparent;
+  border: 1px solid var(--cp-border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.cp-sticky-btn:hover {
+  color: var(--cp-brand);
+  border-color: var(--cp-brand);
+}
+.cp-fade-enter-active,
+.cp-fade-leave-active {
+  transition: opacity 0.15s ease;
+}
+.cp-fade-enter-from,
+.cp-fade-leave-to {
+  opacity: 0;
 }
 </style>

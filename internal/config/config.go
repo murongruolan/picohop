@@ -22,7 +22,13 @@ import (
 //
 //	v1：只有 front + upstreams（socks5 / http / wireguard 三种住宅上游）
 //	v2：front + settings + nodes（8 种协议，每节点独立本地端口与前置选择）
-const CurrentVersion = 2
+//	v3：在 v2 之上**只新增**字段 —— 顶层 subscriptions，
+//	    以及 Node 的订阅归属（subId / subOrder / subMissing / nameFromSub）。
+//
+// 【v3 为什么没有单独的迁移代码】纯新增字段，JSON 反序列化时缺字段就是零值，语义正好。
+// 真正要小心的不是"怎么搬数据"，而是**别把 v2 配置当 v1 去迁移** ——
+// 见 Load 里版本门槛那段注释（那是个会丢光所有节点的坑）。
+const CurrentVersion = 3
 
 // DefaultIdleTimeoutSec 是链路空闲断开的默认秒数（Settings.IdleTimeoutSec 为 0 或负数时用它）。
 //
@@ -148,6 +154,17 @@ type Settings struct {
 	//
 	// 默认**不用** Ctrl+Alt+A —— 那个组合被微信/QQ 的截图占用了（用户实测冲突）。
 	ShortcutToggleAll string `json:"shortcutToggleAll"`
+
+	// ---- 机场订阅 ----
+	//
+	// SubscriptionUserAgent 是下载订阅时用的 UA；空 = 内置默认值
+	// （config.DefaultSubscriptionUA）。
+	//
+	// 【为什么必须能改】机场普遍按 UA 决定给你什么格式、甚至给你哪些节点：实测同一家
+	// 机场，clash 系 UA 拿到的是含 hysteria2 的超集，v2ray 系 UA 只给一个子集。
+	// 各家机场认的字符串五花八门，用户遇到"导入只有几个节点/报错"时最有效的动作
+	// 就是换个 UA，所以它必须是设置项而不是写死的常量。
+	SubscriptionUserAgent string `json:"subscriptionUserAgent"`
 }
 
 // IdleTimeout 返回链路空闲多久自动断开（对应界面「网络设置 → 空闲自动断开」）。
@@ -171,6 +188,10 @@ type Config struct {
 	Front    Front    `json:"front"`
 	Settings Settings `json:"settings"`
 	Nodes    []Node   `json:"nodes"`
+
+	// Subscriptions 是机场订阅。节点用 Node.SubID 归属到这里的某一条（软关联，
+	// 和"手动添加的节点 SubID 为空"一起表达两种来源）。
+	Subscriptions []Subscription `json:"subscriptions,omitempty"`
 
 	// Path 记录配置文件自身路径（不参与序列化）。
 	Path string `json:"-"`
@@ -295,7 +316,14 @@ func (c *Config) Validate() []Issue {
 		}
 
 		// 本地监听端口
-		if err := validPort(n.ListenPort); err != nil {
+		//
+		// 【订阅节点允许"未分配"】订阅导入的节点默认不占端口（见 Node.PortPending），
+		// 那是**正常状态**、不是配置错误 —— 否则一次导入上千个节点，界面会被上千条
+		// 校验报错淹没。但"未分配却又处于激活"是明确错误，必须报出来：它一定起不来
+		// （startNode 会拒绝），让用户带着错误配置去点启动只会更迷惑。
+		if n.PortPending() && n.IsSubNode() && !n.Active {
+			// 跳过端口校验，也不占 seenPort
+		} else if err := validPort(n.ListenPort); err != nil {
 			add(scope, "listenPort", "%v", err)
 		} else {
 			if prev, dup := seenPort[n.ListenPort]; dup {
@@ -571,7 +599,11 @@ func Load(path string) (*Config, error) {
 		Version int `json:"version"`
 	}
 	_ = json.Unmarshal(data, &probe)
-	if probe.Version < CurrentVersion {
+	// 【这里的门槛只能写 2，不能写 CurrentVersion】migrate() 只认 v1 的外形（configV1）：
+	// 一旦门槛写成 CurrentVersion，v2 配置就会被当成 v1 去解析 —— 字段全对不上，
+	// 结果是"升级程序之后所有节点凭空消失"。v2 → v3 是纯新增字段（见 CurrentVersion
+	// 的注释），直接反序列化即可，版本号由 normalize() 抬到最新。
+	if probe.Version < 2 {
 		migrated, err := migrate(data, probe.Version)
 		if err != nil {
 			return nil, fmt.Errorf("迁移旧配置失败 (%s): %w", path, err)
@@ -803,9 +835,6 @@ func (c *Config) NormalizeNode(n *Node) {
 // normalize 填补缺失字段，避免旧配置文件导致空值。
 func (c *Config) normalize() {
 	d := Default()
-	if c.Version == 0 {
-		c.Version = CurrentVersion
-	}
 	if c.Front.Type == "" {
 		c.Front.Type = d.Front.Type
 	}
@@ -820,6 +849,16 @@ func (c *Config) normalize() {
 	}
 
 	s := &c.Settings
+	// 版本号一律抬到最新：v2 → v3 是纯新增字段（见 CurrentVersion 的注释），
+	// "读进来 + 抬版本号"就是完整的迁移，下一次保存自然写成新版本。
+	if c.Version < CurrentVersion {
+		c.Version = CurrentVersion
+	}
+	// 订阅 UA 留空时填上内置默认值：设置界面要显示"现在实际用的是哪个"，
+	// 空字符串会让用户以为没设置过。
+	if s.SubscriptionUserAgent == "" {
+		s.SubscriptionUserAgent = DefaultSubscriptionUA
+	}
 	if s.DefaultListenHost == "" {
 		s.DefaultListenHost = d.Settings.DefaultListenHost
 	}

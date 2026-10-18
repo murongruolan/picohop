@@ -105,7 +105,22 @@ async function copyPort() {
 
   <!-- 本地端口：点一下就复制地址 -->
   <template v-else-if="col === 'listenPort'">
-    <el-tooltip content="点击复制 127.0.0.1:端口" placement="top" :show-after="500">
+    <!--
+      订阅节点默认不占端口（一次导入可能上千个，不可能一人一个），这时显示
+      「未分配」而不是会误导人的 0；点它就是"启用" —— 后端 App.Activate 会先分配
+      一个空闲端口再启动（见那里的注释）。
+    -->
+    <el-tooltip
+      v-if="row.portPending"
+      content="这个订阅节点还没分配本地端口，点击启用"
+      placement="top"
+      :show-after="400"
+    >
+      <span class="cp-linklike cp-unassigned" @click.stop="store.enableSubscriptionNode(row)">
+        未分配
+      </span>
+    </el-tooltip>
+    <el-tooltip v-else content="点击复制 127.0.0.1:端口" placement="top" :show-after="500">
       <span class="cp-mono cp-num cp-linklike" @click.stop="copyPort()">
         {{ row.listenPort }}
       </span>
@@ -246,6 +261,17 @@ async function copyPort() {
   border-bottom: 1px dashed transparent;
 }
 .cp-linklike:hover {
+  color: var(--cp-brand);
+  border-bottom-color: var(--cp-brand);
+}
+/* 「未分配」：订阅节点还没启用时的状态 —— 既不是错误也不是空值。
+   压暗 + 虚线下划线表示"可以点"，免得被当成真实的端口号。 */
+.cp-unassigned {
+  color: var(--cp-text-3);
+  cursor: pointer;
+  border-bottom: 1px dashed var(--cp-text-3);
+}
+.cp-unassigned:hover {
   color: var(--cp-brand);
   border-bottom-color: var(--cp-brand);
 }

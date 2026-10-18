@@ -265,7 +265,36 @@ type Node struct {
 	DownBytes int64  `json:"downBytes,omitempty"`
 
 	CreatedAt time.Time `json:"createdAt"`
+
+	// ---- 订阅归属 ----
+	//
+	// 【为什么订阅节点默认 ListenPort = 0】真实机场动辄几百上千个节点（实测一份 1559 个），
+	// 若沿用"每个节点一个本地端口"，导入一次就要占掉上千个端口号，而用户真正会用的只有
+	// 一两个。所以订阅节点先"未分配端口"（ListenPort == 0，且未激活），
+	// 点「启用」时才分配并启动 —— 见 PortPending()。
+	SubID string `json:"subId,omitempty"`
+	// SubOrder 是机场给的顺序（订阅内部排序用，不参与身份判断）。
+	SubOrder int `json:"subOrder,omitempty"`
+	// SubMissing 为真表示"上次更新订阅时机场已经下架了这个节点"。
+	//
+	// 【为什么不直接删】用户可能在它身上配过前置/端口/备注，直接删等于无声毁掉这些设置；
+	// 所以标记保留，由用户在组头菜单里显式「清理已过期」。
+	SubMissing bool `json:"subMissing,omitempty"`
+	// NameFromSub 记录"上次导入时机场给的名字"，用来判断用户有没有自己改过名：
+	// 没改过 → 更新时跟着机场改名；改过 → 保留用户的名字（订阅更新不该覆盖用户意图）。
+	NameFromSub string `json:"nameFromSub,omitempty"`
 }
+
+// PortPending 说明这个节点还没有本地端口（订阅导入后的初始状态）。
+//
+// 【为什么用 ListenPort == 0 表达】手动添加的节点一定会被分配到端口（见 App.AddNode），
+// 所以 0 只会出现在"订阅刚导入、用户还没点启用"的节点上。但**启动前必须拒绝**它：
+// net.Listen 遇到端口 0 会随便挑一个临时端口，于是配置写的和实际监听的对不上
+// （审查 #21 记过这个坑）。
+func (n Node) PortPending() bool { return n.ListenPort == 0 }
+
+// IsSubNode 说明这个节点是订阅带进来的（而不是手动添加的）。
+func (n Node) IsSubNode() bool { return n.SubID != "" }
 
 // ------------------------------------------------------------------
 // Node 上的取值辅助

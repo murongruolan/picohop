@@ -58,8 +58,8 @@ export const useUi = defineStore('cp-ui', {
     importDialog: false,
     /** 日志抽屉 */
     logDrawer: false,
-    /** 右键菜单 */
-    contextMenu: { open: false, x: 0, y: 0, node: null },
+    /** 右键菜单：node 与 group 二选一（节点菜单 / 订阅组头菜单）。 */
+    contextMenu: { open: false, x: 0, y: 0, node: null, group: null },
     /** 正在进行的耗时操作（用于按钮 loading） */
     busy: '',
   }),
@@ -94,7 +94,16 @@ export const useUi = defineStore('cp-ui', {
     },
 
     openContextMenu(x, y, node) {
-      this.contextMenu = { open: true, x, y, node }
+      this.contextMenu = { open: true, x, y, node, group: null }
+    },
+    /**
+     * 组头的订阅菜单。
+     *
+     * 与节点菜单共用一份坐标与开关状态：同时只可能有一个菜单开着，
+     * 分成两个状态反而会出现"两个菜单叠在一起"。
+     */
+    openGroupContextMenu(x, y, group) {
+      this.contextMenu = { open: true, x, y, node: null, group }
     },
     closeContextMenu() {
       this.contextMenu.open = false

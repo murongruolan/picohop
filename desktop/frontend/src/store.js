@@ -12,6 +12,58 @@ const LS_COLUMNS = 'cp.visibleColumns'
 const LS_COL_WIDTHS = 'cp.columnWidths'
 const LS_THEME = 'cp.theme'
 const LS_STATUS = 'cp.statusFilter'
+// 订阅分组的展开状态与列表滚动位置：属于**界面状态**，不进配置文件
+// （配置是"用户意图"，而这些是"这次看到哪儿了"，跟着机器走更合适）。
+const LS_OPEN_GROUPS = 'cp.openGroups'
+const LS_LIST_SCROLL = 'cp.listScrollTop'
+
+/**
+ * "手动节点"那一组的固定 ID。
+ *
+ * 订阅节点的 subId 是订阅 ID，手动节点没有 subId —— 用这个常量把它们归到一组，
+ * 避免和真实订阅 ID 撞名（订阅 ID 是后端生成的随机串，不可能等于这个带下划线的名字）。
+ */
+export const GROUP_MANUAL = '__manual'
+
+/**
+ * 展开的组里**默认只渲染**这么多个节点。
+ *
+ * 【为什么要有这个上限】实测真实机场一份订阅有 1559 个节点；全渲染出来，
+ * 打开一组要卡上好几秒。默认先给前 200 个，用户真要看全（或要在里面搜）时
+ * 再点组头那句"显示全部 N 个"。
+ */
+export const GROUP_LIMIT = 200
+
+function loadOpenGroups() {
+  try {
+    const raw = localStorage.getItem(LS_OPEN_GROUPS)
+    const list = raw ? JSON.parse(raw) : []
+    return Array.isArray(list) ? list.filter((x) => typeof x === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function loadListScrollTop() {
+  const n = Number(localStorage.getItem(LS_LIST_SCROLL) || 0)
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+function writeOpenGroups(list) {
+  try {
+    localStorage.setItem(LS_OPEN_GROUPS, JSON.stringify(list))
+  } catch {
+    /* 隐私模式下写不了，忽略 */
+  }
+}
+
+function writeListScrollTop(top) {
+  try {
+    localStorage.setItem(LS_LIST_SCROLL, String(Math.max(0, Math.round(top || 0))))
+  } catch {
+    /* 同上 */
+  }
+}
 
 function loadVisibleColumns() {
   try {
@@ -94,6 +146,18 @@ export const useStore = defineStore('cp', {
 
     // 圈选
     scanning: false,
+
+    // ---- 订阅（分组列表）----
+    /** 订阅列表（后端 GetSubscriptions，含节点数/未分配/已下架计数）。 */
+    subscriptions: [],
+    /** 展开的分组 ID；默认**全折叠**（1559 个节点全展开等于自杀）。 */
+    openGroups: loadOpenGroups(),
+    /** 点过"显示全部"的组（默认每组只渲染 GROUP_LIMIT 个）。 */
+    groupShowAll: [],
+    /** 上次的列表滚动位置（下次打开回到原处）。 */
+    listScrollTop: loadListScrollTop(),
+    /** 正在更新的订阅 ID（组头的更新按钮转圈用）。 */
+    refreshingSubs: [],
   }),
 
   getters: {
@@ -117,6 +181,94 @@ export const useStore = defineStore('cp', {
     runningCount(state) {
       return state.nodes.filter((n) => n.state === 'running').length
     },
+
+    /**
+     * 按订阅把节点分成组，最后再加上「手动节点」那一组。
+     *
+     * 【为什么分组在前端算】分组本质只是"按 subId 归堆"+一点显示信息。放在前端，
+     * 筛选（搜索/状态）会天然跟着走 —— 用户搜"香港"时组头显示的计数就是命中的个数，
+     * 不会出现"组头写着 40 个、点开只有 3 个"的错乱。
+     *
+     * 顺序（方案 A 的约定）：手动节点在最前（它是用户自己建的、找它最频繁），
+     * 然后按后端给的 Sort 排各条订阅。
+     */
+    nodeGroups(state) {
+      const groups = []
+      const byId = new Map()
+
+      const manual = {
+        id: GROUP_MANUAL,
+        name: '手动节点',
+        isManual: true,
+        sub: null,
+        total: 0,
+        nodes: [],
+      }
+      groups.push(manual)
+      byId.set(GROUP_MANUAL, manual)
+
+      for (const s of state.subscriptions || []) {
+        const sub = s.subscription || {}
+        const g = {
+          id: sub.id,
+          name: sub.name || '订阅',
+          isManual: false,
+          sub: s,
+          total: 0,
+          nodes: [],
+        }
+        groups.push(g)
+        byId.set(g.id, g)
+      }
+
+      for (const n of state.nodes) {
+        const key = n.subId || GROUP_MANUAL
+        let g = byId.get(key)
+        if (!g) {
+          // 订阅记录还没拉到（或已被删）：按节点自带的分组名临时建一组，
+          // 别让这些节点在界面上凭空消失。
+          g = { id: key, name: n.subName || '订阅', isManual: false, sub: null, total: 0, nodes: [] }
+          groups.push(g)
+          byId.set(key, g)
+        }
+        g.total++
+      }
+      for (const n of state.visibleNodes) {
+        const g = byId.get(n.subId || GROUP_MANUAL)
+        if (g) g.nodes.push(n)
+      }
+      return groups
+    },
+
+    /**
+     * 表格真正渲染的行：组行 +（已展开组里的）节点行。
+     *
+     * 【折叠的组为什么一个节点行都不渲染】el-table 的树形模式只在行处于"展开"状态时
+     * 才把 children 放进 DOM。所以默认全折叠时，1559 个节点也只有十来个组行在页面上 ——
+     * 这才是长列表不卡的根本原因，不是靠分页装出来的。
+     */
+    tableRows(state) {
+      const open = new Set(state.openGroups)
+      const filtering = !!(state.searchApplied || '').trim() || state.statusFilter !== 'all'
+      const rows = []
+      for (const g of this.nodeGroups) {
+        // 空组别占地方：手动组没节点就整组不显示（那时应该是"还没有任何节点"的空态）；
+        // 订阅组在筛选态下没命中就先藏起来，免得用户搜一个词还要滚过一堆空组。
+        if (g.isManual && g.nodes.length === 0) continue
+        if (!g.isManual && filtering && g.nodes.length === 0) continue
+        const isOpen = open.has(g.id)
+        const showAll = state.groupShowAll.includes(g.id)
+        const children = isOpen ? (showAll ? g.nodes : g.nodes.slice(0, GROUP_LIMIT)) : []
+        rows.push({
+          id: `g:${g.id}`,
+          __group: true,
+          group: g,
+          children,
+          hiddenCount: isOpen && !showAll ? Math.max(0, g.nodes.length - children.length) : 0,
+        })
+      }
+      return rows
+    },
   },
 
   actions: {
@@ -131,6 +283,7 @@ export const useStore = defineStore('cp', {
         // 之前写入的都会被认为"这不是完整配置"而拒绝（见 BottomPanel.persist）。
         this.settingsLoaded = true
         this.front = await api.getFront()
+        await this.refreshSubscriptions()
         // 主题以**配置文件**为准（localStorage 只是缓存）：
         // 这样直接改 config.json 换主题也能生效，清了浏览器数据也不会丢。
         if (this.settings?.theme) this.theme = this.settings.theme
@@ -150,6 +303,8 @@ export const useStore = defineStore('cp', {
         nodes: () => this.scheduleRefresh(),
         stats: () => this.scheduleRefresh(),
         testDone: () => this.scheduleRefresh(true),
+        // 订阅本身变了（增删/改名/更新完成后的元信息）：只重拉订阅表，不重画节点列表。
+        subscriptions: () => this.refreshSubscriptions(),
       })
     },
 
@@ -334,6 +489,123 @@ export const useStore = defineStore('cp', {
       if (!this.selectedIds.includes(node.id)) {
         this.selectedIds = [node.id]
       }
+    },
+
+    // -----------------------------------------------------------------
+    // 订阅与分组
+    // -----------------------------------------------------------------
+    async refreshSubscriptions() {
+      try {
+        this.subscriptions = (await api.getSubscriptions()) || []
+      } catch (e) {
+        console.error('拉取订阅列表失败', e)
+      }
+    },
+
+    isGroupOpen(id) {
+      return this.openGroups.includes(id)
+    },
+
+    /** 展开/收起一个分组，并把状态记住（下次打开还是这样）。 */
+    toggleGroup(id) {
+      const set = new Set(this.openGroups)
+      if (set.has(id)) set.delete(id)
+      else set.add(id)
+      this.openGroups = [...set]
+      writeOpenGroups(this.openGroups)
+    },
+
+    /** 组内「显示全部」（默认每组只渲染前 GROUP_LIMIT 个）。 */
+    toggleGroupShowAll(id) {
+      const set = new Set(this.groupShowAll)
+      if (set.has(id)) set.delete(id)
+      else set.add(id)
+      this.groupShowAll = [...set]
+    },
+
+    /**
+     * 列表滚动。
+     *
+     * 【为什么要节流 + 去抖】滚动事件一秒能来几十上百次，每次都写一遍 localStorage
+     * 既没意义、又会卡住主线程。所以：滚动过程中最多每 1 秒写一次（节流），
+     * 停手 400ms 后再补写一次收尾（去抖）—— 保证"最后停在哪儿"一定被记住。
+     */
+    onListScroll(top) {
+      this.listScrollTop = Math.max(0, Math.round(top || 0))
+      const now = Date.now()
+      if (now - (this._scrollWroteAt || 0) >= 1000) {
+        this._scrollWroteAt = now
+        writeListScrollTop(this.listScrollTop)
+      }
+      clearTimeout(this._scrollTimer)
+      this._scrollTimer = setTimeout(() => {
+        this._scrollWroteAt = Date.now()
+        writeListScrollTop(this.listScrollTop)
+      }, 400)
+    },
+
+    /** 上次的滚动位置（表格挂载后恢复用）。 */
+    savedScrollTop() {
+      return this.listScrollTop || 0
+    },
+
+    /** 启用一个还没分配端口的订阅节点：后端会分配端口并启动它。 */
+    async enableSubscriptionNode(row) {
+      try {
+        await api.enableSubscriptionNode(row.id)
+        await this.refresh()
+      } catch (e) {
+        notify('error', '启用失败', String(e?.message || e))
+      }
+    },
+
+    /** 更新一条订阅（增量合并：新增/刷新/标记下架）。 */
+    async refreshSubscription(id) {
+      if (this.refreshingSubs.includes(id)) return null
+      this.refreshingSubs = [...this.refreshingSubs, id]
+      try {
+        const rep = (await api.refreshSubscription(id)) || {}
+        await Promise.all([this.refresh(), this.refreshSubscriptions()])
+        notify(
+          'success',
+          '订阅已更新',
+          `新增 ${rep.added || 0}、刷新 ${rep.updated || 0}、标记下架 ${rep.missing || 0}`,
+        )
+        return rep
+      } catch (e) {
+        notify('error', '更新订阅失败', String(e?.message || e))
+        return null
+      } finally {
+        this.refreshingSubs = this.refreshingSubs.filter((x) => x !== id)
+      }
+    },
+
+    async previewSubscription(req) {
+      return api.previewSubscription(req)
+    },
+
+    /** 导入一条订阅：建分组，节点以"未分配端口"的状态进来。 */
+    async importSubscription(req) {
+      const rep = (await api.importSubscription(req)) || {}
+      await Promise.all([this.refresh(), this.refreshSubscriptions()])
+      return rep
+    },
+
+    async saveSubscriptionMeta(sub) {
+      const saved = await api.saveSubscriptionMeta(sub)
+      await this.refreshSubscriptions()
+      return saved
+    },
+
+    async deleteSubscription(id, alsoNodes) {
+      await api.deleteSubscription(id, alsoNodes)
+      await Promise.all([this.refresh(), this.refreshSubscriptions()])
+    },
+
+    async clearMissingNodes(id) {
+      const n = await api.clearMissingNodes(id)
+      await Promise.all([this.refresh(), this.refreshSubscriptions()])
+      return n
     },
   },
 })

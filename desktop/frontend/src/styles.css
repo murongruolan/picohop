@@ -14,6 +14,9 @@
   --cp-bg: #f4f5f7;
   --cp-panel: #ffffff;
   --cp-panel-2: #fafbfc;
+  /* 分组头（机场订阅）的底色：比表体稍深一点，让"组"与"组里的节点"一眼分层 */
+  --cp-group-bg: #f0f1f4;
+  --cp-group-bg-hover: #e9ebef;
   --cp-border: #e5e7eb;
   --cp-border-strong: #d4d7dd;
   --cp-text: #1f2329;
@@ -41,6 +44,8 @@ html.dark {
   --cp-bg: #13151b;
   --cp-panel: #1a1d25;
   --cp-panel-2: #20242d;
+  --cp-group-bg: #232833;
+  --cp-group-bg-hover: #2a3040;
   --cp-border: #2a2f3a;
   --cp-border-strong: #3a4050;
   --cp-text: #e7e9ee;

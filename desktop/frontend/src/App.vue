@@ -206,6 +206,14 @@ async function handleDevOpen(name) {
     case 'import':
       ui.importDialog = true
       break
+    case 'subgroups': {
+      // 订阅分组：把每个组都展开（默认是折叠的），方便截图核对组头与节点行。
+      await store.refreshSubscriptions()
+      for (const g of store.nodeGroups) {
+        if (g.nodes.length > 0 && !store.isGroupOpen(g.id)) store.toggleGroup(g.id)
+      }
+      break
+    }
     case 'logs':
       ui.logDrawer = true
       break

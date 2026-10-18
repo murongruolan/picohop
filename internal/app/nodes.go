@@ -443,7 +443,38 @@ func (a *App) Activate(ids []string) error {
 			continue
 		}
 		n := a.cfg.Nodes[idx]
-		a.cfg.Nodes[idx].Active = true
+		needPort := n.PortPending()
+		a.mu.Unlock()
+
+		// 【显式激活订阅节点 = 自动分配端口】订阅节点默认不占端口（一次导入可能上千个，
+		// 不可能一人一个），但用户**指名**让它跑起来时，分配端口正是他的意图 ——
+		// 否则还得先去别处点一次"启用"，多一步而且没道理。
+		// 只有"激活全部 / 启动自愈"这类批量路径才跳过未分配的节点（见 ActivateAll）。
+		if needPort {
+			if _, err := a.allocPort(id, func(port int) {
+				if i := a.indexOfLocked(id); i >= 0 {
+					a.cfg.Nodes[i].ListenPort = port
+				}
+			}); err != nil {
+				if errors.Is(err, errNoFreePort) {
+					failed = append(failed, fmt.Sprintf("「%s」：本机没有可用的本地端口（已扫到 65535）", n.Name))
+				} else {
+					failed = append(failed, fmt.Sprintf("「%s」：分配本地端口失败：%v", n.Name, err))
+				}
+				continue
+			}
+			a.mu.Lock()
+			if i := a.indexOfLocked(id); i >= 0 {
+				n = a.cfg.Nodes[i]
+			}
+			a.mu.Unlock()
+			a.Logf("已为订阅节点「%s」分配本地端口 %d", n.Name, n.ListenPort)
+		}
+
+		a.mu.Lock()
+		if i := a.indexOfLocked(id); i >= 0 {
+			a.cfg.Nodes[i].Active = true
+		}
 		already := a.servers[id] != nil && a.servers[id].Running()
 		a.mu.Unlock()
 
@@ -537,10 +568,20 @@ func (a *App) Deactivate(ids []string) error {
 func (a *App) ActivateAll() error {
 	a.mu.RLock()
 	ids := make([]string, 0, len(a.cfg.Nodes))
+	skipped := 0
 	for _, n := range a.cfg.Nodes {
+		if n.PortPending() {
+			// 订阅导入的节点默认不占端口，也就**不该**被「激活全部」顺手拉起来：
+			// 一次导入可能上千个，全起等于把本机打爆。要哪个由用户点「启用」。
+			skipped++
+			continue
+		}
 		ids = append(ids, n.ID)
 	}
 	a.mu.RUnlock()
+	if skipped > 0 {
+		a.Logf("「激活全部」跳过了 %d 个尚未启用（未分配本地端口）的订阅节点", skipped)
+	}
 	return a.Activate(ids)
 }
 
@@ -590,7 +631,9 @@ func (a *App) AutoActivate() {
 	want := a.cfg.Settings.AutoActivateOnLaunch
 	ids := make([]string, 0)
 	for _, n := range a.cfg.Nodes {
-		if n.Active {
+		// 未分配端口的订阅节点不可能真的起来（startNode 会拒绝），所以这里也不要
+		// 把它算进"上次处于激活状态"的名单里。
+		if n.Active && !n.PortPending() {
 			ids = append(ids, n.ID)
 		}
 	}
@@ -621,6 +664,13 @@ func (a *App) startNode(id string) error {
 		return fmt.Errorf("节点不存在")
 	}
 	n := a.cfg.Nodes[idx]
+	// 【未分配端口的订阅节点不能启动】net.Listen 遇到端口 0 会随便挑一个临时端口，
+	// 于是"配置里写的"和"实际监听的"对不上（审查 #21 记过这个坑）。订阅节点默认不占
+	// 端口（一次导入可能上千个），要它跑起来必须先由用户点「启用」分配 —— 见 Node.PortPending。
+	if n.PortPending() {
+		a.mu.Unlock()
+		return fmt.Errorf("「%s」还没分配本地端口：订阅节点点「启用」才会分配并启动", n.Name)
+	}
 	// 监听地址由 AllowLan 统一决定
 	n.ListenHost = a.cfg.ListenHostEffective(n)
 

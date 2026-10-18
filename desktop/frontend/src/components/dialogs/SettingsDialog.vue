@@ -147,6 +147,8 @@ function blankSettings() {
     logLines: 500,
     shortcutToggleWindow: 'Ctrl+Alt+C',
     shortcutToggleAll: 'Ctrl+Alt+Shift+A',
+    // 订阅下载用的 UA。默认值与后端 config.DefaultSubscriptionUA 保持一致。
+    subscriptionUserAgent: 'clash.meta/mihomo-1.19.32',
   }
 }
 
@@ -379,6 +381,24 @@ const meta = computed(() => store.meta || {})
           </el-form-item>
         </el-form>
         <el-tooltip content="真连接延迟：走完整链路请求一个极小的 204 页面，最接近实际体验。TCP 延迟：只做一次 TCP 握手、不经代理，用来快速筛掉不可达节点" placement="top" :show-after="400"><span class="cp-tip-icon">?</span></el-tooltip>
+      </el-tab-pane>
+
+      <!-- ------------------------------------------------------------ -->
+      <el-tab-pane label="订阅" name="subscribe">
+        <div class="cp-section">机场订阅</div>
+        <el-form class="cp-form" label-width="140px">
+          <el-form-item label="下载 User-Agent">
+            <el-input v-model="form.subscriptionUserAgent" placeholder="clash.meta/mihomo-1.19.32" />
+            <el-tooltip
+              content="机场按它决定给你什么格式、甚至给哪些节点：同一家机场，clash 系 UA 拿到的是含 hysteria2 的超集，v2ray 系 UA 只给一部分；UA 里含 clash 还是拿到流量/到期响应头的前提。导入后发现节点明显偏少时，换成别家客户端在用的 UA（例如 clash-verge/v1.6.0）通常就正常了"
+              placement="top"
+              :show-after="400"
+            ><span class="cp-tip-icon">?</span></el-tooltip>
+          </el-form-item>
+        </el-form>
+        <div class="cp-hint" style="margin-top: 6px">
+          导入、更新、分组与流量到期都在节点列表里：组头右键菜单。每条订阅还可以单独覆盖 UA。
+        </div>
       </el-tab-pane>
 
       <!-- ------------------------------------------------------------ -->

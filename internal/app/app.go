@@ -32,6 +32,10 @@ const (
 	EventStats    = "stats"    // 流量统计刷新（高频，1 秒一次）
 	EventNotify   = "notify"   // 通用通知（右上角弹出）
 	EventTestDone = "testDone" // 某项测试完成
+	// EventSubscriptions 是订阅本身变化（增删/改名/UA/间隔/更新完成后的元信息）。
+	// 与 EventNodes 分开是因为两者刷新的东西不同：订阅改名不需要重画节点列表。
+	// desktop 层是通用转发（见 api.go 的 Subscribe），所以这里加一条不用改那边。
+	EventSubscriptions = "subscriptions"
 )
 
 // Event 是应用向外广播的事件。

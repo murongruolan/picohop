@@ -150,6 +150,16 @@ export const api = {
   // 导入 / 分享
   importFromClipboard: () => call('ImportFromClipboard'),
   parseShareText: (text) => call('ParseShareText', text),
+
+  // ---- 机场订阅 ----
+  getSubscriptions: () => call('GetSubscriptions'),
+  previewSubscription: (req) => call('PreviewSubscription', req),
+  importSubscription: (req) => call('ImportSubscription', req),
+  refreshSubscription: (id) => call('RefreshSubscription', id),
+  saveSubscriptionMeta: (sub) => call('SaveSubscriptionMeta', sub),
+  deleteSubscription: (id, alsoNodes) => call('DeleteSubscription', id, !!alsoNodes),
+  clearMissingNodes: (id) => call('ClearMissingNodes', id),
+  enableSubscriptionNode: (id) => call('EnableSubscriptionNode', id),
   beginScreenScan: () => call('BeginScreenScan'),
   scanning: () => call('Scanning'),
   shareNode: (id) => call('ShareNode', id),

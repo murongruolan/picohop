@@ -73,6 +73,18 @@ type NodeView struct {
 
 	LastUsed  time.Time `json:"lastUsed"`
 	CreatedAt time.Time `json:"createdAt"`
+
+	// ---- 订阅归属（方案的"分组"就靠这几个字段）----
+	//
+	// SubID 为空表示这是手动节点；界面据此把它归到"手动节点"那一组。
+	// SubName 是后端查好的分组名 —— 省得前端再自己 join 一次订阅表。
+	SubID      string `json:"subId"`
+	SubName    string `json:"subName"`
+	SubOrder   int    `json:"subOrder"`
+	SubMissing bool   `json:"subMissing"`
+	// PortPending 为真表示这个订阅节点"还没分配本地端口"（点启用/激活才分配）。
+	// 界面靠它在端口列显示「未分配」，而不是显示一个会误导人的 0。
+	PortPending bool `json:"portPending"`
 }
 
 // Summary 是顶部的总览。
@@ -140,6 +152,11 @@ func (a *App) Nodes() []NodeView {
 	for k, v := range a.errs {
 		errs[k] = v
 	}
+	// 订阅 ID → 分组名：界面要按它画分组头，别让前端再自己去 join 一遍。
+	subNames := make(map[string]string, len(a.cfg.Subscriptions))
+	for _, s := range a.cfg.Subscriptions {
+		subNames[s.ID] = s.Name
+	}
 	exits := make(map[string]string, len(a.exitIPs))
 	for k, v := range a.exitIPs {
 		exits[k] = v
@@ -150,6 +167,14 @@ func (a *App) Nodes() []NodeView {
 	for _, n := range nodes {
 		v := a.buildView(n, servers[n.ID], errs[n.ID])
 		v.ExitIP = exits[n.ID]
+		// 订阅归属相关字段在这里补：分组名要查订阅表，而 buildView 不该自己去取锁。
+		if n.SubID != "" {
+			v.SubID = n.SubID
+			v.SubName = subNames[n.SubID]
+			v.SubOrder = n.SubOrder
+			v.SubMissing = n.SubMissing
+		}
+		v.PortPending = n.PortPending()
 		out = append(out, v)
 	}
 	return out
