@@ -114,6 +114,17 @@ function rowClass({ row }) {
 }
 
 /**
+ * 单元格类名：给订阅节点的「别名」列加缩进用的类。
+ *
+ * 【为什么用这个而不是在模板里套一层 span】套包装元素会改变行盒，把 inline-block 的
+ * 协议标签挤到基线下方（实测踩过）。`cell-class-name` 只加类、不动 DOM 结构。
+ */
+function cellClass({ row, column }) {
+  if (row.__group) return ''
+  return row.subId && column?.property === 'name' ? 'cp-node-indent' : ''
+}
+
+/**
  * 组行横跨所有列。
  *
  * 这样组头（名字、节点数、流量/到期、更新按钮）就与用户怎么排列表格列无关；
@@ -287,6 +298,7 @@ onBeforeUnmount(() => {
       :tree-props="{ children: 'children' }"
       :expand-row-keys="store.openGroups.map((g) => 'g:' + g)"
       :row-class-name="rowClass"
+      :cell-class-name="cellClass"
       :span-method="spanMethod"
       @row-click="onRowClick"
       @row-contextmenu="onRowContextMenu"
@@ -354,15 +366,12 @@ onBeforeUnmount(() => {
           <!--
             节点行：还是原来的单元格渲染。
 
-            订阅节点在「别名」列上加一点缩进，让"组 → 组里的节点"读起来有层次。
-            缩进只加在别名列：类型列是最窄的一列，往里塞缩进会把协议标签挤断。
+            订阅节点在「别名」列上缩进一点，让"组 → 组里的节点"看得出层次。
+            缩进走 `cell-class-name`（给单元格加类），**不套包装元素** ——
+            套一层 inline span 会多出一个行盒，`.cp-tag` 这种 inline-block 的标签
+            比行盒高，就会坠到基线下方（实测：类型列的标签贴着行下边框）。
           -->
-          <span
-            v-else
-            :class="{ 'cp-node-indent': row.subId && c.key === 'name' }"
-          >
-            <NodeCell :row="row" :col="c.key" />
-          </span>
+          <NodeCell v-else :row="row" :col="c.key" />
         </template>
       </el-table-column>
 
@@ -479,9 +488,10 @@ onBeforeUnmount(() => {
 .cp-group-spacer {
   flex: 1 1 auto;
 }
-/* 组内节点的第一列缩进：只挪第一列，别动用户在列宽上排好的对齐 */
-.cp-node-indent {
-  padding-left: 18px;
+/* 组内节点的缩进：只挪「别名」列，不动其它列（列宽与对齐是用户自己排的）。
+   Element Plus 的单元格内边距是 0 12px，这里在左边多给 18px。 */
+.cp-table-wrap .el-table__body td.cp-node-indent .cell {
+  padding-left: 30px;
 }
 .cp-group-more {
   font-size: 12px;
