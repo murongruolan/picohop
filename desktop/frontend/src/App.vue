@@ -25,6 +25,7 @@ import PortOnlyDialog from './components/dialogs/PortOnlyDialog.vue'
 import ShareDialog from './components/dialogs/ShareDialog.vue'
 import SettingsDialog from './components/dialogs/SettingsDialog.vue'
 import ImportDialog from './components/dialogs/ImportDialog.vue'
+import SubscriptionDialog from './components/dialogs/SubscriptionDialog.vue'
 
 const store = useStore()
 const ui = useUi()
@@ -214,6 +215,9 @@ async function handleDevOpen(name) {
       }
       break
     }
+    case 'subadd':
+      ui.subDialog = true
+      break
     case 'logs':
       ui.logDrawer = true
       break
@@ -1239,5 +1243,6 @@ function onKeydown(e) {
     <ShareDialog />
     <SettingsDialog />
     <ImportDialog />
+    <SubscriptionDialog />
   </div>
 </template>

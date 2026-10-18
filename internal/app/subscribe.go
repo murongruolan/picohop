@@ -97,6 +97,12 @@ func (a *App) ImportSubscription(ctx context.Context, req ImportSubscriptionRequ
 	if sub.Name == "" {
 		sub.Name = "订阅"
 	}
+	// 【与设置里的 UA 相同时就不要记进订阅】User-Agent 属于"设置"：用户在
+	// 「设置 → 订阅」里改一次，所有订阅都该跟着变。只有用户给某一条订阅专门填了
+	// 一个**不一样**的 UA 时，才把它记在订阅自己身上（那时它才是真正的逐条覆盖）。
+	if strings.EqualFold(sub.UserAgent, strings.TrimSpace(a.subUA())) {
+		sub.UserAgent = ""
+	}
 
 	resp, nodes, sk, err := a.fetchAndParse(ctx, sub)
 	if err != nil {

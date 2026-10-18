@@ -56,6 +56,13 @@ export const useUi = defineStore('cp-ui', {
     settingsDialog: false,
     /** 导入对话框 */
     importDialog: false,
+    /**
+     * 「添加订阅链接」对话框。
+     *
+     * 订阅独立成一个弹窗（而不是塞在导入对话框里）：要填的东西更多（链接、分组名、
+     * User-Agent、更新间隔），还要先预览一次"会导入什么"。
+     */
+    subDialog: false,
     /** 日志抽屉 */
     logDrawer: false,
     /** 右键菜单：node 与 group 二选一（节点菜单 / 订阅组头菜单）。 */

@@ -434,12 +434,25 @@ onBeforeUnmount(() => {
   background: var(--cp-group-bg-hover);
 }
 .cp-group {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 8px;
   user-select: none;
   cursor: pointer;
   min-width: 0;
+}
+/*
+ * 组行的方向标由我们自己画（见上面的 chevron），所以要把 Element Plus 树形模式
+ * 自带的展开箭头与缩进关掉。
+ *
+ * 【为什么必须关】展开的组才有 children，库才会给这一行插它自己的"箭头 + 缩进"；
+ * 结果是：组头被挤到第二行、整行变高，而收起时又恢复 —— 用户实测反馈的就是这个
+ * "展开时组头往下走一行"。
+ */
+.cp-table-wrap .el-table__body tr.cp-group-row .el-table__expand-icon,
+.cp-table-wrap .el-table__body tr.cp-group-row .el-table__indent,
+.cp-table-wrap .el-table__body tr.cp-group-row .el-table__placeholder {
+  display: none !important;
 }
 .cp-group-chevron {
   display: inline-flex;
