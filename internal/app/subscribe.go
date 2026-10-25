@@ -439,36 +439,58 @@ func describeSketch(sk subscribe.Sketch) string {
 	return strings.Join(parts, "，")
 }
 
-// subscriptionProxy 返回"经代理更新订阅"要用的本机代理地址；没有可用代理时返回空串。
+// subscriptionProxy 返回"经代理更新订阅"要用的代理地址；没有可用代理时返回空串。
 //
-// 优先用用户配置的**全局前置**（那正是他为了"个别网站走住宅 IP"准备的代理）；
-// 前置是直连时退而使用第一个正在运行的节点端口。
+// 两档，按顺序取第一个可用的：
+//
+//  1. **全局前置**（「设置 → 前置」那一组）：那正是用户为了"个别网站走住宅 IP"
+//     准备的代理，更新订阅走它最符合直觉。前置有账号密码时**必须带上** ——
+//     付费住宅代理几乎都要认证，不带就会 407（见 config.Front.ProxyURL）。
+//  2. 前置是直连（或没填全）时，退而用**第一个正在运行的节点**的本机端口
+//     （我们每个节点的端口都是 mixed，socks5 直接可用）。开了「允许局域网」
+//     并给节点配了本地鉴权时，也要把凭据带上，否则会被自己的端口拒绝。
+//
+// 两档都拿不到就返回空串，调用方会明确记一行日志说"本次改走直连"（不静默）。
 func (a *App) subscriptionProxy() string {
 	a.mu.RLock()
 	f := a.cfg.Front
-	var runningPort int
+	var node config.Node
+	found := false
 	for _, n := range a.cfg.Nodes {
 		if n.ListenPort <= 0 {
 			continue
 		}
 		if s := a.servers[n.ID]; s != nil && s.Running() {
-			runningPort = n.ListenPort
+			node = n
+			found = true
 			break
 		}
 	}
 	a.mu.RUnlock()
 
-	if f.Type != "" && f.Type != config.FrontTypeDirect && f.Host != "" && f.Port > 0 {
-		scheme := "socks5"
-		if strings.EqualFold(f.Type, config.FrontTypeHTTP) {
-			scheme = "http"
-		}
-		return scheme + "://" + net.JoinHostPort(f.Host, strconv.Itoa(f.Port))
+	if u := f.ProxyURL(); u != "" {
+		return u
 	}
-	if runningPort > 0 {
-		return "socks5://127.0.0.1:" + strconv.Itoa(runningPort)
+	if found {
+		return nodeSocksURL(node)
 	}
 	return ""
+}
+
+// nodeSocksURL 拼出"经某个本机节点端口"的 socks5 地址，带上它的本地鉴权（若有）。
+func nodeSocksURL(n config.Node) string {
+	host := n.ListenHost
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	u := &url.URL{
+		Scheme: "socks5",
+		Host:   net.JoinHostPort(host, strconv.Itoa(n.ListenPort)),
+	}
+	if n.ListenUsername != "" || n.ListenPassword != "" {
+		u.User = url.UserPassword(n.ListenUsername, n.ListenPassword)
+	}
+	return u.String()
 }
 
 // SubscriptionsView 是给界面用的订阅快照（含节点计数）。

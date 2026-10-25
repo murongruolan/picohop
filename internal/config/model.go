@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -34,6 +35,26 @@ const (
 // Address 返回前置代理的 host:port。
 func (f Front) Address() string {
 	return net.JoinHostPort(f.Host, strconv.Itoa(f.Port))
+}
+
+// ProxyURL 返回可直接交给 HTTP 客户端的代理地址；"直连"或没填全时返回空串。
+//
+// 【为什么必须带上用户名密码】前置常常是付费的住宅/机房代理，几乎都要认证。
+// 少了凭据，任何"经前置"的请求都会直接失败（407 / 代理要求认证）。
+// 凭据按 URL 规则转义 —— 密码里出现 @ : / 这类字符是常事，直接拼会把 URL 拼坏。
+func (f Front) ProxyURL() string {
+	if f.Type == "" || f.Type == FrontTypeDirect || f.Host == "" || f.Port <= 0 {
+		return ""
+	}
+	scheme := "socks5"
+	if strings.EqualFold(f.Type, FrontTypeHTTP) {
+		scheme = "http"
+	}
+	u := &url.URL{Scheme: scheme, Host: net.JoinHostPort(f.Host, strconv.Itoa(f.Port))}
+	if f.Username != "" || f.Password != "" {
+		u.User = url.UserPassword(f.Username, f.Password)
+	}
+	return u.String()
 }
 
 // Timeout 返回前置代理超时时长（毫秒）。
