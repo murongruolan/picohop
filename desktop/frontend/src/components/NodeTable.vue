@@ -114,14 +114,23 @@ function rowClass({ row }) {
 }
 
 /**
- * 单元格类名：给订阅节点的「别名」列加缩进用的类。
+ * 单元格类名。
  *
- * 【为什么用这个而不是在模板里套一层 span】套包装元素会改变行盒，把 inline-block 的
- * 协议标签挤到基线下方（实测踩过）。`cell-class-name` 只加类、不动 DOM 结构。
+ * 两个用途：
+ *   - `cp-node-indent`：订阅节点的「别名」列缩进一点，让分组层次看得见；
+ *   - `cp-tag-cell`：「类型」「传输协议」两列的内容只有一个协议标签。这两列的单元格
+ *     自己要做成 flex 容器来垂直居中 —— `inline-block` 的标签默认按**基线**对齐，
+ *     在表格这类行高比内容高的地方会明显往下坠（实测比别名文字低 8~9px）。
+ *     用单元格级的 flex 比在模板里套一层包装 span 可靠：不管里面装的是行内还是块级，
+ *     都由单元格统一居中。
  */
 function cellClass({ row, column }) {
   if (row.__group) return ''
-  return row.subId && column?.property === 'name' ? 'cp-node-indent' : ''
+  const prop = column?.property
+  const classes = []
+  if (row.subId && prop === 'name') classes.push('cp-node-indent')
+  if (prop === 'protocol' || prop === 'transport') classes.push('cp-tag-cell')
+  return classes.join(' ')
 }
 
 /**
@@ -492,6 +501,23 @@ onBeforeUnmount(() => {
    Element Plus 的单元格内边距是 0 12px，这里在左边多给 18px。 */
 .cp-table-wrap .el-table__body td.cp-node-indent .cell {
   padding-left: 30px;
+}
+
+/*
+ * 只装一个协议标签的列（类型 / 传输协议）：把**单元格内容**变成 flex 容器来居中。
+ *
+ * 【为什么必须这么做】`.cp-tag` 是 inline-block，默认按基线对齐，而表格行通常比
+ * 一个标签高，于是标签整体往下坠（实测比同一行的别名文字低 8~9px，看起来像贴着行下边框）。
+ * 给标签自己写 `vertical-align: middle` 效果不够；把单元格内容做成 flex、用
+ * `align-items: center`，才是与行高无关的居中。别名列本来就靠 `.cp-name` 的 flex 居中，
+ * 这两列现在与它同一套机制。
+ */
+.cp-table-wrap .el-table__body td.cp-tag-cell .cell {
+  display: flex;
+  align-items: center;
+  /* 必须撑满行高：flex 容器若只有自身内容那么高，align-items 等于没做事，
+     而表格行往往被同一行的别名列撑得更高（那一列是块级 .cp-name）。 */
+  height: 100%;
 }
 .cp-group-more {
   font-size: 12px;
