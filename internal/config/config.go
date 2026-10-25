@@ -317,11 +317,11 @@ func (c *Config) Validate() []Issue {
 
 		// 本地监听端口
 		//
-		// 【订阅节点允许"未分配"】订阅导入的节点默认不占端口（见 Node.PortPending），
-		// 那是**正常状态**、不是配置错误 —— 否则一次导入上千个节点，界面会被上千条
-		// 校验报错淹没。但"未分配却又处于激活"是明确错误，必须报出来：它一定起不来
-		// （startNode 会拒绝），让用户带着错误配置去点启动只会更迷惑。
-		if n.PortPending() && n.IsSubNode() && !n.Active {
+		// 【"未分配"对任何节点都是正常状态】订阅导入的节点默认不占端口；手动节点也可以
+		// 通过右键菜单「端口置于未分配」回到这个状态。所以这里一律放行，不占 seenPort。
+		// 但"未分配却又处于激活"是明确错误，必须报出来：它一定起不来（startNode 会拒绝），
+		// 让用户带着错误配置去点启动只会更迷惑。
+		if n.PortPending() && !n.Active {
 			// 跳过端口校验，也不占 seenPort
 		} else if err := validPort(n.ListenPort); err != nil {
 			add(scope, "listenPort", "%v", err)

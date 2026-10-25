@@ -180,12 +180,23 @@ func TestValidateAllowsPendingSubscriptionNodes(t *testing.T) {
 		t.Fatalf("报错应指向 listenPort，实际：%+v", issues)
 	}
 
-	// 手动节点没有端口仍然要报错（别把这条例外开成万能口子）
+	// 手动节点"未分配"也应当放行：右键菜单里有「端口置于未分配」，一键之后配置不能立刻报错
 	cfg2 := Default()
 	cfg2.Nodes = []Node{{ID: "m1", Name: "手动节点", Protocol: ProtocolVLESS,
 		ListenHost: "127.0.0.1", Server: "b.example.com", Port: 443,
 		UUID: "11111111-2222-3333-4444-555555555555"}}
-	if issues := cfg2.Validate(); len(issues) == 0 {
-		t.Fatal("手动节点没有本地端口必须报错")
+	if issues := cfg2.Validate(); len(issues) != 0 {
+		t.Fatalf("未分配的手动节点不该报错：%+v", issues)
+	}
+	// 但它一旦被标成激活，就必须报错（那种状态一定起不来）
+	cfg2.Nodes[0].Active = true
+	bad := false
+	for _, is := range cfg2.Validate() {
+		if is.Field == "listenPort" {
+			bad = true
+		}
+	}
+	if !bad {
+		t.Fatal("未分配却激活的手动节点必须报错")
 	}
 }

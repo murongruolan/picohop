@@ -328,13 +328,17 @@ export const useStore = defineStore('cp', {
         // init 还没跑完，等它
       }
       try {
-        const [nodes, summary, testing] = await Promise.all([
+        const [nodes, summary, testing, subs] = await Promise.all([
           api.getNodes(),
           api.getSummary(),
           api.isTesting(),
+          // 订阅表也要一起刷：组头的「N 个未启用 / 已下架」是由它算的，
+          // 只刷节点的话，激活一个节点后组头还显示旧的计数。
+          api.getSubscriptions(),
         ])
         this.nodes = nodes || []
         this.summary = summary || {}
+        this.subscriptions = subs || []
         this.testing = !!testing
         // 清理已经不存在的选中项
         const ids = new Set(this.nodes.map((n) => n.id))
@@ -547,6 +551,13 @@ export const useStore = defineStore('cp', {
     /** 上次的滚动位置（表格挂载后恢复用）。 */
     savedScrollTop() {
       return this.listScrollTop || 0
+    },
+
+    /** 把所选节点的本地端口置于未分配（后端会先停掉激活中的）。 */
+    async unassignPorts(ids) {
+      const n = await api.unassignNodePorts(ids)
+      await this.refresh()
+      return n
     },
 
     /** 启用一个还没分配端口的订阅节点：后端会分配端口并启动它。 */

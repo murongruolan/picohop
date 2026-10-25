@@ -127,10 +127,7 @@ function rowClass({ row }) {
 function cellClass({ row, column }) {
   if (row.__group) return ''
   const prop = column?.property
-  const classes = []
-  if (row.subId && prop === 'name') classes.push('cp-node-indent')
-  if (prop === 'protocol' || prop === 'transport') classes.push('cp-tag-cell')
-  return classes.join(' ')
+  return prop === 'protocol' || prop === 'transport' ? 'cp-tag-cell' : ''
 }
 
 /**
@@ -329,10 +326,17 @@ onBeforeUnmount(() => {
         <template #default="{ row }">
           <!-- 组行：整行横跨，画成组头 -->
           <div v-if="row.__group" class="cp-group" @click.stop="store.toggleGroup(row.group.id)">
-            <span class="cp-group-chevron" :class="{ 'is-open': store.isGroupOpen(row.group.id) }">
-              <el-icon><Top /></el-icon>
+            <!--
+              方向标 + 分组名放在固定宽度的 lead 里：名字短的时候也把后面撑到同一条竖线上，
+              于是所有分组的「N 个节点 / 流量 / 到期」都从同一个 x 开始，扫一眼就能竖着比。
+              名字特别长时（超过 lead 里的上限）整体往右让位，不挤掉后面的信息。
+            -->
+            <span class="cp-group-lead">
+              <span class="cp-group-chevron" :class="{ 'is-open': store.isGroupOpen(row.group.id) }">
+                <el-icon><Top /></el-icon>
+              </span>
+              <span class="cp-group-name" :title="row.group.name">{{ row.group.name }}</span>
             </span>
-            <span class="cp-group-name" :title="row.group.name">{{ row.group.name }}</span>
             <span class="cp-group-count">{{ row.group.nodes.length }} 个节点</span>
 
             <template v-if="!row.group.isManual">
@@ -459,6 +463,19 @@ onBeforeUnmount(() => {
   cursor: pointer;
   min-width: 0;
 }
+/* 整行都是可点的（不只是压在组头那一小块文字上），所以光标要整行都是手型 */
+.cp-table-wrap .el-table__body tr.cp-group-row > td.el-table__cell {
+  cursor: pointer;
+}
+/* 方向标 + 名字：固定最小宽度 188px（加上单元格左右 12px 内边距 = 从行左边缘起 200px），
+   名字长到超过上限时这个盒子跟着变宽，把后面的信息整体往右推。 */
+.cp-group-lead {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 188px;
+}
 /*
  * 组行的方向标由我们自己画（见上面的 chevron），所以要把 Element Plus 树形模式
  * 自带的展开箭头与缩进关掉。
@@ -474,6 +491,7 @@ onBeforeUnmount(() => {
 }
 .cp-group-chevron {
   display: inline-flex;
+  flex: 0 0 16px;
   color: var(--cp-text-3);
   transition: transform 0.15s ease;
 }
@@ -486,7 +504,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 320px;
+  max-width: 420px;
 }
 .cp-group-count,
 .cp-group-meta {
@@ -497,11 +515,8 @@ onBeforeUnmount(() => {
 .cp-group-spacer {
   flex: 1 1 auto;
 }
-/* 组内节点的缩进：只挪「别名」列，不动其它列（列宽与对齐是用户自己排的）。
-   Element Plus 的单元格内边距是 0 12px，这里在左边多给 18px。 */
-.cp-table-wrap .el-table__body td.cp-node-indent .cell {
-  padding-left: 30px;
-}
+/* 【已删除】曾经给订阅节点的「别名」列加过 18px 缩进做层次感，使用者反馈
+   看起来就像"名字前面塞了两个空格"，去掉；层次靠组头体现就够了。 */
 
 /*
  * 只装一个协议标签的列（类型 / 传输协议）：把**单元格内容**变成 flex 容器来居中。

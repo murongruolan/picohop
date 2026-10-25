@@ -41,7 +41,7 @@ const stateLabel = computed(() => {
   return props.row.active ? '待启动' : '未激活'
 })
 
-/** 延迟分档着色：<300 绿 / <800 橙 / 其余红，一眼看出快慢。 */
+/** 延迟分档着色：<=500 绿 / 其余红（分界线对齐对照客户端，见下面的 latencyClass）。 */
 // 「延迟」列显示最后一次测试的结果：测真连接就显示真连接、测 TCP 就显示 TCP。
 // 用后端给的 latencyKind 判断哪次在后（每次测试都会更新它）。
 function latestLatency(r) {
@@ -61,11 +61,21 @@ function staleNote(what, at) {
   return `最近一次${what}没有测出数值，这里是上次成功的结果${when}`
 }
 
+/**
+ * 延迟分档着色。
+ *
+ * 【为什么分界线是 500ms、而且只有两档】使用者拿另一家客户端实测同一批节点做对照：
+ * 那边 480ms 还是绿的，我们这里却是橙的。查了那家的实现（全仓库唯一一处着色逻辑）：
+ *   <=0 → 红（失败/未测）、<=500 → 绿、>500 → 暖红
+ * 也就是**没有中间档**，绿的上界是 500。我们原来是 300/800 三档，所以对不上。
+ *
+ * 我们对齐成两档；唯独"没测出/失败"我们显示灰色与 "—"（不染红），
+ * 这一点保留（见下面延迟列的三态处理）：那是"没有结论"，不是"慢"。
+ * 注意 .cp-lat-mid 仍然被"测试失败"那种状态用着，别一起删掉。
+ */
 function latencyClass(v) {
   if (!v || v <= 0) return 'cp-dim'
-  if (v < 300) return 'cp-lat-good'
-  if (v < 800) return 'cp-lat-mid'
-  return 'cp-lat-bad'
+  return v <= 500 ? 'cp-lat-good' : 'cp-lat-bad'
 }
 
 async function copyPort() {

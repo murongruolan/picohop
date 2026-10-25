@@ -18,6 +18,7 @@ import {
   Link,
   Odometer,
   Refresh,
+  Remove,
   SwitchButton,
   Timer,
   Top,
@@ -94,6 +95,17 @@ const doCopyAddress = run(async () => {
     notify('success', '已复制本地代理地址', text)
   } catch (e) {
     notify('error', '复制失败', String(e?.message || e))
+  }
+})
+
+/** 端口置于未分配：多选时对所选全部生效。 */
+const doUnassignPorts = run(async () => {
+  const ids = store.selectedIds.length ? store.selectedIds : [node.value.id]
+  try {
+    const n = await store.unassignPorts(ids)
+    notify('success', '已置于未分配', n > 0 ? `${n} 个节点` : '所选节点本来就是未分配')
+  } catch (e) {
+    notify('error', '操作失败', String(e?.message || e))
   }
 })
 
@@ -246,23 +258,29 @@ const doGroupDelete = (alsoNodes) =>
       <span>{{ activateLabel }}</span>
       <span class="cp-menu-key">回车</span>
     </div>
-    <div class="cp-menu-item" @click="doSetGlobal">
+    <!-- 全局节点只能有一个：多选时这一项没意义，隐掉 -->
+    <div v-if="count <= 1" class="cp-menu-item" @click="doSetGlobal">
       <el-icon><Star /></el-icon>
       <span>{{ isGlobal ? '取消全局节点' : '设为全局节点' }}</span>
     </div>
 
-    <div class="cp-menu-item" @click="doEdit">
+    <!-- 编辑 / 克隆 / 分享都是"针对一个节点"的操作，多选时隐掉 -->
+    <div v-if="count <= 1" class="cp-menu-item" @click="doEdit">
       <el-icon><Edit /></el-icon>
       <span>编辑</span>
       <span class="cp-menu-key">双击</span>
     </div>
-    <div class="cp-menu-item" @click="doClone">
+    <div v-if="count <= 1" class="cp-menu-item" @click="doClone">
       <el-icon><CopyDocument /></el-icon>
       <span>克隆此项</span>
     </div>
     <div class="cp-menu-item" @click="doCopyAddress">
       <el-icon><Link /></el-icon>
       <span>复制本地代理地址</span>
+    </div>
+    <div class="cp-menu-item" @click="doUnassignPorts">
+      <el-icon><Remove /></el-icon>
+      <span>端口置于未分配</span>
     </div>
 
     <div class="cp-menu-sep" />
@@ -290,7 +308,7 @@ const doGroupDelete = (alsoNodes) =>
 
     <div class="cp-menu-sep" />
 
-    <div class="cp-menu-item" @click="doShare">
+    <div v-if="count <= 1" class="cp-menu-item" @click="doShare">
       <el-icon><Link /></el-icon>
       <span>分享</span>
     </div>

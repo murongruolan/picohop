@@ -160,6 +160,7 @@ export const api = {
   deleteSubscription: (id, alsoNodes) => call('DeleteSubscription', id, !!alsoNodes),
   clearMissingNodes: (id) => call('ClearMissingNodes', id),
   enableSubscriptionNode: (id) => call('EnableSubscriptionNode', id),
+  unassignNodePorts: (ids) => call('UnassignNodePorts', ids),
   beginScreenScan: () => call('BeginScreenScan'),
   scanning: () => call('Scanning'),
   shareNode: (id) => call('ShareNode', id),
