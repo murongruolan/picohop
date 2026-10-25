@@ -87,7 +87,7 @@ async function copyPort() {
 
   <!-- 类型 -->
   <template v-else-if="col === 'protocol'">
-    <span class="cp-tag is-brand">{{ row.protocolLabel }}</span>
+    <span class="cp-tag-row"><span class="cp-tag is-brand">{{ row.protocolLabel }}</span></span>
   </template>
 
   <!-- 别名：前面带状态点，这里也承担"测试中"的指示 -->
@@ -136,7 +136,7 @@ async function copyPort() {
   </template>
 
   <template v-else-if="col === 'transport'">
-    <span class="cp-tag">{{ row.transport }}</span>
+    <span class="cp-tag-row"><span class="cp-tag">{{ row.transport }}</span></span>
   </template>
 
   <!-- 延迟 -->
@@ -256,6 +256,18 @@ async function copyPort() {
 </template>
 
 <style scoped>
+/*
+ * 标签单元格：与别名列的 .cp-name 同一套做法 —— 用 flex 让内容真正垂直居中。
+ *
+ * 【为什么不能只给标签写 vertical-align: middle】inline-block 默认按基线对齐，标签盒
+ * 会沿行盒基线往下坠；实测（像素级量过）「类型」列的协议标签比同一行的别名文字低 8~9px，
+ * 看着就像贴着行下边框。别名列之所以一直是对的，正是因为它有 .cp-name 这个 flex 容器。
+ */
+.cp-tag-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
 .cp-linklike {
   cursor: pointer;
   border-bottom: 1px dashed transparent;
