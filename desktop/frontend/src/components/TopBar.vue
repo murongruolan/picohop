@@ -11,6 +11,7 @@ import {
   Connection,
   Document,
   EditPen,
+  Link,
   Monitor,
   Moon,
   Plus,
@@ -41,6 +42,7 @@ function onImportCommand(cmd) {
   if (cmd === 'clipboard') actions.importFromClipboard()
   else if (cmd === 'screen') actions.scanScreen()
   else if (cmd === 'text') ui.importDialog = true
+  else if (cmd === 'subscribe') ui.subDialog = true
 }
 
 function toggleTheme() {
@@ -115,6 +117,10 @@ const themeTip = computed(() => {
           </el-dropdown-item>
           <el-dropdown-item command="text" :icon="EditPen" divided>
             手动粘贴链接…
+          </el-dropdown-item>
+          <!-- 订阅与"粘一条分享链接"是两件事，所以单独一项、单独一个弹窗 -->
+          <el-dropdown-item command="subscribe" :icon="Link">
+            添加订阅链接…
           </el-dropdown-item>
         </el-dropdown-menu>
       </template>

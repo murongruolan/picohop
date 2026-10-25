@@ -1,15 +1,15 @@
 <script setup>
 /**
- * 导入：分享链接 + 机场订阅。
+ * 手动粘贴分享链接。
  *
- * 分享链接这条路与「从剪贴板导入」是同一套解析逻辑，只是把输入权交给用户 ——
+ * 和「从剪贴板导入」是同一套解析逻辑，只是把输入权交给用户 ——
  * 有时候链接在网页里、聊天记录里，剪贴板里那条不是想要的。
  *
- * 机场订阅单独一个弹窗（见 SubscriptionDialog.vue）：要填的东西更多，还要先预览。
- * 这里只放一个入口。
+ * 机场订阅不在这里：它是「导入」下拉菜单里的单独一项（见 TopBar），
+ * 点开是 SubscriptionDialog —— 要填的东西更多，还要先预览一次"会进来什么"。
  */
 import { computed, ref } from 'vue'
-import { Link, Monitor, Upload } from '@element-plus/icons-vue'
+import { Monitor, Upload } from '@element-plus/icons-vue'
 import { useUi } from '../../ui'
 import { useActions } from '../../actions'
 
@@ -47,11 +47,6 @@ async function fromClipboard() {
 async function fromScreen() {
   await actions.scanScreen()
 }
-
-function addSubscription() {
-  ui.importDialog = false
-  ui.subDialog = true
-}
 </script>
 
 <template>
@@ -86,9 +81,6 @@ function addSubscription() {
         解析并添加
       </el-button>
     </div>
-
-    <div class="cp-section">机场订阅</div>
-    <el-button :icon="Link" @click="addSubscription">添加订阅链接</el-button>
 
     <template #footer>
       <el-button @click="ui.importDialog = false">关闭</el-button>
