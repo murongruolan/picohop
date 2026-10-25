@@ -26,7 +26,7 @@
 # 所有 Go / npm 缓存都在项目目录内（见 scripts\env.ps1），不在外部留下任何文件。
 # ---------------------------------------------------------------------------
 param(
-    [string]$Version = "1.0.0",
+    [string]$Version = "1.1.0",
     [switch]$Cli,
     [switch]$Gui,
     [switch]$SkipFrontend

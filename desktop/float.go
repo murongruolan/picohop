@@ -64,7 +64,7 @@ var floatSizes = map[string][2]int{
 //
 // 窗口是无边框的，所以在界面上看不到它 —— 但标题仍然有用：
 // 它决定任务栏/Alt+Tab 里显示什么，也是自测截图按标题定位窗口的依据
-// （主窗口叫"PicoHop · 链式代理"，浮动窗口必须能区分开）。
+// （主窗口叫"PicoHop"，浮动窗口必须能区分开）。
 var floatTitles = map[string]string{
 	"node": "PicoHop · 添加 / 编辑节点",
 }

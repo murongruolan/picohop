@@ -145,7 +145,7 @@ func setupTray(wapp *application.App, api *API) {
 	// 句柄登记到 API：全局代理模式开/关时要换图标（映射见 tray_state.go）。
 	// 此刻后端还没起来、读不到设置，所以先按"普通"画；启动收尾会 refreshTrayMode 纠正。
 	api.setTray(tray, trayModeNormal)
-	tray.SetTooltip("PicoHop · 链式代理")
+	tray.SetTooltip("PicoHop")
 
 	menu := application.NewMenu()
 	menu.Add("显示主窗口").OnClick(func(*application.Context) {

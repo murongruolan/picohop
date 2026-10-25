@@ -16,7 +16,7 @@ info:
   description: "链式代理：本地多端口 → 前置代理 → 出口节点"
   copyright: "(c) murongruolan"
   comments: "链式代理：本地多端口 → 前置代理 → 出口节点。不会注册开机自启动。"
-  version: "1.0.0"
+  version: "1.1.0"
 
 # 开发模式的说明（本项目的日常调试走 -open 自测参数 + 截图，
 # 不依赖 wails3 dev；保留默认值即可）

@@ -7,7 +7,7 @@ import (
 
 // DefaultSubscriptionUA 是订阅下载默认使用的 User-Agent。
 //
-// 【为什么不是 "PicoHop/1.0.0"】机场普遍按 UA 决定给你什么格式，甚至决定给你**哪些节点**。
+// 【为什么不是 "PicoHop/1.x"】机场普遍按 UA 决定给你什么格式，甚至决定给你**哪些节点**。
 // 用使用者给的真实机场实测过：同一家机场，clash 系 UA 拿到 40 个节点（含 21 个 hysteria2），
 // 而 v2ray 系 UA 只给 19 个 vless —— UA 不只是格式开关，而是"给不给你某些协议"的开关。
 // 另外，UA 里含 "clash" 还是能拿到 subscription-userinfo（流量/到期）响应头的前提。

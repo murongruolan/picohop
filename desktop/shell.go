@@ -25,7 +25,7 @@ import (
 // ---------------------------------------------------------------------------
 
 // 主窗口标题。托盘图标定位、标题栏明暗同步都要按它找窗口，所以集中在这里。
-const mainWindowTitle = "PicoHop · 链式代理"
+const mainWindowTitle = "PicoHop"
 
 // setTitleBarTheme 按 system/light/dark 同步主窗口标题栏明暗。
 //
